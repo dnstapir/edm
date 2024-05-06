@@ -21,7 +21,7 @@ require (
 	github.com/yaronf/httpsign v0.2.2
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
 	golang.org/x/crypto v0.22.0
-	google.golang.org/protobuf v1.33.0
+	google.golang.org/protobuf v1.34.1
 )
 
 require (
