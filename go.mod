@@ -16,7 +16,7 @@ require (
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.8.0
-	github.com/spf13/viper v1.18.2
+	github.com/spf13/viper v1.19.0
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/yaronf/httpsign v0.2.2
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
