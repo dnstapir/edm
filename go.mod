@@ -15,7 +15,7 @@ require (
 	github.com/segmentio/go-hll v1.0.1
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
 	github.com/spaolacci/murmur3 v1.1.0
-	github.com/spf13/cobra v1.8.0
+	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/yaronf/httpsign v0.3.1
