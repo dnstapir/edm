@@ -21,7 +21,7 @@ require (
 	github.com/yaronf/httpsign v0.3.1
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.27.0
+	golang.org/x/crypto v0.28.0
 	google.golang.org/protobuf v1.34.2
 )
 
@@ -79,8 +79,8 @@ require (
 	golang.org/x/mod v0.21.0 // indirect
 	golang.org/x/net v0.29.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.25.0 // indirect
-	golang.org/x/text v0.18.0 // indirect
+	golang.org/x/sys v0.26.0 // indirect
+	golang.org/x/text v0.19.0 // indirect
 	golang.org/x/tools v0.25.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gonum.org/v1/gonum v0.12.0 // indirect
