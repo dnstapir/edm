@@ -187,7 +187,7 @@ func (cs *certStore) setCert(certPath string, keyPath string) error {
 	return nil
 }
 
-func newCertStore() *certStore {
+func newCertStore(unused string) *certStore {
 	return &certStore{}
 }
 
@@ -816,7 +816,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	if !edm.histogramSenderDisabled {
 		// Setup client cert/key for mTLS authentication
-		httpClientCertStore := newCertStore()
+		httpClientCertStore := newCertStore("unused")
 		err = httpClientCertStore.setCert(viper.GetString("http-client-cert-file"), viper.GetString("http-client-key-file"))
 		if err != nil {
 			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
@@ -838,7 +838,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	if !edm.mqttDisabled {
 		// Setup client cert/key for mTLS authentication
-		mqttClientCertStore := newCertStore()
+		mqttClientCertStore := newCertStore("unused")
 		err = mqttClientCertStore.setCert(viper.GetString("mqtt-client-cert-file"), viper.GetString("mqtt-client-key-file"))
 		if err != nil {
 			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
