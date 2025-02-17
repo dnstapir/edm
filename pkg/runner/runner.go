@@ -3,12 +3,11 @@ package runner
 import (
 	"bufio"
 	"context"
-	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -440,7 +439,7 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 		os.Exit(1)
 	}
 
-	httpSigningKey, err := ecdsaPrivateKeyFromFile(viper.GetString("http-signing-key-file"))
+	httpSigningKey, err := ed25519PrivateKeyFromFile(viper.GetString("http-signing-key-file"))
 	if err != nil {
 		edm.log.Error("unable to parse key material from 'http-signing-key-file'", "error", err)
 		os.Exit(1)
@@ -462,7 +461,7 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 }
 
 func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
-	mqttSigningKey, err := ecdsaPrivateKeyFromFile(viper.GetString("mqtt-signing-key-file"))
+	mqttSigningKey, err := ed25519PrivateKeyFromFile(viper.GetString("mqtt-signing-key-file"))
 	if err != nil {
 		edm.log.Error("unable to parse key material from 'mqtt-signing-key-file'", "error", err)
 		os.Exit(1)
@@ -523,7 +522,7 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	// Setup channel for reading messages to publish
 	edm.mqttPubCh = make(chan []byte, 100)
 
-	mqttJWK, err := jwk.FromRaw(mqttSigningKey)
+	mqttJWK, err := jwk.FromRaw(*mqttSigningKey)
 	if err != nil {
 		edm.log.Error("unable to create MQTT JWK key", "error", err)
 		os.Exit(1)
@@ -2176,23 +2175,27 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 	return nil
 }
 
-func ecdsaPrivateKeyFromFile(fileName string) (*ecdsa.PrivateKey, error) {
+func ed25519PrivateKeyFromFile(fileName string) (*ed25519.PrivateKey, error) {
+	var rawKey ed25519.PrivateKey
+
 	fileName = filepath.Clean(fileName)
-	keyBytes, err := os.ReadFile(fileName)
+
+	keyFile, err := os.ReadFile(fileName)
 	if err != nil {
-		return nil, fmt.Errorf("ecdsaPrivateKeyFromFile: unable to read ECDSA private key file: %w", err)
+		return nil, fmt.Errorf("error reading signing key file")
 	}
 
-	pemBlock, _ := pem.Decode(keyBytes)
-	if pemBlock == nil || pemBlock.Type != "EC PRIVATE KEY" {
-		return nil, fmt.Errorf("ecdsaPrivateKeyFromFile: failed to decode PEM block containing ECDSA private key")
-	}
-	privateKey, err := x509.ParseECPrivateKey(pemBlock.Bytes)
+	keyParsed, err := jwk.ParseKey(keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("unable to parse key material from: %w", err)
+		return nil, fmt.Errorf("error parsing signing key file")
 	}
 
-	return privateKey, nil
+	err = keyParsed.Raw(&rawKey)
+	if err != nil {
+		return nil, fmt.Errorf("error getting raw key from jwk")
+	}
+
+	return &rawKey, nil
 }
 
 func certPoolFromFile(fileName string) (*x509.CertPool, error) {
