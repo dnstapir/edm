@@ -27,7 +27,7 @@ type aggregateSender struct {
 	signingHTTPClient *httpsign.Client
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyName string, signingKey ed25519.PrivateKey, caCertPool *x509.CertPool, clientCertStore *certStore) aggregateSender {
+func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyName string, signingKey ed25519.PrivateKey, caCertPool *x509.CertPool, clientCertStore *certStore) (aggregateSender, error) {
 	// Create HTTP handler for sending aggregate files to aggrec
 	httpClient := http.Client{
 		Transport: &http.Transport{
@@ -46,9 +46,12 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyNam
 	}
 
 	// Create signer and wrapped HTTP client
-	signer, _ := httpsign.NewEd25519Signer(signingKey,
+	signer, err := httpsign.NewEd25519Signer(signingKey,
 		httpsign.NewSignConfig().SetKeyID(signingKeyName),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
+	if err != nil {
+		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
+	}
 
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
@@ -58,7 +61,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyNam
 		signingKey:        signingKey,
 		caCertPool:        caCertPool,
 		signingHTTPClient: client,
-	}
+	}, nil
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)

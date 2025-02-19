@@ -457,7 +457,11 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 		}
 	}
 
-	edm.aggregSender = edm.newAggregateSender(httpURL, viper.GetString("http-signing-key-id"), httpSigningKey, httpCACertPool, httpClientCertStore)
+	edm.aggregSender, err = edm.newAggregateSender(httpURL, viper.GetString("http-signing-key-id"), httpSigningKey, httpCACertPool, httpClientCertStore)
+	if err != nil {
+		edm.log.Error("unable to create aggregate sender", "error", err)
+		os.Exit(1)
+	}
 }
 
 func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
