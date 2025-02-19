@@ -22,12 +22,12 @@ import (
 type aggregateSender struct {
 	edm               *dnstapMinimiser
 	aggrecURL         *url.URL
-	signingKey        *ed25519.PrivateKey
+	signingKey        ed25519.PrivateKey
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyName string, signingKey *ed25519.PrivateKey, caCertPool *x509.CertPool, clientCertStore *certStore) aggregateSender {
+func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyName string, signingKey ed25519.PrivateKey, caCertPool *x509.CertPool, clientCertStore *certStore) aggregateSender {
 	// Create HTTP handler for sending aggregate files to aggrec
 	httpClient := http.Client{
 		Transport: &http.Transport{
@@ -46,9 +46,10 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyNam
 	}
 
 	// Create signer and wrapped HTTP client
-	signer, _ := httpsign.NewEd25519Signer(*signingKey,
+	signer, _ := httpsign.NewEd25519Signer(signingKey,
 		httpsign.NewSignConfig().SetKeyID(signingKeyName),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
+
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
 	return aggregateSender{

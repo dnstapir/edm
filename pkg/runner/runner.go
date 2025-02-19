@@ -522,7 +522,7 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	// Setup channel for reading messages to publish
 	edm.mqttPubCh = make(chan []byte, 100)
 
-	mqttJWK, err := jwk.FromRaw(*mqttSigningKey)
+	mqttJWK, err := jwk.FromRaw(mqttSigningKey)
 	if err != nil {
 		edm.log.Error("unable to create MQTT JWK key", "error", err)
 		os.Exit(1)
@@ -2175,7 +2175,7 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 	return nil
 }
 
-func ed25519PrivateKeyFromFile(fileName string) (*ed25519.PrivateKey, error) {
+func ed25519PrivateKeyFromFile(fileName string) (ed25519.PrivateKey, error) {
 	var rawKey ed25519.PrivateKey
 
 	fileName = filepath.Clean(fileName)
@@ -2195,7 +2195,7 @@ func ed25519PrivateKeyFromFile(fileName string) (*ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("error getting raw key from jwk")
 	}
 
-	return &rawKey, nil
+	return rawKey, nil
 }
 
 func certPoolFromFile(fileName string) (*x509.CertPool, error) {
