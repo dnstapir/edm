@@ -3,3 +3,6 @@ linters:
     - revive
     - gofumpt
     - gosec
+linters-settings:
+  errcheck:
+    check-blank: true
