@@ -99,7 +99,7 @@ type config struct {
 	Debug                     bool   `mapstructure:"debug"`
 	DebugDnstapFilename       string `mapstructure:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling bool   `mapstructure:"debug-enable-blockprofiling"`
-	DebugEnableMutexPofiling  bool   `mapstructure:"debug-enable-mutexprofiling"`
+	DebugEnableMutexProfiling bool   `mapstructure:"debug-enable-mutexprofiling"`
 }
 
 const dawgNotFound = -1
@@ -883,7 +883,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		logger.Info("enabling blocking profiling")
 		runtime.SetBlockProfileRate(int(time.Millisecond))
 	}
-	if startConf.DebugEnableMutexPofiling {
+	if startConf.DebugEnableMutexProfiling {
 		logger.Info("enabling mutex profiling")
 		runtime.SetMutexProfileFraction(100)
 	}
