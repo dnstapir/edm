@@ -37,6 +37,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/grafana/pyroscope-go/godeltaprof/http/pprof" // revive linter: keep blank import close to where it is used for now.
 	lru "github.com/hashicorp/golang-lru/v2"
+	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -529,6 +530,11 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	mqttJWK, err := jwk.FromRaw(mqttSigningKey)
 	if err != nil {
 		edm.log.Error("unable to create MQTT JWK key", "error", err)
+		os.Exit(1)
+	}
+	err = mqttJWK.Set(jwk.AlgorithmKey, jwa.EdDSA)
+	if err != nil {
+		edm.log.Error("unable to set MQTT JWK `alg`", "error", err)
 		os.Exit(1)
 	}
 

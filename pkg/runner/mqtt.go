@@ -10,7 +10,6 @@ import (
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jws"
 )
@@ -113,7 +112,7 @@ func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, topic st
 			return
 		}
 
-		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(jwa.ES256, mqttJWK))
+		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(mqttJWK.Algorithm(), mqttJWK))
 		if err != nil {
 			edm.log.Error("runAutoPaho: failed to created JWS message", "error", err)
 			continue
