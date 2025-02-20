@@ -35,6 +35,7 @@ import (
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/fsnotify/fsnotify"
+	"github.com/go-playground/validator/v10"
 	_ "github.com/grafana/pyroscope-go/godeltaprof/http/pprof" // revive linter: keep blank import close to where it is used for now.
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v2/jwa"
@@ -54,6 +55,52 @@ import (
 	"golang.org/x/crypto/argon2"
 	"google.golang.org/protobuf/proto"
 )
+
+// use a single instance of Validate, it caches struct info
+var validate = validator.New(validator.WithRequiredStructEnabled())
+
+type config struct {
+	ConfigFile                string `mapstructure:"config-file"`
+	DisableSessionFiles       bool   `mapstructure:"disable-session-files"`
+	DisableHistogramSender    bool   `mapstructure:"disable-histogram-sender"`
+	DisableMQTT               bool   `mapstructure:"disable-mqtt"`
+	DisableMQTTFilequeue      bool   `mapstructure:"disable-mqtt-filequeue"`
+	InputUnix                 string `mapstructure:"input-unix"`
+	InputTCP                  string `mapstructure:"input-tcp"`
+	InputTLS                  string `mapstructure:"input-tls"`
+	InputTLSCertFile          string `mapstructure:"input-tls-cert-file"`
+	InputTLSKeyFile           string `mapstructure:"input-tls-key-file"`
+	InputTLSClientCAFile      string `mapstructure:"input-tls-client-ca-file"`
+	CryptopanKey              string `mapstructure:"cryptopan-key" validate:"required"`
+	CryptopanKeySalt          string `mapstructure:"cryptopan-key-salt" validate:"required"`
+	WellKnownDomainsFile      string `mapstructure:"well-known-domains-file" validate:"required"`
+	IgnoredClientIPsFile      string `mapstructure:"ignored-client-ips-file"`
+	IgnoredQuestionNamesFile  string `mapstructure:"ignored-question-names-file"`
+	DataDir                   string `mapstructure:"data-dir" validate:"required"`
+	MinimiserWorkers          int    `mapstructure:"minimiser-workers" validate:"required"`
+	MQTTSigningKeyFile        string `mapstructure:"mqtt-signing-key-file"`
+	MQTTSigningKeyID          string `mapstructure:"mqtt-signing-key-id"`
+	MQTTClientKeyFile         string `mapstructure:"mqtt-client-key-file"`
+	MQTTClientCertFile        string `mapstructure:"mqtt-client-cert-file"`
+	MQTTServer                string `mapstructure:"mqtt-server"`
+	MQTTTopic                 string `mapstructure:"mqtt-topic"`
+	MQTTClientID              string `mapstructure:"mqtt-client-id"`
+	MQTTCAFile                string `mapstructure:"mqtt-ca-file"`
+	MQTTKeepalive             uint16 `mapstructure:"mqtt-keepalive"`
+	QnameSeenEntries          int    `mapstructure:"qname-seen-entries"`
+	CryptopanAddressEntries   int    `mapstructure:"cryptopan-address-entries"`
+	NewQnameBuffer            int    `mapstructure:"newqname-buffer"`
+	HTTPCAFile                string `mapstructure:"http-ca-file"`
+	HTTPSigningKeyFile        string `mapstructure:"http-signing-key-file"`
+	HTTPSigningKeyID          string `mapstructure:"http-signing-key-id"`
+	HTTPClientKeyFile         string `mapstructure:"http-client-key-file"`
+	HTTPClientCertFile        string `mapstructure:"http-client-cert-file"`
+	HTTPURL                   string `mapstructure:"http-url"`
+	Debug                     bool   `mapstructure:"debug"`
+	DebugDnstapFilename       string `mapstructure:"debug-dnstap-filename"`
+	DebugEnableBlockProfiling bool   `mapstructure:"debug-enable-blockprofiling"`
+	DebugEnableMutexPofiling  bool   `mapstructure:"debug-enable-mutexprofiling"`
+}
 
 const dawgNotFound = -1
 
@@ -406,7 +453,15 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 	t := time.AfterFunc(math.MaxInt64, func() {
 		edm.log.Info("configUpdater: reacting to config file update", "filename", e.Name)
 
-		err := edm.setCryptopan(viper.GetString("cryptopan-key"), viper.GetString("cryptopan-key-salt"), viper.GetInt("cryptopan-address-entries"))
+		err := edm.updateConfig()
+		if err != nil {
+			edm.log.Error("configUpdater: unable to update edm config", "error", err)
+			return
+		}
+
+		conf := edm.getConfig()
+
+		err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
 		if err != nil {
 			edm.log.Error("configUpdater: unable to update cryptopan instance", "error", err)
 		}
@@ -434,13 +489,15 @@ func setHllDefaults() error {
 }
 
 func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore) {
-	httpURL, err := url.Parse(viper.GetString("http-url"))
+	conf := edm.getConfig()
+
+	httpURL, err := url.Parse(conf.HTTPURL)
 	if err != nil {
 		edm.log.Error("unable to parse 'http-url' setting", "error", err)
 		os.Exit(1)
 	}
 
-	httpSigningKey, err := ed25519PrivateKeyFromFile(viper.GetString("http-signing-key-file"))
+	httpSigningKey, err := ed25519PrivateKeyFromFile(conf.HTTPSigningKeyFile)
 	if err != nil {
 		edm.log.Error("unable to parse key material from 'http-signing-key-file'", "error", err)
 		os.Exit(1)
@@ -449,16 +506,16 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 	// Leaving these nil will use the OS default CA certs
 	var httpCACertPool *x509.CertPool
 
-	if viper.GetString("http-ca-file") != "" {
+	if conf.HTTPCAFile != "" {
 		// Setup CA cert for validating the aggregate-receiver connection
-		httpCACertPool, err = certPoolFromFile(viper.GetString("http-ca-file"))
+		httpCACertPool, err = certPoolFromFile(conf.HTTPCAFile)
 		if err != nil {
 			edm.log.Error("failed to create CA cert pool for '-http-ca-file'", "error", err)
 			os.Exit(1)
 		}
 	}
 
-	edm.aggregSender, err = edm.newAggregateSender(httpURL, viper.GetString("http-signing-key-id"), httpSigningKey, httpCACertPool, httpClientCertStore)
+	edm.aggregSender, err = edm.newAggregateSender(httpURL, conf.HTTPSigningKeyID, httpSigningKey, httpCACertPool, httpClientCertStore)
 	if err != nil {
 		edm.log.Error("unable to create aggregate sender", "error", err)
 		os.Exit(1)
@@ -466,7 +523,9 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 }
 
 func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
-	mqttSigningKey, err := ed25519PrivateKeyFromFile(viper.GetString("mqtt-signing-key-file"))
+	conf := edm.getConfig()
+
+	mqttSigningKey, err := ed25519PrivateKeyFromFile(conf.MQTTSigningKeyFile)
 	if err != nil {
 		edm.log.Error("unable to parse key material from 'mqtt-signing-key-file'", "error", err)
 		os.Exit(1)
@@ -475,18 +534,9 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	// Leaving these nil will use the OS default CA certs
 	var mqttCACertPool *x509.CertPool
 
-	if viper.GetString("mqtt-ca-file") != "" {
+	if conf.MQTTCAFile != "" {
 		// Setup CA cert for validating the MQTT connection
-		mqttCACertPool, err = certPoolFromFile(viper.GetString("mqtt-ca-file"))
-		if err != nil {
-			edm.log.Error("failed to create CA cert pool for '--mqtt-ca-file'", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	if viper.GetString("mqtt-ca-file") != "" {
-		// Setup CA cert for validating the MQTT connection
-		mqttCACertPool, err = certPoolFromFile(viper.GetString("mqtt-ca-file"))
+		mqttCACertPool, err = certPoolFromFile(conf.MQTTCAFile)
 		if err != nil {
 			edm.log.Error("failed to create CA cert pool for '--mqtt-ca-file'", "error", err)
 			os.Exit(1)
@@ -494,8 +544,8 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	}
 
 	var mqttFileQueue *file.Queue
-	if !viper.GetBool("disable-mqtt-filequeue") {
-		mqttQueueDir := filepath.Join(viper.GetString("data-dir"), "mqtt", "queue")
+	if !conf.DisableMQTTFilequeue {
+		mqttQueueDir := filepath.Join(conf.DataDir, "mqtt", "queue")
 
 		err = os.MkdirAll(mqttQueueDir, 0o750)
 		if err != nil {
@@ -503,14 +553,14 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 			os.Exit(1)
 		}
 
-		mqttFileQueue, err = file.New(filepath.Join(viper.GetString("data-dir"), "mqtt", "queue"), "queue", ".msg")
+		mqttFileQueue, err = file.New(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
 		if err != nil {
 			edm.log.Error("unable to init MQTT queue file based queue", "error", err)
 			os.Exit(1)
 		}
 	}
 
-	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, viper.GetString("mqtt-server"), viper.GetString("mqtt-client-id"), mqttClientCertStore, viper.GetUint16("mqtt-keepalive"), mqttFileQueue)
+	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, conf.MQTTClientID, mqttClientCertStore, conf.MQTTKeepalive, mqttFileQueue)
 	if err != nil {
 		edm.log.Error("unable to create autopaho config", "error", err)
 		os.Exit(1)
@@ -538,7 +588,7 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 		os.Exit(1)
 	}
 
-	err = mqttJWK.Set(jwk.KeyIDKey, viper.GetString("mqtt-signing-key-id"))
+	err = mqttJWK.Set(jwk.KeyIDKey, conf.MQTTSigningKeyID)
 	if err != nil {
 		edm.log.Error("unable to set MQTT JWK `kid`", "error", err)
 		os.Exit(1)
@@ -546,7 +596,7 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 
 	// Connect to the broker - this will return immediately after initiating the connection process
 	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(autopahoCm, viper.GetString("mqtt-topic"), mqttJWK, mqttFileQueue != nil)
+	go edm.runAutoPaho(autopahoCm, conf.MQTTTopic, mqttJWK, mqttFileQueue != nil)
 }
 
 func (edm *dnstapMinimiser) setIgnoredQuestionNames(ignoredQuestionsFileName string) error {
@@ -750,27 +800,73 @@ func (edm *dnstapMinimiser) registerFSWatcher(filename string, callback func(str
 	return nil
 }
 
+type edmConfiger interface {
+	getConfig() (config, error)
+}
+
+type testConfiger struct {
+	CryptopanKey            string
+	CryptopanKeySalt        string
+	CryptopanAddressEntries int
+	Debug                   bool
+	DisableHistogramSender  bool
+	DisableMQTT             bool
+}
+
+func (tc testConfiger) getConfig() (config, error) {
+	return config{
+		CryptopanKey:            tc.CryptopanKey,
+		CryptopanKeySalt:        tc.CryptopanKeySalt,
+		CryptopanAddressEntries: tc.CryptopanAddressEntries,
+		Debug:                   tc.Debug,
+		DisableHistogramSender:  tc.DisableHistogramSender,
+		DisableMQTT:             tc.DisableMQTT,
+	}, nil
+}
+
+type viperConfiger struct{}
+
+func (vc viperConfiger) getConfig() (config, error) {
+	conf := config{}
+	err := viper.UnmarshalExact(&conf)
+	if err != nil {
+		return config{}, fmt.Errorf("getViperConfig: unable to unmarshal config: %w", err)
+	}
+
+	err = validate.Struct(conf)
+	if err != nil {
+		return config{}, fmt.Errorf("getViperConfig: unable to validate config: %w", err)
+	}
+
+	return conf, nil
+}
+
+func (edm *dnstapMinimiser) updateConfig() error {
+	edm.confMutex.Lock()
+	defer edm.confMutex.Unlock()
+
+	conf, err := edm.configer.getConfig()
+	if err != nil {
+		return err
+	}
+
+	edm.conf = conf
+
+	return nil
+}
+
+func (edm *dnstapMinimiser) getConfig() config {
+	edm.confMutex.RLock()
+	conf := edm.conf
+	edm.confMutex.RUnlock()
+
+	return conf
+}
+
 func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
-	if viper.GetBool("debug-enable-blockprofiling") {
-		logger.Info("enabling blocking profiling")
-		runtime.SetBlockProfileRate(int(time.Millisecond))
-	}
-	if viper.GetBool("debug-enable-mutexprofiling") {
-		logger.Info("enabling mutex profiling")
-		runtime.SetMutexProfileFraction(100)
-	}
-
-	if viper.GetString("cryptopan-key") == "" {
-		logger.Error("cryptopan setup error", "error", "missing required setting 'cryptopan-key' in config", "configfile", viper.ConfigFileUsed())
-		os.Exit(1)
-	}
-
-	if viper.GetBool("debug") {
-		loggerLevel.Set(slog.LevelDebug)
-	}
-
 	// Create an instance of the minimiser
-	edm, err := newDnstapMinimiser(logger, viper.GetString("cryptopan-key"), viper.GetString("cryptopan-key-salt"), viper.GetInt("cryptopan-address-entries"), viper.GetBool("debug"), viper.GetBool("disable-histogram-sender"), viper.GetBool("disable-mqtt"))
+	vc := viperConfiger{}
+	edm, err := newDnstapMinimiser(logger, vc)
 	if err != nil {
 		logger.Error("unable to init edm", "error", err)
 		os.Exit(1)
@@ -778,27 +874,45 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	defer edm.stop()
 	defer edm.fsWatcher.Close()
 
-	err = edm.setIgnoredClientIPs(viper.GetString("ignored-client-ips-file"))
+	// Create startConf for some initial setup. Other edm methods that need
+	// to read the config should call edm.getConfig() internally so they
+	// get the latest config.
+	startConf := edm.getConfig()
+
+	if startConf.DebugEnableBlockProfiling {
+		logger.Info("enabling blocking profiling")
+		runtime.SetBlockProfileRate(int(time.Millisecond))
+	}
+	if startConf.DebugEnableMutexPofiling {
+		logger.Info("enabling mutex profiling")
+		runtime.SetMutexProfileFraction(100)
+	}
+
+	if startConf.Debug {
+		loggerLevel.Set(slog.LevelDebug)
+	}
+
+	err = edm.setIgnoredClientIPs(startConf.IgnoredClientIPsFile)
 	if err != nil {
 		logger.Error("unable to configure ignored client IPs", "error", err)
 		os.Exit(1)
 	}
 
-	err = edm.registerFSWatcher(viper.GetString("ignored-client-ips-file"), edm.setIgnoredClientIPs)
+	err = edm.registerFSWatcher(startConf.IgnoredClientIPsFile, edm.setIgnoredClientIPs)
 	if err != nil {
-		logger.Error("unable to register fsWatcher callback", "filename", viper.GetString("ignored-client-ips-file"), "error", err)
+		logger.Error("unable to register fsWatcher callback", "filename", startConf.IgnoredClientIPsFile, "error", err)
 		os.Exit(1)
 	}
 
-	err = edm.setIgnoredQuestionNames(viper.GetString("ignored-question-names-file"))
+	err = edm.setIgnoredQuestionNames(startConf.IgnoredQuestionNamesFile)
 	if err != nil {
-		logger.Error("unable to configure ignored client IPs", "error", err)
+		logger.Error("unable to configure ignored question names", "error", err)
 		os.Exit(1)
 	}
 
-	err = edm.registerFSWatcher(viper.GetString("ignored-question-names-file"), edm.setIgnoredQuestionNames)
+	err = edm.registerFSWatcher(startConf.IgnoredQuestionNamesFile, edm.setIgnoredQuestionNames)
 	if err != nil {
-		logger.Error("unable to register fsWatcher callback", "filename", viper.GetString("ignored-question-names-file"), "error", err)
+		logger.Error("unable to register fsWatcher callback", "filename", startConf.IgnoredQuestionNamesFile, "error", err)
 		os.Exit(1)
 	}
 
@@ -810,7 +924,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		viperNotifyCh <- e
 	})
 
-	pdbDir := filepath.Join(viper.GetString("data-dir"), "pebble")
+	pdbDir := filepath.Join(startConf.DataDir, "pebble")
 	pdb, err := pebble.Open(pdbDir, &pebble.Options{})
 	if err != nil {
 		logger.Error("unable to open pebble database", "dir", pdbDir, "error", err)
@@ -826,7 +940,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !edm.histogramSenderDisabled {
 		// Setup client cert/key for mTLS authentication
 		httpClientCertStore := newCertStore()
-		err = httpClientCertStore.setCert(viper.GetString("http-client-cert-file"), viper.GetString("http-client-key-file"))
+		err = httpClientCertStore.setCert(startConf.HTTPClientCertFile, startConf.HTTPClientKeyFile)
 		if err != nil {
 			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
 			os.Exit(1)
@@ -834,13 +948,14 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 		edm.setupHistogramSender(httpClientCertStore)
 
-		err = edm.registerFSWatcher(viper.GetString("http-client-cert-file"), func(filename string) error {
+		err = edm.registerFSWatcher(startConf.HTTPClientCertFile, func(filename string) error {
+			conf := edm.getConfig()
 			edm.log.Info("reloading HTTP cert store because file was modified", "filename", filename)
-			err := httpClientCertStore.setCert(viper.GetString("http-client-cert-file"), viper.GetString("http-client-key-file"))
+			err := httpClientCertStore.setCert(conf.HTTPClientCertFile, conf.HTTPClientKeyFile)
 			return err
 		})
 		if err != nil {
-			logger.Error("unable to register fsWatcher callback", "filename", viper.GetString("http-client-cert-file"), "error", err)
+			logger.Error("unable to register fsWatcher callback", "filename", startConf.HTTPClientCertFile, "error", err)
 			os.Exit(1)
 		}
 	}
@@ -848,7 +963,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !edm.mqttDisabled {
 		// Setup client cert/key for mTLS authentication
 		mqttClientCertStore := newCertStore()
-		err = mqttClientCertStore.setCert(viper.GetString("mqtt-client-cert-file"), viper.GetString("mqtt-client-key-file"))
+		err = mqttClientCertStore.setCert(startConf.MQTTClientCertFile, startConf.MQTTClientKeyFile)
 		if err != nil {
 			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
 			os.Exit(1)
@@ -856,13 +971,14 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 		edm.setupMQTT(mqttClientCertStore)
 
-		err = edm.registerFSWatcher(viper.GetString("mqtt-client-cert-file"), func(filename string) error {
+		err = edm.registerFSWatcher(startConf.MQTTClientCertFile, func(filename string) error {
+			conf := edm.getConfig()
 			edm.log.Info("reloading MQTT cert store because file was modified", "filename", filename)
-			err := mqttClientCertStore.setCert(viper.GetString("mqtt-client-cert-file"), viper.GetString("mqtt-client-key-file"))
+			err := mqttClientCertStore.setCert(conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
 			return err
 		})
 		if err != nil {
-			logger.Error("unable to register fsWatcher callback", "filename", viper.GetString("mqtt-client-cert-file"), "error", err)
+			logger.Error("unable to register fsWatcher callback", "filename", startConf.MQTTClientCertFile, "error", err)
 			os.Exit(1)
 		}
 	}
@@ -871,24 +987,24 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	// Setup the dnstap.Input, only one at a time is supported.
 	var dti *dnstap.FrameStreamSockInput
-	if viper.GetString("input-unix") != "" {
-		logger.Info("creating dnstap unix socket", "socket", viper.GetString("input-unix"))
-		dti, err = dnstap.NewFrameStreamSockInputFromPath(viper.GetString("input-unix"))
+	if startConf.InputUnix != "" {
+		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)
+		dti, err = dnstap.NewFrameStreamSockInputFromPath(startConf.InputUnix)
 		if err != nil {
 			logger.Error("unable to create dnstap unix socket", "error", err)
 			os.Exit(1)
 		}
-	} else if viper.GetString("input-tcp") != "" {
-		logger.Info("creating plaintext dnstap TCP socket", "socket", viper.GetString("input-tcp"))
-		l, err := net.Listen("tcp", viper.GetString("input-tcp"))
+	} else if startConf.InputTCP != "" {
+		logger.Info("creating plaintext dnstap TCP socket", "socket", startConf.InputTCP)
+		l, err := net.Listen("tcp", startConf.InputTCP)
 		if err != nil {
 			logger.Error("unable to create plaintext dnstap TCP socket", "error", err)
 			os.Exit(1)
 		}
 		dti = dnstap.NewFrameStreamSockInput(l)
-	} else if viper.GetString("input-tls") != "" {
-		logger.Info("creating encrypted dnstap TLS socket", "socket", viper.GetString("input-tls"))
-		dnstapInputCert, err := tls.LoadX509KeyPair(viper.GetString("input-tls-cert-file"), viper.GetString("input-tls-key-file"))
+	} else if startConf.InputTLS != "" {
+		logger.Info("creating encrypted dnstap TLS socket", "socket", startConf.InputTLS)
+		dnstapInputCert, err := tls.LoadX509KeyPair(startConf.InputTLSCertFile, startConf.InputTLSKeyFile)
 		if err != nil {
 			logger.Error("unable to load x509 dnstap listener cert", "error", err)
 			os.Exit(1)
@@ -899,9 +1015,9 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		}
 
 		// Enable client mTLS (client cert auth) if a CA file was passed:
-		if viper.GetString("input-tls-client-ca-file") != "" {
-			logger.Info("dnstap socket requiring valid client certs", "ca-file", viper.GetString("input-tls-client-ca-file"))
-			inputTLSClientCACertPool, err := certPoolFromFile(viper.GetString("input-tls-client-ca-file"))
+		if startConf.InputTLSClientCAFile != "" {
+			logger.Info("dnstap socket requiring valid client certs", "ca-file", startConf.InputTLSClientCAFile)
+			inputTLSClientCACertPool, err := certPoolFromFile(startConf.InputTLSClientCAFile)
 			if err != nil {
 				logger.Error("failed to create CA cert pool for '-input-tls-client-ca-file': %s", "error", err)
 				os.Exit(1)
@@ -911,7 +1027,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 			dnstapTLSConfig.ClientCAs = inputTLSClientCACertPool
 		}
 
-		l, err := tls.Listen("tcp", viper.GetString("input-tls"), dnstapTLSConfig)
+		l, err := tls.Listen("tcp", startConf.InputTLS, dnstapTLSConfig)
 		if err != nil {
 			logger.Error("unable to create TCP listener", "error", err)
 			os.Exit(1)
@@ -931,7 +1047,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	// domain list yet we have seen since we started. To limit the
 	// possibility of unbounded memory usage we use a LRU cache instead of
 	// something simpler like a map.
-	seenQnameLRU, err := lru.New[string, struct{}](viper.GetInt("qname-seen-entries"))
+	seenQnameLRU, err := lru.New[string, struct{}](startConf.QnameSeenEntries)
 	if err != nil {
 		logger.Error("unable to create seen-qname LRU", "error", err)
 		os.Exit(1)
@@ -955,7 +1071,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
-	dataDir := viper.GetString("data-dir")
+	dataDir := startConf.DataDir
 	outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
 	sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
@@ -981,7 +1097,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	wg.Add(1)
 	go edm.diskCleaner(&wg, sentDir)
 
-	dawgFile := viper.GetString("well-known-domains-file")
+	dawgFile := startConf.WellKnownDomainsFile
 
 	dawgFinder, dawgModTime, err := loadDawgFile(dawgFile)
 	if err != nil {
@@ -995,7 +1111,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		os.Exit(1)
 	}
 
-	debugDnstapFilename := viper.GetString("debug-dnstap-filename")
+	debugDnstapFilename := startConf.DebugDnstapFilename
 
 	// Keep in mind that this file is unbuffered. We could wrap it in a
 	// bufio.NewWriter() if we want more performance out of it, but since
@@ -1026,7 +1142,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	var minimiserWg sync.WaitGroup
 
-	numMinimiserWorkers := viper.GetInt("minimiser-workers")
+	numMinimiserWorkers := startConf.MinimiserWorkers
 	if numMinimiserWorkers <= 0 {
 		numMinimiserWorkers = runtime.GOMAXPROCS(0)
 	}
@@ -1035,7 +1151,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	for minimiserID := 0; minimiserID < numMinimiserWorkers; minimiserID++ {
 		edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
 		minimiserWg.Add(1)
-		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, viper.GetBool("disable-session-files"), debugDnstapFile, labelLimit, wkdTracker)
+		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, startConf.DisableSessionFiles, debugDnstapFile, labelLimit, wkdTracker)
 	}
 
 	// Start dnstap.Input
@@ -1068,6 +1184,9 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 }
 
 type dnstapMinimiser struct {
+	configer                  edmConfiger
+	conf                      config
+	confMutex                 sync.RWMutex
 	inputChannel              chan []byte          // the channel expected to be passed to dnstap ReadInto()
 	log                       *slog.Logger         // any information logging is sent here
 	cryptopan                 *cryptopan.Cryptopan // used for pseudonymising IP addresses
@@ -1119,10 +1238,19 @@ func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
 	return cpn, nil
 }
 
-func newDnstapMinimiser(logger *slog.Logger, cryptopanKey string, cryptopanSalt string, cryptopanCacheEntries int, debug bool, histogramSenderDisabled bool, mqttDisabled bool) (*dnstapMinimiser, error) {
-	edm := &dnstapMinimiser{}
+func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimiser, error) {
+	edm := &dnstapMinimiser{
+		configer: edmConf,
+	}
 
-	err := edm.setCryptopan(cryptopanKey, cryptopanSalt, cryptopanCacheEntries)
+	err := edm.updateConfig()
+	if err != nil {
+		return nil, fmt.Errorf("newDnstapMinimiser: unable to set config: %w", err)
+	}
+
+	conf := edm.getConfig()
+
+	err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
 	if err != nil {
 		return nil, fmt.Errorf("newDnstapMinimiser: %w", err)
 	}
@@ -1198,9 +1326,9 @@ func newDnstapMinimiser(logger *slog.Logger, cryptopanKey string, cryptopanSalt 
 	// https://github.com/dnstap/golang-dnstap/blob/master/dnstap.go
 	edm.inputChannel = make(chan []byte, 32)
 	edm.log = logger
-	edm.debug = debug
-	edm.histogramSenderDisabled = histogramSenderDisabled
-	edm.mqttDisabled = mqttDisabled
+	edm.debug = conf.Debug
+	edm.histogramSenderDisabled = conf.DisableHistogramSender
+	edm.mqttDisabled = conf.DisableMQTT
 
 	edm.fsWatcher, err = fsnotify.NewWatcher()
 	if err != nil {
@@ -1216,7 +1344,7 @@ func newDnstapMinimiser(logger *slog.Logger, cryptopanKey string, cryptopanSalt 
 	// minimiser loop, otherwise the program can hang on shutdown.
 	edm.sessionWriterCh = make(chan *prevSessions, 100)
 	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
-	edm.newQnamePublisherCh = make(chan *protocols.EventsMqttMessageNewQnameJson, viper.GetInt("new-qname-buffer"))
+	edm.newQnamePublisherCh = make(chan *protocols.EventsMqttMessageNewQnameJson, conf.NewQnameBuffer)
 	edm.sessionCollectorCh = make(chan *sessionData, 100)
 
 	return edm, nil

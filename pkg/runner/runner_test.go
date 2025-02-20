@@ -18,7 +18,17 @@ import (
 	"github.com/spaolacci/murmur3"
 )
 
-var testDawg = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
+var (
+	testDawg  = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
+	defaultTC = testConfiger{
+		CryptopanKey:            "key1",
+		CryptopanKeySalt:        "aabbccddeeffgghh",
+		CryptopanAddressEntries: 10,
+		Debug:                   false,
+		DisableHistogramSender:  false,
+		DisableMQTT:             false,
+	}
+)
 
 func BenchmarkWKDTLookup(b *testing.B) {
 	if !*testDawg {
@@ -215,10 +225,7 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -400,10 +407,7 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -468,10 +472,7 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -556,10 +557,7 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -630,10 +628,7 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -678,10 +673,7 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -830,10 +822,7 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -911,10 +900,7 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -1235,8 +1221,6 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
@@ -1267,9 +1251,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		},
 	}
 
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -1392,7 +1374,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	}
 
 	// Replace the cryptopan instance and verify we now get different pseudonymised results
-	err = edm.setCryptopan("key2", cryptopanSalt, cryptopanCacheSize)
+	err = edm.setCryptopan("key2", defaultTC.CryptopanKeySalt, defaultTC.CryptopanAddressEntries)
 	if err != nil {
 		t.Fatalf("unable to call edm.SetCryptopan: %s", err)
 	}
@@ -1484,7 +1466,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	}
 
 	// Replace the cryptopan instance with uncached version and the first key and verify we get the same pseudonymised results
-	err = edm.setCryptopan("key1", cryptopanSalt, 0)
+	err = edm.setCryptopan(defaultTC.CryptopanKey, defaultTC.CryptopanKeySalt, 0)
 	if err != nil {
 		t.Fatalf("unable to call edm.SetCryptopan with 0 cache size: %s", err)
 	}
@@ -1560,15 +1542,11 @@ func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
 
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
@@ -1593,15 +1571,14 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
 
-	cryptopanCacheSize := 0
+	uncachedTC := defaultTC
+	uncachedTC.CryptopanAddressEntries = 0
 
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, uncachedTC)
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
@@ -1626,15 +1603,11 @@ func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 	origRespAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:ddee")
 
-	cryptopanCacheSize := 10
-
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, defaultTC)
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
@@ -1659,15 +1632,14 @@ func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	cryptopanSalt := "aabbccddeeffgghh"
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 	origRespAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:ddee")
 
-	cryptopanCacheSize := 0
+	uncachedTC := defaultTC
+	uncachedTC.CryptopanAddressEntries = 0
 
-	edm, err := newDnstapMinimiser(logger, "key1", cryptopanSalt, cryptopanCacheSize, false, false, false)
+	edm, err := newDnstapMinimiser(logger, uncachedTC)
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
