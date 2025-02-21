@@ -33,8 +33,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 
 	err := signingJwk.Raw(&signingKey)
 	if err != nil {
-		edm.log.Error("newAggregateSender: unable to create ed25519 private key from jwk", "error", err)
-		os.Exit(1)
+		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk': %w", err)
 	}
 
 	// Create HTTP handler for sending aggregate files to aggrec
