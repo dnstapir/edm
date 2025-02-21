@@ -88,8 +88,12 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 	return cliCfg, nil
 }
 
-func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, topic string, mqttJWK jwk.Key, usingFileQueue bool) {
+func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, mqttJWK jwk.Key, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
+
+	topic := "events/up/" + mqttJWK.KeyID() + "/new_qname"
+
+	edm.log.Info("starting signing MQTT publisher", "jwk_id", mqttJWK.KeyID(), "jwk_alg", mqttJWK.Algorithm(), "topic", topic)
 	for {
 		// We only need to wait for a server connection if we have no
 		// local queue. Otherwise we can just start appending messages

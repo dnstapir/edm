@@ -3,7 +3,6 @@ package runner
 import (
 	"bufio"
 	"context"
-	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/binary"
@@ -79,12 +78,9 @@ type config struct {
 	DataDir                   string `mapstructure:"data-dir" validate:"required"`
 	MinimiserWorkers          int    `mapstructure:"minimiser-workers" validate:"required"`
 	MQTTSigningKeyFile        string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
-	MQTTSigningKeyID          string `mapstructure:"mqtt-signing-key-id" validate:"required_without=DisableMQTT"`
 	MQTTClientKeyFile         string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT"`
 	MQTTClientCertFile        string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT"`
 	MQTTServer                string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
-	MQTTTopic                 string `mapstructure:"mqtt-topic" validate:"required_without=DisableMQTT"`
-	MQTTClientID              string `mapstructure:"mqtt-client-id" validate:"required_without=DisableMQTT"`
 	MQTTCAFile                string `mapstructure:"mqtt-ca-file"`
 	MQTTKeepalive             uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
 	QnameSeenEntries          int    `mapstructure:"qname-seen-entries"`
@@ -92,7 +88,6 @@ type config struct {
 	NewQnameBuffer            int    `mapstructure:"newqname-buffer"`
 	HTTPCAFile                string `mapstructure:"http-ca-file"`
 	HTTPSigningKeyFile        string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
-	HTTPSigningKeyID          string `mapstructure:"http-signing-key-id" validate:"required_without=DisableHistogramSender"`
 	HTTPClientKeyFile         string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender"`
 	HTTPClientCertFile        string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender"`
 	HTTPURL                   string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
@@ -497,9 +492,9 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 		os.Exit(1)
 	}
 
-	httpSigningKey, err := ed25519PrivateKeyFromFile(conf.HTTPSigningKeyFile)
+	httpSigningJwk, err := edDsaJWKFromFile(conf.HTTPSigningKeyFile)
 	if err != nil {
-		edm.log.Error("unable to parse key material from 'http-signing-key-file'", "error", err)
+		edm.log.Error("unable to parse jwk from 'http-signing-key-file'", "error", err)
 		os.Exit(1)
 	}
 
@@ -515,7 +510,7 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 		}
 	}
 
-	edm.aggregSender, err = edm.newAggregateSender(httpURL, conf.HTTPSigningKeyID, httpSigningKey, httpCACertPool, httpClientCertStore)
+	edm.aggregSender, err = edm.newAggregateSender(httpURL, httpSigningJwk, httpCACertPool, httpClientCertStore)
 	if err != nil {
 		edm.log.Error("unable to create aggregate sender", "error", err)
 		os.Exit(1)
@@ -525,9 +520,9 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	conf := edm.getConfig()
 
-	mqttSigningKey, err := ed25519PrivateKeyFromFile(conf.MQTTSigningKeyFile)
+	mqttJWK, err := edDsaJWKFromFile(conf.MQTTSigningKeyFile)
 	if err != nil {
-		edm.log.Error("unable to parse key material from 'mqtt-signing-key-file'", "error", err)
+		edm.log.Error("unable to parse jwk from 'mqtt-signing-key-file'", "error", err)
 		os.Exit(1)
 	}
 
@@ -560,7 +555,11 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 		}
 	}
 
-	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, conf.MQTTClientID, mqttClientCertStore, conf.MQTTKeepalive, mqttFileQueue)
+	mqttClientID := mqttJWK.KeyID() + "-edm"
+
+	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
+
+	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, mqttClientCertStore, conf.MQTTKeepalive, mqttFileQueue)
 	if err != nil {
 		edm.log.Error("unable to create autopaho config", "error", err)
 		os.Exit(1)
@@ -577,26 +576,9 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 	// Setup channel for reading messages to publish
 	edm.mqttPubCh = make(chan []byte, 100)
 
-	mqttJWK, err := jwk.FromRaw(mqttSigningKey)
-	if err != nil {
-		edm.log.Error("unable to create MQTT JWK key", "error", err)
-		os.Exit(1)
-	}
-	err = mqttJWK.Set(jwk.AlgorithmKey, jwa.EdDSA)
-	if err != nil {
-		edm.log.Error("unable to set MQTT JWK `alg`", "error", err)
-		os.Exit(1)
-	}
-
-	err = mqttJWK.Set(jwk.KeyIDKey, conf.MQTTSigningKeyID)
-	if err != nil {
-		edm.log.Error("unable to set MQTT JWK `kid`", "error", err)
-		os.Exit(1)
-	}
-
 	// Connect to the broker - this will return immediately after initiating the connection process
 	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(autopahoCm, conf.MQTTTopic, mqttJWK, mqttFileQueue != nil)
+	go edm.runAutoPaho(autopahoCm, mqttJWK, mqttFileQueue != nil)
 }
 
 func (edm *dnstapMinimiser) setIgnoredQuestionNames(ignoredQuestionsFileName string) error {
@@ -2316,27 +2298,25 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 	return nil
 }
 
-func ed25519PrivateKeyFromFile(fileName string) (ed25519.PrivateKey, error) {
-	var rawKey ed25519.PrivateKey
-
+func edDsaJWKFromFile(fileName string) (jwk.Key, error) {
 	fileName = filepath.Clean(fileName)
 
 	keyFile, err := os.ReadFile(fileName)
 	if err != nil {
-		return nil, fmt.Errorf("error reading signing key file")
+		return nil, fmt.Errorf("error reading signing key file: %w", err)
 	}
 
-	keyParsed, err := jwk.ParseKey(keyFile)
+	jwkKey, err := jwk.ParseKey(keyFile)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing signing key file")
+		return nil, fmt.Errorf("error parsing signing jwk file: %w", err)
 	}
 
-	err = keyParsed.Raw(&rawKey)
+	err = jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA)
 	if err != nil {
-		return nil, fmt.Errorf("error getting raw key from jwk")
+		return nil, fmt.Errorf("error setting EdDSA algo for jwk key: %w", err)
 	}
 
-	return rawKey, nil
+	return jwkKey, nil
 }
 
 func certPoolFromFile(fileName string) (*x509.CertPool, error) {

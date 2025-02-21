@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/yaronf/httpsign"
 )
 
@@ -27,7 +28,15 @@ type aggregateSender struct {
 	signingHTTPClient *httpsign.Client
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyName string, signingKey ed25519.PrivateKey, caCertPool *x509.CertPool, clientCertStore *certStore) (aggregateSender, error) {
+func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, clientCertStore *certStore) (aggregateSender, error) {
+	var signingKey ed25519.PrivateKey
+
+	err := signingJwk.Raw(&signingKey)
+	if err != nil {
+		edm.log.Error("newAggregateSender: unable to create ed25519 private key from jwk", "error", err)
+		os.Exit(1)
+	}
+
 	// Create HTTP handler for sending aggregate files to aggrec
 	httpClient := http.Client{
 		Transport: &http.Transport{
@@ -45,9 +54,11 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingKeyNam
 		},
 	}
 
+	edm.log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
+
 	// Create signer and wrapped HTTP client
 	signer, err := httpsign.NewEd25519Signer(signingKey,
-		httpsign.NewSignConfig().SetKeyID(signingKeyName),
+		httpsign.NewSignConfig().SetKeyID(signingJwk.KeyID()),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
 	if err != nil {
 		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
