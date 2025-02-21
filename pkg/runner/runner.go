@@ -60,17 +60,17 @@ import (
 var validate = validator.New(validator.WithRequiredStructEnabled())
 
 type config struct {
-	ConfigFile                string `mapstructure:"config-file"`
+	ConfigFile                string `mapstructure:"config-file" validate:"required"`
 	DisableSessionFiles       bool   `mapstructure:"disable-session-files"`
 	DisableHistogramSender    bool   `mapstructure:"disable-histogram-sender"`
 	DisableMQTT               bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue      bool   `mapstructure:"disable-mqtt-filequeue"`
-	InputUnix                 string `mapstructure:"input-unix"`
-	InputTCP                  string `mapstructure:"input-tcp"`
-	InputTLS                  string `mapstructure:"input-tls"`
-	InputTLSCertFile          string `mapstructure:"input-tls-cert-file"`
-	InputTLSKeyFile           string `mapstructure:"input-tls-key-file"`
-	InputTLSClientCAFile      string `mapstructure:"input-tls-client-ca-file"`
+	InputUnix                 string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with_all=InputTCP InputTLS"`
+	InputTCP                  string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with_all=InputUnix InputTLS"`
+	InputTLS                  string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with_all=InputUnix InputTCP"`
+	InputTLSCertFile          string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
+	InputTLSKeyFile           string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
+	InputTLSClientCAFile      string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
 	CryptopanKey              string `mapstructure:"cryptopan-key" validate:"required"`
 	CryptopanKeySalt          string `mapstructure:"cryptopan-key-salt" validate:"required"`
 	WellKnownDomainsFile      string `mapstructure:"well-known-domains-file" validate:"required"`
@@ -78,24 +78,24 @@ type config struct {
 	IgnoredQuestionNamesFile  string `mapstructure:"ignored-question-names-file"`
 	DataDir                   string `mapstructure:"data-dir" validate:"required"`
 	MinimiserWorkers          int    `mapstructure:"minimiser-workers" validate:"required"`
-	MQTTSigningKeyFile        string `mapstructure:"mqtt-signing-key-file"`
-	MQTTSigningKeyID          string `mapstructure:"mqtt-signing-key-id"`
-	MQTTClientKeyFile         string `mapstructure:"mqtt-client-key-file"`
-	MQTTClientCertFile        string `mapstructure:"mqtt-client-cert-file"`
-	MQTTServer                string `mapstructure:"mqtt-server"`
-	MQTTTopic                 string `mapstructure:"mqtt-topic"`
-	MQTTClientID              string `mapstructure:"mqtt-client-id"`
+	MQTTSigningKeyFile        string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
+	MQTTSigningKeyID          string `mapstructure:"mqtt-signing-key-id" validate:"required_without=DisableMQTT"`
+	MQTTClientKeyFile         string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT"`
+	MQTTClientCertFile        string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT"`
+	MQTTServer                string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
+	MQTTTopic                 string `mapstructure:"mqtt-topic" validate:"required_without=DisableMQTT"`
+	MQTTClientID              string `mapstructure:"mqtt-client-id" validate:"required_without=DisableMQTT"`
 	MQTTCAFile                string `mapstructure:"mqtt-ca-file"`
-	MQTTKeepalive             uint16 `mapstructure:"mqtt-keepalive"`
+	MQTTKeepalive             uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
 	QnameSeenEntries          int    `mapstructure:"qname-seen-entries"`
 	CryptopanAddressEntries   int    `mapstructure:"cryptopan-address-entries"`
 	NewQnameBuffer            int    `mapstructure:"newqname-buffer"`
 	HTTPCAFile                string `mapstructure:"http-ca-file"`
-	HTTPSigningKeyFile        string `mapstructure:"http-signing-key-file"`
-	HTTPSigningKeyID          string `mapstructure:"http-signing-key-id"`
-	HTTPClientKeyFile         string `mapstructure:"http-client-key-file"`
-	HTTPClientCertFile        string `mapstructure:"http-client-cert-file"`
-	HTTPURL                   string `mapstructure:"http-url"`
+	HTTPSigningKeyFile        string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
+	HTTPSigningKeyID          string `mapstructure:"http-signing-key-id" validate:"required_without=DisableHistogramSender"`
+	HTTPClientKeyFile         string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender"`
+	HTTPClientCertFile        string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender"`
+	HTTPURL                   string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
 	Debug                     bool   `mapstructure:"debug"`
 	DebugDnstapFilename       string `mapstructure:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling bool   `mapstructure:"debug-enable-blockprofiling"`
