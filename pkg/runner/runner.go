@@ -1946,6 +1946,8 @@ func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg
 
 	edm.log.Info("histogramSender: starting")
 
+	backoffDuration := time.Second * 15
+
 	// We will scan the outbox directory each tick for histogram parquet
 	// files to send
 	ticker := time.NewTicker(time.Second * 10)
@@ -1980,7 +1982,8 @@ timerLoop:
 					absPathSent := filepath.Join(sentDir, dirEntry.Name())
 					err = edm.aggregSender.send(absPath, startTS, duration)
 					if err != nil {
-						edm.log.Error("histogramSender: unable to send histogram file", "error", err)
+						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
+						time.Sleep(backoffDuration)
 						continue
 					}
 					err = edm.renameFile(absPath, absPathSent)
