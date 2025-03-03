@@ -10,7 +10,7 @@ require (
 	github.com/go-playground/validator/v10 v10.25.0
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.8
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/lestrrat-go/jwx/v2 v2.1.3
+	github.com/lestrrat-go/jwx/v2 v2.1.4
 	github.com/miekg/dns v1.1.63
 	github.com/prometheus/client_golang v1.21.0
 	github.com/segmentio/go-hll v1.0.1
