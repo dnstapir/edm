@@ -1,6 +1,6 @@
 module github.com/dnstapir/edm
 
-go 1.24.0
+go 1.24.1
 
 require (
 	github.com/cockroachdb/pebble v1.1.4
