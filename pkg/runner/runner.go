@@ -1751,7 +1751,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 
 	if dt.Message.QueryPort != nil {
 		if *dt.Message.QueryPort > math.MaxInt32 {
-			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port 0")
+			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", *dt.Message.QueryPort)
 			var qp int32
 			sd.SourcePort = &qp
 		} else {
@@ -1762,7 +1762,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 
 	if dt.Message.ResponsePort != nil {
 		if *dt.Message.ResponsePort > math.MaxInt32 {
-			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port 0")
+			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", *dt.Message.ResponsePort)
 			var rp int32
 			sd.DestPort = &rp
 		} else {
@@ -2063,7 +2063,7 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 			msg = nil
 		}
 		if *dt.Message.QueryTimeSec > math.MaxInt64 {
-			edm.log.Error("dt.Message.QueryTimeSec is too large for int64, setting time to 0")
+			edm.log.Error("dt.Message.QueryTimeSec is too large for int64, setting time to 0", "value", *dt.Message.QueryTimeSec)
 			*dt.Message.QueryTimeSec = 0
 			*dt.Message.QueryTimeNsec = 0
 		}
@@ -2075,7 +2075,7 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 			msg = nil
 		}
 		if *dt.Message.ResponseTimeSec > math.MaxInt64 {
-			edm.log.Error("dt.Message.ResponseTimeSec is too large for int64, setting time to 0")
+			edm.log.Error("dt.Message.ResponseTimeSec is too large for int64, setting time to 0", "value", *dt.Message.ResponseTimeSec)
 			*dt.Message.ResponseTimeSec = 0
 			*dt.Message.ResponseTimeNsec = 0
 		}
