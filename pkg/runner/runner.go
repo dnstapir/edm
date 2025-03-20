@@ -1750,13 +1750,25 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 	sd := &sessionData{}
 
 	if dt.Message.QueryPort != nil {
-		qp := int32(*dt.Message.QueryPort) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16
-		sd.SourcePort = &qp
+		if *dt.Message.QueryPort > math.MaxInt32 {
+			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port 0")
+			var qp int32
+			sd.SourcePort = &qp
+		} else {
+			qp := int32(*dt.Message.QueryPort) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+			sd.SourcePort = &qp
+		}
 	}
 
 	if dt.Message.ResponsePort != nil {
-		rp := int32(*dt.Message.ResponsePort) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16
-		sd.DestPort = &rp
+		if *dt.Message.ResponsePort > math.MaxInt32 {
+			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port 0")
+			var rp int32
+			sd.DestPort = &rp
+		} else {
+			rp := int32(*dt.Message.ResponsePort) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+			sd.DestPort = &rp
+		}
 	}
 
 	edm.setSessionLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, sd)
@@ -2050,14 +2062,24 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 			edm.log.Error("unable to unpack query message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
 			msg = nil
 		}
-		t = time.Unix(int64(*dt.Message.QueryTimeSec), int64(*dt.Message.QueryTimeNsec)).UTC() // #nosec G115 -- Overflowing the int64 would result in interesting timestamps but not much else
+		if *dt.Message.QueryTimeSec > math.MaxInt64 {
+			edm.log.Error("dt.Message.QueryTimeSec is too large for int64, setting time to 0")
+			*dt.Message.QueryTimeSec = 0
+			*dt.Message.QueryTimeNsec = 0
+		}
+		t = time.Unix(int64(*dt.Message.QueryTimeSec), int64(*dt.Message.QueryTimeNsec)).UTC() // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	} else {
 		err = msg.Unpack(dt.Message.ResponseMessage)
 		if err != nil {
 			edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
 			msg = nil
 		}
-		t = time.Unix(int64(*dt.Message.ResponseTimeSec), int64(*dt.Message.ResponseTimeNsec)).UTC() // #nosec G115 -- Overflowing the int64 would result in interesting timestamps but not much else
+		if *dt.Message.ResponseTimeSec > math.MaxInt64 {
+			edm.log.Error("dt.Message.ResponseTimeSec is too large for int64, setting time to 0")
+			*dt.Message.ResponseTimeSec = 0
+			*dt.Message.ResponseTimeNsec = 0
+		}
+		t = time.Unix(int64(*dt.Message.ResponseTimeSec), int64(*dt.Message.ResponseTimeNsec)).UTC() // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	}
 
 	return msg, t
