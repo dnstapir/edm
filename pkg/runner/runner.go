@@ -64,9 +64,9 @@ type config struct {
 	DisableHistogramSender    bool   `mapstructure:"disable-histogram-sender"`
 	DisableMQTT               bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue      bool   `mapstructure:"disable-mqtt-filequeue"`
-	InputUnix                 string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with_all=InputTCP InputTLS"`
-	InputTCP                  string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with_all=InputUnix InputTLS"`
-	InputTLS                  string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with_all=InputUnix InputTCP"`
+	InputUnix                 string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
+	InputTCP                  string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
+	InputTLS                  string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
 	InputTLSCertFile          string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
 	InputTLSKeyFile           string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
 	InputTLSClientCAFile      string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`

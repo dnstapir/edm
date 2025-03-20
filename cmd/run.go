@@ -38,7 +38,6 @@ func init() {
 	runCmd.Flags().String("input-unix", "", "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
 	runCmd.Flags().String("input-tcp", "", "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
 	runCmd.Flags().String("input-tls", "", "create TLS TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
-	runCmd.MarkFlagsOneRequired("input-unix", "input-tcp", "input-tls")
 	runCmd.MarkFlagsMutuallyExclusive("input-unix", "input-tcp", "input-tls")
 
 	runCmd.Flags().String("input-tls-cert-file", "", "file containing cert used for TLS TCP socket")
