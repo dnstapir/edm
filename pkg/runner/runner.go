@@ -15,7 +15,7 @@ import (
 	"math"
 	"net"
 	"net/http"
-	_ "net/http/pprof" // #nosec G108 -- metricsServer only listens to localhost
+	_ "net/http/pprof" // #nosec G108 -- pprofServer only listens to localhost
 	"net/netip"
 	"net/url"
 	"os"
@@ -1035,15 +1035,29 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		os.Exit(1)
 	}
 
+	// Uses the default mux which is modified by importing net/http/pprof
+	pprofServer := &http.Server{
+		Addr:         "127.0.0.1:6060",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 31 * time.Second,
+	}
+
+	go func() {
+		err := pprofServer.ListenAndServe()
+		logger.Error("pprofServer failed", "error", err)
+	}()
+
+	metricsMux := http.NewServeMux()
 	metricsServer := &http.Server{
 		Addr:           "127.0.0.1:2112",
+		Handler:        metricsMux,
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   31 * time.Second,
+		WriteTimeout:   10 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 
 	// Setup custom promHandler since we want to use our per-edm registry
-	http.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
+	metricsMux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
 	go func() {
 		err := metricsServer.ListenAndServe()
 		logger.Error("metricsServer failed", "error", err)

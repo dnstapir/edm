@@ -53,16 +53,15 @@ query name has been seen before or not. The key-value store being used is
 
 ## Observability
 
-`edm` exposes [prometheus](https://prometheus.io) metrics and
-go [pprof](https://pkg.go.dev/net/http/pprof) profiling data via HTTP listener
-at `127.0.0.1:2112`.
-To look at prometheus current metrics:
+`edm` exposes [prometheus](https://prometheus.io) metrics at `127.0.0.1:2112`
+and go [pprof](https://pkg.go.dev/net/http/pprof) profiling data at `127.0.0.1:6060`.
+To look at prometheus metrics:
 ```
 curl 127.0.0.1:2112/metrics
 ```
 There are multiple types of profiling data available, here is a CPU-centric example:
 ```
-go tool pprof http://127.0.0.1:2112/debug/pprof/profile?seconds=30
+go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=30
 ```
 
 ## Development
