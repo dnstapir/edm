@@ -1,7 +1,6 @@
 module github.com/dnstapir/edm
 
 go 1.24.1
-
 require (
 	github.com/cockroachdb/pebble v1.1.4
 	github.com/dnstap/golang-dnstap v0.4.0
@@ -17,7 +16,7 @@ require (
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.9.1
-	github.com/spf13/viper v1.20.0
+	github.com/spf13/viper v1.20.1
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/yaronf/httpsign v0.3.2
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
