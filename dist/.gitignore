@@ -1,0 +1,7 @@
+RPMS/
+SRPMS/
+BUILD/
+BUILDROOT/
+bin/
+*.spec
+*.tar.gz
