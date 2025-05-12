@@ -1,8 +1,26 @@
+version: "2"
 linters:
   enable:
-    - revive
-    - gofumpt
     - gosec
-linters-settings:
-  errcheck:
-    check-blank: true
+    - revive
+  settings:
+    errcheck:
+      check-blank: true
+  exclusions:
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofumpt
+  exclusions:
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
