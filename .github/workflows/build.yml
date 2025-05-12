@@ -17,9 +17,9 @@ jobs:
       - name: Display Go version
         run: go version
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.64.5
+          version: v2.1
           args: --timeout=5m
       - name: Build
         run: make build
