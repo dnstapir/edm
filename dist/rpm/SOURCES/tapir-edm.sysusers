@@ -1,0 +1,3 @@
+u tapir-edm - "DNSTAPIR EDGE EDM" /etc/dnstapir/ /sbin/nologin
+g dnstapir -
+m tapir-edm dnstapir

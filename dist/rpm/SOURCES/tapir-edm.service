@@ -1,0 +1,13 @@
+[Unit]
+Description=DNSTAPIR EDGE DNSTAP Minimiser
+Wants=unbound.service
+Before=unbound.service
+
+[Service]
+Type=simple
+User=tapir-edm
+Group=dnstapir
+ExecStart=/usr/bin/tapir-edm --config-file /etc/dnstapir/tapir-edm.toml run
+
+[Install]
+WantedBy=multi-user.target
