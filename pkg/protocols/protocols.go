@@ -48,6 +48,7 @@ const (
 	NewQnameJSONType              NewQnameJSONTypeConst = "new_qname"
 	NewQnameJSONInitiatorClient   NewQnameJSONInitiator = "client"
 	NewQnameJSONInitiatorResolver NewQnameJSONInitiator = "resolver"
+	NewQnameJSONVersion                                 = 0
 )
 
 // Consts and content of bitsFromMsg() borrowed from miekg/dns, see
@@ -108,5 +109,6 @@ func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 		Qclass:    &qClass,
 		Timestamp: &ts,
 		Flags:     &flags,
+		Version:   NewQnameJSONVersion,
 	}
 }
