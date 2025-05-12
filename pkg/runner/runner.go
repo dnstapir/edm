@@ -1204,7 +1204,7 @@ type dnstapMinimiser struct {
 	debug                     bool               // if we should print debug messages during operation
 	sessionWriterCh           chan *prevSessions
 	histogramWriterCh         chan *wellKnownDomainsData
-	newQnamePublisherCh       chan *protocols.EventsMqttMessageNewQnameJson
+	newQnamePublisherCh       chan *protocols.NewQnameJSON
 	sessionCollectorCh        chan *sessionData
 	histogramSenderDisabled   bool
 	aggregSender              aggregateSender
@@ -1340,7 +1340,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	// minimiser loop, otherwise the program can hang on shutdown.
 	edm.sessionWriterCh = make(chan *prevSessions, 100)
 	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
-	edm.newQnamePublisherCh = make(chan *protocols.EventsMqttMessageNewQnameJson, conf.NewQnameBuffer)
+	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, conf.NewQnameBuffer)
 	edm.sessionCollectorCh = make(chan *sessionData, 100)
 
 	return edm, nil

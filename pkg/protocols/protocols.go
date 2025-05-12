@@ -6,7 +6,49 @@ import (
 	"github.com/miekg/dns"
 )
 
-// This file contains custom functions/methods around the content of generated.go
+// Implements https://github.com/dnstapir/protocols/blob/main/events/new_qname.yaml
+type NewQnameJSON struct {
+	// Flag Field (QR/Opcode/AA/TC/RD/TA/Z/RCODE)
+	Flags *int `json:"flags,omitempty"`
+
+	// Initiator corresponds to the JSON schema field "initiator".
+	Initiator *NewQnameJSONInitiator `json:"initiator,omitempty"`
+
+	// MessageId corresponds to the JSON schema field "message_id".
+	MessageID *string `json:"message_id,omitempty"`
+
+	// Query Class
+	Qclass *int `json:"qclass,omitempty"`
+
+	// Query Name
+	Qname string `json:"qname"`
+
+	// Query Type
+	Qtype *int `json:"qtype,omitempty"`
+
+	// Rdlength corresponds to the JSON schema field "rdlength".
+	Rdlength *int `json:"rdlength,omitempty"`
+
+	// Timestamp corresponds to the JSON schema field "timestamp".
+	Timestamp *time.Time `json:"timestamp,omitempty"`
+
+	// Type corresponds to the JSON schema field "type".
+	Type NewQnameJSONTypeConst `json:"type"`
+
+	// Version corresponds to the JSON schema field "version".
+	Version int `json:"version"`
+}
+
+type (
+	NewQnameJSONInitiator string
+	NewQnameJSONTypeConst string
+)
+
+const (
+	NewQnameJSONType              NewQnameJSONTypeConst = "new_qname"
+	NewQnameJSONInitiatorClient   NewQnameJSONInitiator = "client"
+	NewQnameJSONInitiatorResolver NewQnameJSONInitiator = "resolver"
+)
 
 // Consts and content of bitsFromMsg() borrowed from miekg/dns, see
 // https://github.com/miekg/dns/issues/1499
@@ -52,19 +94,19 @@ func bitsFromMsg(dns *dns.Msg) uint16 {
 	return bits
 }
 
-func NewQnameEvent(msg *dns.Msg, ts time.Time) EventsMqttMessageNewQnameJson {
+func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 	bits := bitsFromMsg(msg)
 	flags := int(bits)
 
 	qType := int(msg.Question[0].Qtype)
 	qClass := int(msg.Question[0].Qclass)
 
-	return EventsMqttMessageNewQnameJson{
-		Type:      "new_qname",
-		Qname:     DomainName(msg.Question[0].Name),
+	return NewQnameJSON{
+		Type:      NewQnameJSONType,
+		Qname:     msg.Question[0].Name,
 		Qtype:     &qType,
 		Qclass:    &qClass,
-		Timestamp: ts,
+		Timestamp: &ts,
 		Flags:     &flags,
 	}
 }
