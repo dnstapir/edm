@@ -48,11 +48,11 @@ import (
 	"github.com/smhanov/dawg"
 	"github.com/spaolacci/murmur3"
 	"github.com/spf13/viper"
-	"github.com/xitongsys/parquet-go/writer"
 	"github.com/yawning/cryptopan"
 	"go4.org/netipx"
 	"golang.org/x/crypto/argon2"
 	"google.golang.org/protobuf/proto"
+    parquet "github.com/parquet-go/parquet-go"
 )
 
 // use a single instance of Validate, it caches struct info
@@ -2162,23 +2162,23 @@ func (edm *dnstapMinimiser) writeSessionParquet(ps *prevSessions, dataDir string
 		}
 	}()
 
-	parquetWriter, err := writer.NewParquetWriterFromWriter(outFile, new(sessionData), 4)
-	if err != nil {
-		return fmt.Errorf("writeSessionParquet: unable to create parquet writer: %w", err)
-	}
+    parquetWriter := parquet.NewGenericWriter[sessionData](outFile)
 
-	for _, sessionData := range ps.sessions {
-		err = parquetWriter.Write(*sessionData)
-		if err != nil {
-			writeFailed = true
-			return fmt.Errorf("writeSessionParquet: unable to call Write() on parquet writer: %w", err)
-		}
-	}
+    sessions := make([]sessionData, len(ps.sessions))
+    for i,p := range ps.sessions {
+        sessions[i] = *p
+    }
 
-	err = parquetWriter.WriteStop()
+	_, err = parquetWriter.Write(sessions)
 	if err != nil {
 		writeFailed = true
-		return fmt.Errorf("writeSessionParquet: unable to call WriteStop() on parquet writer: %w", err)
+		return fmt.Errorf("writeSessionParquet: unable to call Write() on parquet writer: %w", err)
+	}
+
+	err = parquetWriter.Close()
+	if err != nil {
+		writeFailed = true
+		return fmt.Errorf("writeSessionParquet: unable to call Close() on parquet writer: %w", err)
 	}
 
 	// We need to close the file before renaming it
@@ -2278,10 +2278,7 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 		}
 	}()
 
-	parquetWriter, err := writer.NewParquetWriterFromWriter(outFile, new(histogramData), 4)
-	if err != nil {
-		return fmt.Errorf("writeHistogramParquet: unable to create parquet writer: %w", err)
-	}
+    parquetWriter := parquet.NewGenericWriter[histogramData](outFile)
 
 	startTimeMicro := startTime.UnixMicro()
 	for index, hGramData := range prevWellKnownDomainsData.m {
@@ -2302,17 +2299,17 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 		hGramData.V4ClientCountHLLBytes = &v4ClientHLLString
 		hGramData.V6ClientCountHLLBytes = &v6ClientHLLString
 
-		err = parquetWriter.Write(hGramData)
+		_, err = parquetWriter.Write([]histogramData{*hGramData})
 		if err != nil {
 			writeFailed = true
 			return fmt.Errorf("writeHistogramParquet: unable to call Write() on parquet writer: %w", err)
 		}
 	}
 
-	err = parquetWriter.WriteStop()
+	err = parquetWriter.Close()
 	if err != nil {
 		writeFailed = true
-		return fmt.Errorf("writeHistogramParquet: unable to call WriteStop() on parquet writer: %w", err)
+		return fmt.Errorf("writeHistogramParquet: unable to call Close() on parquet writer: %w", err)
 	}
 
 	// We need to close the file before renaming it
