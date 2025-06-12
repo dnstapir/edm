@@ -1851,8 +1851,8 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 			} else {
 				i64dIntNetwork := int64(dipIntNetwork) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 				i64dIntHost := int64(dipIntHost)       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.SourceIPv6Network = &i64dIntNetwork
-				sd.SourceIPv6Host = &i64dIntHost
+				sd.DestIPv6Network = &i64dIntNetwork
+				sd.DestIPv6Host = &i64dIntHost
 			}
 		}
 	default:
