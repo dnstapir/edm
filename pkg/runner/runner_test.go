@@ -24,7 +24,7 @@ import (
 
 var (
 	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
-	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in testadata directory")
+	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in testdata directory")
 	defaultTC    = testConfiger{
 		CryptopanKey:            "key1",
 		CryptopanKeySalt:        "aabbccddeeffgghh",
