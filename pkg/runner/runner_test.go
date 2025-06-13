@@ -23,9 +23,9 @@ import (
 )
 
 var (
-	testDawg   = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
-	genParquet = flag.Bool("gen-parquet", false, "perform tests generating parquet files in testadata directory")
-	defaultTC  = testConfiger{
+	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
+	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in testadata directory")
+	defaultTC    = testConfiger{
 		CryptopanKey:            "key1",
 		CryptopanKeySalt:        "aabbccddeeffgghh",
 		CryptopanAddressEntries: 10,
@@ -1763,23 +1763,10 @@ func BenchmarkSessionWriter(b *testing.B) {
 }
 
 func TestSessionWriter(t *testing.T) {
-	if !*genParquet {
-		t.Skip("skipping test generating parquet file in testdata directory")
-	}
-
-	f, err := os.Create("testdata/generated-session.parquet")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		err := f.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-	}()
+	var buf bytes.Buffer
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[sessionData](f, sessionDataSchema, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, sessionDataSchema, parquet.Compression(snappyCodec))
 
 	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
 	if err != nil {
@@ -1826,25 +1813,30 @@ func TestSessionWriter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to call Close() on parquet writer: %s", err)
 	}
-}
 
-func TestHistogramWriter(t *testing.T) {
-	if !*genParquet {
-		t.Skip("skipping test generating parquet file in testdata directory")
-	}
-
-	f, err := os.Create("testdata/generated-histogram.parquet")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		err := f.Close()
+	if *writeParquet {
+		f, err := os.Create("testdata/generated-session.parquet")
 		if err != nil {
 			t.Fatal(err)
 		}
-	}()
+		defer func() {
+			err := f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}()
 
-	err = setHllDefaults()
+		_, err = f.Write(buf.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestHistogramWriter(t *testing.T) {
+	var buf bytes.Buffer
+
+	err := setHllDefaults()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1859,7 +1851,7 @@ func TestHistogramWriter(t *testing.T) {
 	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[histogramData](f, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[histogramData](&buf, parquet.Compression(snappyCodec))
 
 	hd := histogramData{
 		dnsLabels: dnsLabels{
@@ -1891,6 +1883,24 @@ func TestHistogramWriter(t *testing.T) {
 	err = parquetWriter.Close()
 	if err != nil {
 		t.Fatalf("unable to call WriteStop() on parquet writer: %s", err)
+	}
+
+	if *writeParquet {
+		f, err := os.Create("testdata/generated-histogram.parquet")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			err := f.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}()
+
+		_, err = f.Write(buf.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
