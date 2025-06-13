@@ -1826,7 +1826,7 @@ func TestSessionWriter(t *testing.T) {
 			}
 		}()
 
-		_, err = f.Write(buf.Bytes())
+		_, err = buf.WriteTo(f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1897,7 +1897,7 @@ func TestHistogramWriter(t *testing.T) {
 			}
 		}()
 
-		_, err = f.Write(buf.Bytes())
+		_, err = buf.WriteTo(f)
 		if err != nil {
 			t.Fatal(err)
 		}
