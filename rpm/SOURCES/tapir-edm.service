@@ -1,7 +1,5 @@
 [Unit]
 Description=DNSTAPIR EDGE DNSTAP Minimiser
-Wants=unbound.service
-Before=unbound.service
 
 [Service]
 Type=simple

@@ -3,8 +3,8 @@ Name:          tapir-edm
 Version:       @@VERSION@@
 Release:       1%{?dist}
 Group:         dnstapir/edge
-Summary:       DNSTAPIR EDGE Policy Processor
-License:       BSD
+Summary:       DNSTAPIR EDGE DNSTAPR Minimiser
+License:       BSD-2-Clause
 URL:           https://www.github.com/dnstapir/edm
 Source0:       %{name}.tar.gz
 Source1:       tapir-edm.service

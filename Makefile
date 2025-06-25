@@ -39,14 +39,16 @@ clean:
 	-rm -rf rpm/{BUILD,BUILDROOT,SPECS,SRPMS,RPMS}
 
 tarball:
-	mkdir -p rpm/SPECS
+	# Create VERSION file with version info and add it to tarball
+	# Version string contains a snapshot as described here:
+	#     https://docs.fedoraproject.org/en-US/packaging-guidelines/Versioning/#_snapshots
 	echo "$(VERSION)^$(DATE).$(SHA)" > VERSION
-	sed -e "s/@@VERSION@@/$$(cat VERSION)/g" $(SPECFILE_IN) > $(SPECFILE_OUT)
 	git archive --format=tar.gz --prefix=$(OUTPUT)/ -o $(OUTPUT).tar.gz --add-file VERSION HEAD
 
 srpm: SHELL:=/bin/bash
 srpm: tarball
 	mkdir -p rpm/{BUILD,RPMS,SRPMS,SPECS}
+	sed -e "s/@@VERSION@@/$$(cat VERSION)/g" $(SPECFILE_IN) > $(SPECFILE_OUT)
 	cp $(OUTPUT).tar.gz rpm/SOURCES/
 	rpmbuild -bs --define "%_topdir ./rpm" --undefine=dist $(SPECFILE_OUT)
 	test -z "$(outdir)" || cp rpm/SRPMS/*.src.rpm "$(outdir)"
