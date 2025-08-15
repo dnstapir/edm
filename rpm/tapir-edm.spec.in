@@ -12,14 +12,28 @@ Source2:       well-known-domains.dawg
 Source3:       ignored.dawg
 Source4:       ignored-ips
 BuildRequires: git
+%if 0%{?suse_version}
+BuildRequires: go
+%if 0%{?suse_version} >= 1500
+%ifarch x86_64 aarch64
+BuildRequires: go-race
+%endif
+%endif
+%else
 BuildRequires: golang
+%endif
 
 %description
 DNSTAPIR EDGE DNSTAP Minimiser
 
+# Disable building of debug packages for RHEL (we include symbols per default)
+%if 0%{?rhel} >= 9
+%global debug_package %{nil}
+%endif
+
 %{!?_unitdir: %define _unitdir /usr/lib/systemd/system/}
 %{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d/}
-%{!?_localstatedir: %define _localstatedir /var/}
+%{!?_localstatedir: %define _localstatedir /var/lib}
 
 %prep
 %setup -n %{name}
@@ -37,7 +51,7 @@ install -p -m 0755 %{name} %{buildroot}%{_bindir}/%{name}
 install -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}
 install -m 0664 -D %{SOURCE2} %{buildroot}%{_sysconfdir}/dnstapir/edm/well-known-domains.dawg
 install -m 0664 -D %{SOURCE3} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored.dawg
-install -m 0664 -D %{SOURCE3} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ips
+install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ips
 
 %files
 %license LICENSE
