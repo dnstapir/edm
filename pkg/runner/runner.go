@@ -481,7 +481,8 @@ func setHllDefaults() error {
 	err := hll.Defaults(hll.Settings{
 		Log2m:             10,
 		Regwidth:          4,
-		ExplicitThreshold: hll.AutoExplicitThreshold, SparseEnabled: true,
+		ExplicitThreshold: 0,
+		SparseEnabled:     true,
 	})
 
 	return err
