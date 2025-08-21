@@ -57,7 +57,7 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 		ServerUrls: []*url.URL{u},
 		TlsCfg: &tls.Config{
 			RootCAs:              caCertPool,
-			GetClientCertificate: clientCertStore.getClientCertficate,
+			GetClientCertificate: clientCertStore.getClientCertificate,
 			MinVersion:           tls.VersionTLS13,
 		},
 		KeepAlive:      mqttKeepAlive,

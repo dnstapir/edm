@@ -47,7 +47,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 			ResponseHeaderTimeout: 10 * time.Second,
 			TLSClientConfig: &tls.Config{
 				RootCAs:              caCertPool,
-				GetClientCertificate: clientCertStore.getClientCertficate,
+				GetClientCertificate: clientCertStore.getClientCertificate,
 				MinVersion:           tls.VersionTLS13,
 			},
 		},

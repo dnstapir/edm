@@ -249,10 +249,17 @@ type certStore struct {
 	mtx  sync.RWMutex
 }
 
+var errNoClientCertificate = errors.New("no client certificate loaded")
+
 // Implements tls.Config.GetClientCertificate
-func (cs *certStore) getClientCertficate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 	cs.mtx.RLock()
 	defer cs.mtx.RUnlock()
+
+	if cs.cert == nil {
+		return nil, fmt.Errorf("getClientCertificate: %w", errNoClientCertificate)
+	}
+
 	return cs.cert, nil
 }
 
