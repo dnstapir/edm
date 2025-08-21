@@ -250,7 +250,7 @@ type certStore struct {
 }
 
 // Implements tls.Config.GetClientCertificate
-func (cs *certStore) getClientCertficate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 	cs.mtx.RLock()
 	defer cs.mtx.RUnlock()
 
