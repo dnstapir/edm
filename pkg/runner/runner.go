@@ -253,6 +253,11 @@ type certStore struct {
 func (cs *certStore) getClientCertficate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 	cs.mtx.RLock()
 	defer cs.mtx.RUnlock()
+
+	if cs.cert == nil {
+		return nil, errors.New("no client certificate loaded, you need to call setCert()")
+	}
+
 	return cs.cert, nil
 }
 
