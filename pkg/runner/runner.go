@@ -263,7 +263,7 @@ func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Cer
 	return cs.cert, nil
 }
 
-func (cs *certStore) setCert(certPath string, keyPath string) error {
+func (cs *certStore) loadCert(certPath string, keyPath string) error {
 	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
 	if err != nil {
 		return fmt.Errorf("unable to load x509 cert: %w", err)
@@ -934,7 +934,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !edm.histogramSenderDisabled {
 		// Setup client cert/key for mTLS authentication
 		httpClientCertStore := newCertStore()
-		err = httpClientCertStore.setCert(startConf.HTTPClientCertFile, startConf.HTTPClientKeyFile)
+		err = httpClientCertStore.loadCert(startConf.HTTPClientCertFile, startConf.HTTPClientKeyFile)
 		if err != nil {
 			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
 			os.Exit(1)
@@ -945,7 +945,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		err = edm.registerFSWatcher(startConf.HTTPClientCertFile, func(filename string) error {
 			conf := edm.getConfig()
 			edm.log.Info("reloading HTTP cert store because file was modified", "filename", filename)
-			err := httpClientCertStore.setCert(conf.HTTPClientCertFile, conf.HTTPClientKeyFile)
+			err := httpClientCertStore.loadCert(conf.HTTPClientCertFile, conf.HTTPClientKeyFile)
 			return err
 		})
 		if err != nil {
@@ -957,7 +957,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !edm.mqttDisabled {
 		// Setup client cert/key for mTLS authentication
 		mqttClientCertStore := newCertStore()
-		err = mqttClientCertStore.setCert(startConf.MQTTClientCertFile, startConf.MQTTClientKeyFile)
+		err = mqttClientCertStore.loadCert(startConf.MQTTClientCertFile, startConf.MQTTClientKeyFile)
 		if err != nil {
 			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
 			os.Exit(1)
@@ -968,7 +968,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		err = edm.registerFSWatcher(startConf.MQTTClientCertFile, func(filename string) error {
 			conf := edm.getConfig()
 			edm.log.Info("reloading MQTT cert store because file was modified", "filename", filename)
-			err := mqttClientCertStore.setCert(conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
+			err := mqttClientCertStore.loadCert(conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
 			return err
 		})
 		if err != nil {
