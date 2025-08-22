@@ -52,11 +52,6 @@ func BenchmarkWKDTLookup(b *testing.B) {
 		b.Error(err)
 	}
 
-	err = setHllDefaults()
-	if err != nil {
-		b.Fatalf("unable to set Hll defaults: %s", err)
-	}
-
 	wkdTracker, err := newWellKnownDomainsTracker(dawgFinder, time.Time{})
 	if err != nil {
 		b.Fatal(err)
@@ -177,12 +172,6 @@ func TestWKD(t *testing.T) {
 		if suffixMatch != test.suffixMatch {
 			t.Fatalf("%s: suffix match mismatch for %s, expected: %t, have: %t", test.name, test.domain, test.suffixMatch, suffixMatch)
 		}
-	}
-
-	// Prepare for inserting Hll data when calling isKnown()
-	err = setHllDefaults()
-	if err != nil {
-		t.Fatalf("unable to set HLL defaults: %s", err)
 	}
 
 	wkdLookupTests := []struct {
@@ -1836,16 +1825,20 @@ func TestSessionWriter(t *testing.T) {
 func TestHistogramWriter(t *testing.T) {
 	var buf bytes.Buffer
 
-	err := setHllDefaults()
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	ip4 := netip.MustParseAddr("198.51.100.20")
 	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 
-	v4hll := hll.Hll{}
-	v6hll := hll.Hll{}
+	hllSettings := getHllDefaults(0)
+
+	v4hll, err := hll.NewHll(hllSettings)
+	if err != nil {
+		t.Fatalf("unable to init IPv4 HLL: %s", err)
+	}
+
+	v6hll, err := hll.NewHll(hllSettings)
+	if err != nil {
+		t.Fatalf("unable to init IPv6 HLL: %s", err)
+	}
 
 	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
 	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
@@ -1907,16 +1900,22 @@ func TestHistogramWriter(t *testing.T) {
 func BenchmarkHistogramWriter(b *testing.B) {
 	b.ReportAllocs()
 
-	err := setHllDefaults()
-	if err != nil {
-		b.Fatal(err)
-	}
+	var err error
 
 	ip4 := netip.MustParseAddr("198.51.100.20")
 	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 
-	v4hll := hll.Hll{}
-	v6hll := hll.Hll{}
+	hllSettings := getHllDefaults(0)
+
+	v4hll, err := hll.NewHll(hllSettings)
+	if err != nil {
+		b.Fatalf("unable to init IPv4 HLL: %s", err)
+	}
+
+	v6hll, err := hll.NewHll(hllSettings)
+	if err != nil {
+		b.Fatalf("unable to init IPv6 HLL: %s", err)
+	}
 
 	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
 	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
@@ -1956,5 +1955,44 @@ func BenchmarkHistogramWriter(b *testing.B) {
 	err = parquetWriter.Close()
 	if err != nil {
 		b.Fatalf("unable to call WriteStop() on parquet writer: %s", err)
+	}
+}
+
+func BenchmarkHgramWithHLLDefaults(b *testing.B) {
+	b.ReportAllocs()
+
+	hllSettings := getHllDefaults(0)
+	err := hll.Defaults(hllSettings)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ip4 := netip.MustParseAddr("198.51.100.20")
+
+	v4Hash := murmur3.Sum64(ip4.AsSlice())
+
+	for b.Loop() {
+		hd := &histogramData{}
+		hd.v4ClientHLL.AddRaw(v4Hash)
+	}
+}
+
+func BenchmarkHgramWithHLLSettings(b *testing.B) {
+	b.ReportAllocs()
+
+	ip4 := netip.MustParseAddr("198.51.100.20")
+
+	v4Hash := murmur3.Sum64(ip4.AsSlice())
+
+	hllSettings := getHllDefaults(0)
+
+	for b.Loop() {
+		hd := &histogramData{}
+		h, err := hll.NewHll(hllSettings)
+		if err != nil {
+			b.Fatal(err)
+		}
+		hd.v4ClientHLL = h
+		hd.v4ClientHLL.AddRaw(v4Hash)
 	}
 }

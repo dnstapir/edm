@@ -60,42 +60,43 @@ import (
 var validate = validator.New(validator.WithRequiredStructEnabled())
 
 type config struct {
-	ConfigFile                string `mapstructure:"config-file" validate:"required"`
-	DisableSessionFiles       bool   `mapstructure:"disable-session-files"`
-	DisableHistogramSender    bool   `mapstructure:"disable-histogram-sender"`
-	DisableMQTT               bool   `mapstructure:"disable-mqtt"`
-	DisableMQTTFilequeue      bool   `mapstructure:"disable-mqtt-filequeue"`
-	InputUnix                 string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
-	InputTCP                  string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
-	InputTLS                  string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
-	InputTLSCertFile          string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
-	InputTLSKeyFile           string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
-	InputTLSClientCAFile      string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
-	CryptopanKey              string `mapstructure:"cryptopan-key" validate:"required"`
-	CryptopanKeySalt          string `mapstructure:"cryptopan-key-salt" validate:"required"`
-	WellKnownDomainsFile      string `mapstructure:"well-known-domains-file" validate:"required"`
-	IgnoredClientIPsFile      string `mapstructure:"ignored-client-ips-file"`
-	IgnoredQuestionNamesFile  string `mapstructure:"ignored-question-names-file"`
-	DataDir                   string `mapstructure:"data-dir" validate:"required"`
-	MinimiserWorkers          int    `mapstructure:"minimiser-workers" validate:"required"`
-	MQTTSigningKeyFile        string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
-	MQTTClientKeyFile         string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT"`
-	MQTTClientCertFile        string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT"`
-	MQTTServer                string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
-	MQTTCAFile                string `mapstructure:"mqtt-ca-file"`
-	MQTTKeepalive             uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
-	QnameSeenEntries          int    `mapstructure:"qname-seen-entries"`
-	CryptopanAddressEntries   int    `mapstructure:"cryptopan-address-entries"`
-	NewQnameBuffer            int    `mapstructure:"newqname-buffer"`
-	HTTPCAFile                string `mapstructure:"http-ca-file"`
-	HTTPSigningKeyFile        string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
-	HTTPClientKeyFile         string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender"`
-	HTTPClientCertFile        string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender"`
-	HTTPURL                   string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
-	Debug                     bool   `mapstructure:"debug"`
-	DebugDnstapFilename       string `mapstructure:"debug-dnstap-filename"`
-	DebugEnableBlockProfiling bool   `mapstructure:"debug-enable-blockprofiling"`
-	DebugEnableMutexProfiling bool   `mapstructure:"debug-enable-mutexprofiling"`
+	ConfigFile                    string `mapstructure:"config-file" validate:"required"`
+	DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
+	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender"`
+	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
+	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
+	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
+	InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
+	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
+	InputTLSCertFile              string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
+	InputTLSKeyFile               string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
+	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
+	CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required"`
+	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required"`
+	WellKnownDomainsFile          string `mapstructure:"well-known-domains-file" validate:"required"`
+	HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold" validate:"required,gte=0"`
+	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file"`
+	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file"`
+	DataDir                       string `mapstructure:"data-dir" validate:"required"`
+	MinimiserWorkers              int    `mapstructure:"minimiser-workers" validate:"required"`
+	MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
+	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT"`
+	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT"`
+	MQTTServer                    string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
+	MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
+	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
+	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
+	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
+	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
+	HTTPCAFile                    string `mapstructure:"http-ca-file"`
+	HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
+	HTTPClientKeyFile             string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender"`
+	HTTPClientCertFile            string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender"`
+	HTTPURL                       string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
+	Debug                         bool   `mapstructure:"debug"`
+	DebugDnstapFilename           string `mapstructure:"debug-dnstap-filename"`
+	DebugEnableBlockProfiling     bool   `mapstructure:"debug-enable-blockprofiling"`
+	DebugEnableMutexProfiling     bool   `mapstructure:"debug-enable-mutexprofiling"`
 }
 
 const dawgNotFound = -1
@@ -155,12 +156,21 @@ type histogramData struct {
 	// parquet file, and thus do not need to be exported
 	v4ClientHLL hll.Hll
 	v6ClientHLL hll.Hll
+
+	// V4ClientCount/V6ClientCount always contain the cardinality
+	// calculation result
+	V4ClientCount uint64 `parquet:"v4client_count"`
+	V6ClientCount uint64 `parquet:"v6client_count"`
+
 	// Would probably be cleaner to use a []byte instead of string with
 	// struct tag "bytes" here, but it seems the parquet-go library does
 	// not handle "optional" []byte fields correctly right now, see:
 	// https://github.com/parquet-go/parquet-go/issues/303
-	V4ClientCountHLLBytes string `parquet:"v4client_count,bytes,optional"`
-	V6ClientCountHLLBytes string `parquet:"v6client_count,bytes,optional"`
+	//
+	// These fields are NULL when HLL uses explicit storage, otherwise
+	// contain the probabilistic HLL bytes
+	V4ClientCountHLLBytes string `parquet:"v4client_count_hll,bytes,optional"`
+	V6ClientCountHLLBytes string `parquet:"v6client_count_hll,bytes,optional"`
 }
 
 // We need to create the session data schema by hand instead of basing it of
@@ -484,15 +494,13 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 	}
 }
 
-func setHllDefaults() error {
-	err := hll.Defaults(hll.Settings{
+func getHllDefaults(explicitThreshold int) hll.Settings {
+	return hll.Settings{
 		Log2m:             10,
 		Regwidth:          4,
-		ExplicitThreshold: 0,
+		ExplicitThreshold: explicitThreshold,
 		SparseEnabled:     true,
-	})
-
-	return err
+	}
 }
 
 func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore) {
@@ -1030,12 +1038,6 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}
 	dti.SetTimeout(time.Second * 5)
 	dti.SetLogger(log.Default())
-
-	err = setHllDefaults()
-	if err != nil {
-		logger.Error("unable to set Hll defaults", "error", err)
-		os.Exit(1)
-	}
 
 	// We need to keep track of domains that are not on the well-known
 	// domain list yet we have seen since we started. To limit the
@@ -2245,6 +2247,52 @@ func getStartTimeFromRotationTime(rotationTime time.Time) time.Time {
 	return rotationTime.Add(-time.Second * 60)
 }
 
+// Unfortunately the hll library does not expose what format
+// the HLL is being stored in so figure things out manually.
+//
+// The format of the bytes are documented at
+// https://github.com/aggregateknowledge/hll-storage-spec
+//
+// See https://github.com/segmentio/go-hll/issues/8 for a request to make this easier.
+//
+// BEGIN: Code manually based on https://github.com/segmentio/go-hll/blob/main/hll.go
+
+// storageType is an enum whose values match the type values in the hll storage
+// spec.  In the the spec, the "dense" value is referred to as "full".  We use
+// the name dense because we fined it to be more descriptive.
+type hllStorageType int
+
+const (
+	hllUndefined hllStorageType = iota
+	hllEmpty
+	hllExplicit
+	hllSparse
+	hllDense
+)
+
+// END: Code manually based on https://github.com/segmentio/go-hll/blob/main/hll.go
+
+const (
+	supportedHLLVersion = 1
+	hllVersionShift     = 4
+	hllTypeMask         = 0xF
+)
+
+func parseHllStorageType(hllBytes []byte) (hllStorageType, error) {
+	if len(hllBytes) == 0 {
+		return 0, fmt.Errorf("parseHLLStorageType: empty HLL byte slice")
+	}
+	version := hllBytes[0] >> hllVersionShift
+	// Verify the HLL format is at the expected version so we do
+	// not make the wrong assumptions about the meaning of the bytes
+	if version != supportedHLLVersion {
+		return 0, fmt.Errorf("parseHllStorageType: unexpected version: %d", version)
+	}
+	storageType := hllStorageType(hllBytes[0] & hllTypeMask)
+
+	return storageType, nil
+}
+
 func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) error {
 	if prevWellKnownDomainsData.dawgIsRotated {
 		defer func() {
@@ -2292,6 +2340,7 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 	parquetWriter := parquet.NewGenericWriter[histogramData](outFile, parquet.Compression(snappyCodec))
 
 	startTimeMicro := startTime.UnixMicro()
+
 	for index, hGramData := range prevWellKnownDomainsData.m {
 		domain, err := prevWellKnownDomainsData.dawgFinder.AtIndex(index)
 		if err != nil {
@@ -2304,9 +2353,30 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 		edm.setLabels(labels, labelLimit, &hGramData.dnsLabels)
 		hGramData.StartTime = startTimeMicro
 
-		// Write out the bytes from our hll data structures
-		hGramData.V4ClientCountHLLBytes = string(hGramData.v4ClientHLL.ToBytes())
-		hGramData.V6ClientCountHLLBytes = string(hGramData.v6ClientHLL.ToBytes())
+		hGramData.V4ClientCount = hGramData.v4ClientHLL.Cardinality()
+		hGramData.V6ClientCount = hGramData.v6ClientHLL.Cardinality()
+
+		v4HLLBytes := hGramData.v4ClientHLL.ToBytes()
+		v4HLLType, err := parseHllStorageType(v4HLLBytes)
+		if err != nil {
+			writeFailed = true
+			return fmt.Errorf("writeHistogramParquet: IPv4 HLL parsing failed: %w", err)
+		}
+
+		v6HLLBytes := hGramData.v6ClientHLL.ToBytes()
+		v6HLLType, err := parseHllStorageType(v6HLLBytes)
+		if err != nil {
+			writeFailed = true
+			return fmt.Errorf("writeHistogramParquet: IPv6 HLL parsing failed: %w", err)
+		}
+
+		// Include bytes from our hll data structures if they are stored with a probabilistic storage type
+		if v4HLLType == hllSparse || v4HLLType == hllDense {
+			hGramData.V4ClientCountHLLBytes = string(v4HLLBytes)
+		}
+		if v6HLLType == hllSparse || v6HLLType == hllDense {
+			hGramData.V6ClientCountHLLBytes = string(v6HLLBytes)
+		}
 
 		_, err = parquetWriter.Write([]histogramData{*hGramData})
 		if err != nil {
@@ -2467,6 +2537,10 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 
 	retryChannelClosed := false
 
+	startupConf := edm.getConfig()
+
+	hllSettings := getHllDefaults(startupConf.HistogramHLLExplicitThreshold)
+
 collectorLoop:
 	for {
 		select {
@@ -2495,6 +2569,21 @@ collectorLoop:
 				// the hot path of dealing with dnstap packets the less work we do the
 				// better. They are filled in prior to writing out the parquet file.
 				wkd.m[wu.dawgIndex] = &histogramData{}
+
+				var err error
+				wkd.m[wu.dawgIndex].v4ClientHLL, err = hll.NewHll(hllSettings)
+				if err != nil {
+					edm.log.Error("unable to initialize IPv4 HLL", "error", err)
+					// This is never expected to happen
+					panic(err)
+				}
+
+				wkd.m[wu.dawgIndex].v6ClientHLL, err = hll.NewHll(hllSettings)
+				if err != nil {
+					edm.log.Error("unable to initialize IPv6 HLL", "error", err)
+					// This is never expected to happen
+					panic(err)
+				}
 
 				esb := new(edmStatusBits)
 				if wu.suffixMatch {
@@ -2552,6 +2641,15 @@ collectorLoop:
 			if len(prevWKD.m) > 0 {
 				edm.histogramWriterCh <- prevWKD
 			}
+
+			// See if we need to modify anything based on a config update
+			conf := edm.getConfig()
+
+			if conf.HistogramHLLExplicitThreshold != hllSettings.ExplicitThreshold {
+				edm.log.Info("updating HLL explicit threshold based on config change", "from", hllSettings.ExplicitThreshold, "to", conf.HistogramHLLExplicitThreshold)
+				hllSettings.ExplicitThreshold = conf.HistogramHLLExplicitThreshold
+			}
+
 		case <-wkd.stop:
 			// Tell retryer to stop
 			edm.log.Info("dataCollector: telling update retryer to stop")
