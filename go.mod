@@ -5,7 +5,7 @@ go 1.24.6
 require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/dnstap/golang-dnstap v0.4.0
-	github.com/eclipse/paho.golang v0.22.0
+	github.com/eclipse/paho.golang v0.23.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.8
