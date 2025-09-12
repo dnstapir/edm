@@ -33,7 +33,7 @@ DNSTAPIR EDGE DNSTAP Minimiser
 
 %{!?_unitdir: %define _unitdir /usr/lib/systemd/system/}
 %{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d/}
-%{!?_localstatedir: %define _localstatedir /var/lib}
+%{!?_localstatedir: %define _localstatedir /var/}
 
 %prep
 %setup -n %{name}
@@ -45,7 +45,7 @@ make build
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_sysconfdir}/dnstapir/edm
-mkdir -p %{buildroot}%{_localstatedir}/edm/pebble
+mkdir -p %{buildroot}%{_localstatedir}/lib/edm/pebble
 
 install -p -m 0755 %{name} %{buildroot}%{_bindir}/%{name}
 install -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}
@@ -57,15 +57,15 @@ install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ip
 %license LICENSE
 
 %attr(0770,tapir-edm,dnstapir) %dir %{_sysconfdir}/dnstapir/edm
-%attr(0770,tapir-edm,dnstapir) %dir %{_localstatedir}/edm
-%attr(0770,tapir-edm,dnstapir) %dir %{_localstatedir}/edm/pebble
+%attr(0770,tapir-edm,dnstapir) %dir %{_localstatedir}/lib/edm
+%attr(0770,tapir-edm,dnstapir) %dir %{_localstatedir}/lib/edm/pebble
 
 %attr(0755,tapir-edm,dnstapir) %{_bindir}/%{name}
 %attr(0644,tapir-edm,dnstapir) %{_unitdir}/tapir-edm.service
 %attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/well-known-domains.dawg
 %attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored.dawg
 %attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
-%attr(0660,tapir-edm,dnstapir) %ghost %{_sysconfdir}/dnstapir/tapir-edm.toml
+%attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/tapir-edm.toml
 
 %pre
 /usr/bin/getent group dnstapir || /usr/sbin/groupadd -r dnstapir
