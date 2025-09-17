@@ -3,7 +3,7 @@ Name:          tapir-edm
 Version:       @@VERSION@@
 Release:       1%{?dist}
 Group:         dnstapir/edge
-Summary:       DNSTAPIR EDGE DNSTAPR Minimiser
+Summary:       TAPIR Edge DNSTAP Minimiser
 License:       BSD-2-Clause
 URL:           https://www.github.com/dnstapir/edm
 Source0:       %{name}.tar.gz
@@ -24,7 +24,7 @@ BuildRequires: golang
 %endif
 
 %description
-DNSTAPIR EDGE DNSTAP Minimiser
+TAPIR Edge DNSTAP Minimiser
 
 # Disable building of debug packages for RHEL (we include symbols per default)
 %if 0%{?rhel} >= 9
