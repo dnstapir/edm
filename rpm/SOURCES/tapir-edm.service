@@ -1,5 +1,5 @@
 [Unit]
-Description=DNSTAPIR EDGE DNSTAP Minimiser
+Description=TAPIR Edge DNSTAP Minimiser
 
 [Service]
 Type=simple
