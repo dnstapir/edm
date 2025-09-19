@@ -1996,3 +1996,137 @@ func BenchmarkHgramWithHLLSettings(b *testing.B) {
 		hd.v4ClientHLL.AddRaw(v4Hash)
 	}
 }
+
+func generateTestIPs(numIPv4, numIPv6 int, increment bool) []netip.Addr {
+	ips := []netip.Addr{}
+
+	ipv4Addr := netip.MustParseAddr("127.0.0.1")
+	for range numIPv4 {
+		ips = append(ips, ipv4Addr)
+		if increment {
+			ipv4Addr = ipv4Addr.Next()
+		}
+	}
+
+	ipv6Addr := netip.MustParseAddr("::1")
+	for range numIPv6 {
+		ips = append(ips, ipv6Addr)
+		if increment {
+			ipv6Addr = ipv6Addr.Next()
+		}
+	}
+	return ips
+}
+
+func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
+	// Make sure we only include HLL data once the number of unique IPv4 or
+	// IPv6 client IPs exceed the configured explicit threshold where we
+	// start using probabilistic HLL data.
+	discardLogger := slog.NewTextHandler(io.Discard, nil)
+	logger := slog.New(discardLogger)
+
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("unable to setup edm: %s", err)
+	}
+
+	tests := []struct {
+		description       string
+		explicitThreshold int
+		domains           []string
+		ips               []netip.Addr
+		ipv4HllIsNull     bool
+		ipv6HllIsNull     bool
+	}{
+		{
+			description:       "same number of IPv4/IPv6 as explicit threshold, should be NULL",
+			ipv4HllIsNull:     true,
+			ipv6HllIsNull:     true,
+			explicitThreshold: 10,
+			domains:           []string{"example.com.", "example.se."},
+			ips:               generateTestIPs(10, 10, true),
+		},
+		{
+			description:       "one more IPv4/IPv6 than explicit threshold, should not be NULL",
+			ipv4HllIsNull:     false,
+			ipv6HllIsNull:     false,
+			explicitThreshold: 10,
+			domains:           []string{"example.com.", "example.se."},
+			ips:               generateTestIPs(11, 11, true),
+		},
+		{
+			description:       "one more than explicit threshold but the same IPv4/IPv6, should be NULL",
+			ipv4HllIsNull:     true,
+			ipv6HllIsNull:     true,
+			explicitThreshold: 10,
+			domains:           []string{"example.com.", "example.se."},
+			ips:               generateTestIPs(11, 11, false),
+		},
+	}
+
+	for _, test := range tests {
+		wkd := wellKnownDomainsData{
+			m: map[int]*histogramData{},
+		}
+
+		hllSettings := getHllDefaults(test.explicitThreshold)
+
+		d := dawg.New()
+		for i, domain := range test.domains {
+			wkd.m[i] = edm.newHistogramData(hllSettings, false)
+			d.Add(domain)
+
+			wkd.m[i].OKCount++
+			wkd.m[i].NXCount += 2
+			wkd.m[i].FailCount += 3
+			wkd.m[i].ACount += 4
+			wkd.m[i].AAAACount += 5
+			wkd.m[i].MXCount += 6
+			wkd.m[i].NSCount += 7
+			wkd.m[i].OtherTypeCount += 8
+			wkd.m[i].OtherRcodeCount += 9
+			wkd.m[i].NonINCount += 10
+
+			for _, ip := range test.ips {
+				hllHash := murmur3.Sum64(ip.AsSlice())
+				if ip.IsValid() {
+					if ip.Unmap().Is4() {
+						wkd.m[i].v4ClientHLL.AddRaw(hllHash)
+					} else {
+						wkd.m[i].v6ClientHLL.AddRaw(hllHash)
+					}
+				}
+			}
+
+		}
+		wkd.dawgFinder = d.Finish()
+
+		startTime := time.Time{}
+		var b bytes.Buffer
+		err := edm.writeHistogramParquet(&b, startTime, &wkd, defaultLabelLimit)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		r := bytes.NewReader(b.Bytes())
+		rows, err := parquet.Read[histogramData](r, int64(r.Len()))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for _, row := range rows {
+			if test.ipv4HllIsNull && len(row.V4ClientCountHLLBytes) != 0 {
+				t.Fatalf("IPv4 HLL data should be length 0 but is %d", len(row.V4ClientCountHLLBytes))
+			}
+			if !test.ipv4HllIsNull && len(row.V4ClientCountHLLBytes) == 0 {
+				t.Fatal("IPv4 HLL data is 0 when it should have content")
+			}
+			if test.ipv6HllIsNull && len(row.V6ClientCountHLLBytes) != 0 {
+				t.Fatalf("IPv6 HLL data should be length 0 but is %d", len(row.V6ClientCountHLLBytes))
+			}
+			if !test.ipv6HllIsNull && len(row.V6ClientCountHLLBytes) == 0 {
+				t.Fatal("IPv6 HLL data is 0 when it should have content")
+			}
+		}
+	}
+}

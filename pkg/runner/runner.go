@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"log/slog"
@@ -58,6 +59,9 @@ import (
 
 // use a single instance of Validate, it caches struct info
 var validate = validator.New(validator.WithRequiredStructEnabled())
+
+// Labels 0-9
+const defaultLabelLimit = 10
 
 type config struct {
 	ConfigFile                    string `mapstructure:"config-file" validate:"required"`
@@ -1087,14 +1091,11 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	go edm.monitorChannelLen()
 
-	// Labels 0-9
-	labelLimit := 10
-
 	// Start record writers and data senders in the background
 	wg.Add(1)
 	go edm.sessionWriter(dataDir, &wg)
 	wg.Add(1)
-	go edm.histogramWriter(labelLimit, outboxDir, &wg)
+	go edm.histogramWriter(defaultLabelLimit, outboxDir, &wg)
 	if !edm.histogramSenderDisabled {
 		wg.Add(1)
 		go edm.histogramSender(outboxDir, sentDir, &wg)
@@ -1161,7 +1162,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	for minimiserID := 0; minimiserID < numMinimiserWorkers; minimiserID++ {
 		edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
 		minimiserWg.Add(1)
-		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, startConf.DisableSessionFiles, debugDnstapFile, labelLimit, wkdTracker)
+		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, startConf.DisableSessionFiles, debugDnstapFile, defaultLabelLimit, wkdTracker)
 	}
 
 	// Start dnstap.Input
@@ -1874,13 +1875,74 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 	return sd
 }
 
+func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) (string, error) {
+	// Write session file to a sessions dir where it can be read by other tools
+	sessionsDir := filepath.Join(dataDir, "parquet", "sessions")
+
+	startTime := getStartTimeFromRotationTime(ps.rotationTime)
+
+	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(sessionsDir, "dns_session_block", startTime, ps.rotationTime)
+
+	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName) // Make gosec happy
+	edm.log.Info("writing out session parquet file", "filename", absoluteTmpFileName)
+
+	outFile, err := edm.createFile(absoluteTmpFileName)
+	if err != nil {
+		return "", fmt.Errorf("createSessionFile: unable to open session file: %w", err)
+	}
+	fileOpen := true
+	writeFailed := false
+	defer func() {
+		// Closing a *os.File twice returns an error, so only do it if
+		// we have not already tried to close it.
+		if fileOpen {
+			err := outFile.Close()
+			if err != nil {
+				edm.log.Error("createSessionFile: unable to do deferred close of session outFile", "error", err)
+			}
+		}
+		if writeFailed {
+			edm.log.Info("createSessionFile: cleaning up file because write failed", "filename", outFile.Name())
+			err = os.Remove(outFile.Name())
+			if err != nil {
+				edm.log.Error("createSessionFile: unable to remove session outFile", "error", err, "filename", outFile.Name())
+			}
+		}
+	}()
+
+	err = edm.writeSessionParquet(outFile, ps)
+	if err != nil {
+		writeFailed = true
+		edm.log.Error("sessionWriter", "error", err.Error())
+		return "", fmt.Errorf("createSessionFile: writing parquet data failed: %w", err)
+	}
+
+	// We need to close the file before renaming it
+	err = outFile.Close()
+	// at this point we do not want the defer to close the file for us when returning
+	fileOpen = false
+	if err != nil {
+		writeFailed = true
+		return "", fmt.Errorf("createSessionFile: unable to call Close() on parquet writer: %w", err)
+	}
+
+	// Atomically rename the file to its real name so it can be picked up by the histogram sender
+	edm.log.Info("renaming session file", "from", absoluteTmpFileName, "to", absoluteFileName)
+	err = os.Rename(absoluteTmpFileName, absoluteFileName)
+	if err != nil {
+		return "", fmt.Errorf("createSessionFile: unable to rename output file: %w", err)
+	}
+
+	return absoluteFileName, nil
+}
+
 func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	edm.log.Info("sessionStructWriter: starting")
 
 	for ps := range edm.sessionWriterCh {
-		err := edm.writeSessionParquet(ps, dataDir)
+		_, err := edm.createSessionFile(ps, dataDir)
 		if err != nil {
 			edm.log.Error("sessionWriter", "error", err.Error())
 		}
@@ -1889,13 +1951,71 @@ func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 	edm.log.Info("sessionStructWriter: exiting loop")
 }
 
+func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
+	startTime := getStartTimeFromRotationTime(prevWellKnownDomainsData.rotationTime)
+
+	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, "dns_histogram", startTime, prevWellKnownDomainsData.rotationTime)
+
+	edm.log.Info("writing out histogram file", "filename", absoluteTmpFileName)
+
+	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName)
+	outFile, err := edm.createFile(absoluteTmpFileName)
+	if err != nil {
+		return "", fmt.Errorf("createHistogramFile: unable to open histogram file: %w", err)
+	}
+	fileOpen := true
+	writeFailed := false
+	defer func() {
+		// Closing a *os.File twice returns an error, so only do it if
+		// we have not already tried to close it.
+		if fileOpen {
+			err := outFile.Close()
+			if err != nil {
+				edm.log.Error("createHistogramFile: unable to do deferred close of histogram outFile", "error", err)
+			}
+		}
+		if writeFailed {
+			edm.log.Info("createHistogramFile: cleaning up file because write failed", "filename", outFile.Name())
+			err = os.Remove(outFile.Name())
+			if err != nil {
+				edm.log.Error("createHistogramFile: unable to remove histogram outFile", "error", err, "filename", outFile.Name())
+			}
+		}
+	}()
+
+	err = edm.writeHistogramParquet(outFile, startTime, prevWellKnownDomainsData, labelLimit)
+	if err != nil {
+		writeFailed = true
+		edm.log.Error("histogramWriter", "error", err.Error())
+		return "", fmt.Errorf("createHistogramFile: writing parquet data failed: %w", err)
+	}
+
+	// We need to close the file before renaming it
+	err = outFile.Close()
+	// at this point we do not want the defer to close the file for us when returning
+	fileOpen = false
+	if err != nil {
+		writeFailed = true
+		return "", fmt.Errorf("createHistogramFile: unable to call Close() on file: %w", err)
+	}
+
+	// Atomically rename the file to its real name so it can be picked up by the histogram sender
+	edm.log.Info("renaming histogram file", "from", absoluteTmpFileName, "to", absoluteFileName)
+	err = os.Rename(absoluteTmpFileName, absoluteFileName)
+	if err != nil {
+		return "", fmt.Errorf("createHistogramFile: unable to rename output file: %w", err)
+	}
+
+	return absoluteFileName, nil
+}
+
 func (edm *dnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	edm.log.Info("histogramWriter: starting")
 
 	for prevWellKnownDomainsData := range edm.histogramWriterCh {
-		err := edm.writeHistogramParquet(prevWellKnownDomainsData, labelLimit, outboxDir)
+		_, err := edm.createHistogramFile(prevWellKnownDomainsData, labelLimit, outboxDir)
 		if err != nil {
 			edm.log.Error("histogramWriter", "error", err.Error())
 		}
@@ -1917,7 +2037,7 @@ func (edm *dnstapMinimiser) renameFile(src string, dst string) error {
 		}
 
 		if errors.Is(err, fs.ErrNotExist) {
-			// If the destionation directory does not exist we will
+			// If the destination directory does not exist we will
 			// need to create it and then retry the Rename() in the
 			// next iteration of the loop.
 			err = os.MkdirAll(dstDir, 0o750)
@@ -2141,72 +2261,20 @@ func ip6BytesToInt(ip6Bytes []byte) (uint64, uint64, error) {
 	return ipIntNetwork, ipIntHost, nil
 }
 
-func (edm *dnstapMinimiser) writeSessionParquet(ps *prevSessions, dataDir string) error {
-	// Write session file to a sessions dir where it will be read by clickhouse
-	sessionsDir := filepath.Join(dataDir, "parquet", "sessions")
-
-	startTime := getStartTimeFromRotationTime(ps.rotationTime)
-
-	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(sessionsDir, "dns_session_block", startTime, ps.rotationTime)
-
-	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName) // Make gosec happy
-	edm.log.Info("writing out session parquet file", "filename", absoluteTmpFileName)
-
-	outFile, err := edm.createFile(absoluteTmpFileName)
-	if err != nil {
-		return fmt.Errorf("writeSessionParquet: unable to open histogram file: %w", err)
-	}
-	fileOpen := true
-	writeFailed := false
-	defer func() {
-		// Closing a *os.File twice returns an error, so only do it if
-		// we have not already tried to close it.
-		if fileOpen {
-			err := outFile.Close()
-			if err != nil {
-				edm.log.Error("writeSessionParquet: unable to do deferred close of histogram outFile", "error", err)
-			}
-		}
-		if writeFailed {
-			edm.log.Info("writeSessionParquet: cleaning up file because write failed", "filename", outFile.Name())
-			err = os.Remove(outFile.Name())
-			if err != nil {
-				edm.log.Error("writeSessionParquet: unable to remove histogram outFile", "error", err, "filename", outFile.Name())
-			}
-		}
-	}()
-
+func (edm *dnstapMinimiser) writeSessionParquet(output io.Writer, ps *prevSessions) error {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[sessionData](outFile, sessionDataSchema, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[sessionData](output, sessionDataSchema, parquet.Compression(snappyCodec))
 
 	for _, sd := range ps.sessions {
-		_, err = parquetWriter.Write([]sessionData{*sd})
+		_, err := parquetWriter.Write([]sessionData{*sd})
 		if err != nil {
-			writeFailed = true
 			return fmt.Errorf("writeSessionParquet: unable to call Write() on parquet writer: %w", err)
 		}
 	}
 
-	err = parquetWriter.Close()
+	err := parquetWriter.Close()
 	if err != nil {
-		writeFailed = true
-		return fmt.Errorf("writeSessionParquet: unable to call WriteStop() on parquet writer: %w", err)
-	}
-
-	// We need to close the file before renaming it
-	err = outFile.Close()
-	// at this point we do not want the defer to close the file for us when returning
-	fileOpen = false
-	if err != nil {
-		writeFailed = true
 		return fmt.Errorf("writeSessionParquet: unable to call Close() on parquet writer: %w", err)
-	}
-
-	// Atomically rename the file to its real name so it can be picked up by the histogram sender
-	edm.log.Info("renaming session file", "from", absoluteTmpFileName, "to", absoluteFileName)
-	err = os.Rename(absoluteTmpFileName, absoluteFileName)
-	if err != nil {
-		return fmt.Errorf("writeSessionParquet: unable to rename output file: %w", err)
 	}
 
 	return nil
@@ -2293,7 +2361,7 @@ func parseHllStorageType(hllBytes []byte) (hllStorageType, error) {
 	return storageType, nil
 }
 
-func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) error {
+func (edm *dnstapMinimiser) writeHistogramParquet(output io.Writer, startTime time.Time, prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int) error {
 	if prevWellKnownDomainsData.dawgIsRotated {
 		defer func() {
 			err := prevWellKnownDomainsData.dawgFinder.Close()
@@ -2305,39 +2373,8 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 		}()
 	}
 
-	startTime := getStartTimeFromRotationTime(prevWellKnownDomainsData.rotationTime)
-
-	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, "dns_histogram", startTime, prevWellKnownDomainsData.rotationTime)
-
-	edm.log.Info("writing out histogram file", "filename", absoluteTmpFileName)
-
-	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName)
-	outFile, err := edm.createFile(absoluteTmpFileName)
-	if err != nil {
-		return fmt.Errorf("writeHistogramParquet: unable to open histogram file: %w", err)
-	}
-	fileOpen := true
-	writeFailed := false
-	defer func() {
-		// Closing a *os.File twice returns an error, so only do it if
-		// we have not already tried to close it.
-		if fileOpen {
-			err := outFile.Close()
-			if err != nil {
-				edm.log.Error("writeHistogramParquet: unable to do deferred close of histogram outFile", "error", err)
-			}
-		}
-		if writeFailed {
-			edm.log.Info("writeHistogramParquet: cleaning up file because write failed", "filename", outFile.Name())
-			err = os.Remove(outFile.Name())
-			if err != nil {
-				edm.log.Error("writeHistogramParquet: unable to remove histogram outFile", "error", err, "filename", outFile.Name())
-			}
-		}
-	}()
-
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[histogramData](outFile, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[histogramData](output, parquet.Compression(snappyCodec))
 
 	startTimeMicro := startTime.UnixMicro()
 
@@ -2359,14 +2396,12 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 		v4HLLBytes := hGramData.v4ClientHLL.ToBytes()
 		v4HLLType, err := parseHllStorageType(v4HLLBytes)
 		if err != nil {
-			writeFailed = true
 			return fmt.Errorf("writeHistogramParquet: IPv4 HLL parsing failed: %w", err)
 		}
 
 		v6HLLBytes := hGramData.v6ClientHLL.ToBytes()
 		v6HLLType, err := parseHllStorageType(v6HLLBytes)
 		if err != nil {
-			writeFailed = true
 			return fmt.Errorf("writeHistogramParquet: IPv6 HLL parsing failed: %w", err)
 		}
 
@@ -2380,31 +2415,13 @@ func (edm *dnstapMinimiser) writeHistogramParquet(prevWellKnownDomainsData *well
 
 		_, err = parquetWriter.Write([]histogramData{*hGramData})
 		if err != nil {
-			writeFailed = true
 			return fmt.Errorf("writeHistogramParquet: unable to call Write() on parquet writer: %w", err)
 		}
 	}
 
-	err = parquetWriter.Close()
+	err := parquetWriter.Close()
 	if err != nil {
-		writeFailed = true
-		return fmt.Errorf("writeHistogramParquet: unable to call WriteStop() on parquet writer: %w", err)
-	}
-
-	// We need to close the file before renaming it
-	err = outFile.Close()
-	// at this point we do not want the defer to close the file for us when returning
-	fileOpen = false
-	if err != nil {
-		writeFailed = true
 		return fmt.Errorf("writeHistogramParquet: unable to call Close() on parquet writer: %w", err)
-	}
-
-	// Atomically rename the file to its real name so it can be picked up by the histogram sender
-	edm.log.Info("renaming histogram file", "from", absoluteTmpFileName, "to", absoluteFileName)
-	err = os.Rename(absoluteTmpFileName, absoluteFileName)
-	if err != nil {
-		return fmt.Errorf("writeHistogramParquet: unable to rename output file: %w", err)
 	}
 
 	return nil
@@ -2517,6 +2534,38 @@ func timeUntilNextMinute() time.Duration {
 	return time.Second * time.Duration(60-time.Now().Second())
 }
 
+func (edm *dnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMatch bool) *histogramData {
+	// We leave the label0-9 fields set to nil here. Since this is in
+	// the hot path of dealing with dnstap packets the less work we do the
+	// better. They are filled in prior to writing out the parquet file.
+	hd := &histogramData{}
+
+	var err error
+	hd.v4ClientHLL, err = hll.NewHll(hllSettings)
+	if err != nil {
+		edm.log.Error("unable to initialize IPv4 HLL", "error", err)
+		// This is never expected to happen
+		panic(err)
+	}
+
+	hd.v6ClientHLL, err = hll.NewHll(hllSettings)
+	if err != nil {
+		edm.log.Error("unable to initialize IPv6 HLL", "error", err)
+		// This is never expected to happen
+		panic(err)
+	}
+
+	esb := new(edmStatusBits)
+	if suffixMatch {
+		esb.set(edmStatusWellKnownWildcard)
+	} else {
+		esb.set(edmStatusWellKnownExact)
+	}
+	hd.EDMStatusBits = uint64(*esb)
+
+	return hd
+}
+
 // runMinimiser generates data and it is collected into datasets here
 func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) {
 	defer wg.Done()
@@ -2565,33 +2614,7 @@ collectorLoop:
 			}
 
 			if _, exists := wkd.m[wu.dawgIndex]; !exists {
-				// We leave the label0-9 fields set to nil here. Since this is in
-				// the hot path of dealing with dnstap packets the less work we do the
-				// better. They are filled in prior to writing out the parquet file.
-				wkd.m[wu.dawgIndex] = &histogramData{}
-
-				var err error
-				wkd.m[wu.dawgIndex].v4ClientHLL, err = hll.NewHll(hllSettings)
-				if err != nil {
-					edm.log.Error("unable to initialize IPv4 HLL", "error", err)
-					// This is never expected to happen
-					panic(err)
-				}
-
-				wkd.m[wu.dawgIndex].v6ClientHLL, err = hll.NewHll(hllSettings)
-				if err != nil {
-					edm.log.Error("unable to initialize IPv6 HLL", "error", err)
-					// This is never expected to happen
-					panic(err)
-				}
-
-				esb := new(edmStatusBits)
-				if wu.suffixMatch {
-					esb.set(edmStatusWellKnownWildcard)
-				} else {
-					esb.set(edmStatusWellKnownExact)
-				}
-				wkd.m[wu.dawgIndex].EDMStatusBits = uint64(*esb)
+				wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
 			}
 
 			wkd.m[wu.dawgIndex].OKCount += wu.OKCount
