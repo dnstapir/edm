@@ -21,6 +21,7 @@ all:
 container:
 	KO_DOCKER_REPO=ko.local ko build --bare
 
+build: export GOTOOLCHAIN=auto
 build:
 	go mod download
 ifeq "$(run_tests)" "yes"
