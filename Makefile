@@ -4,7 +4,7 @@ OUTPUT=tapir-edm
 SPECFILE_IN:=rpm/tapir-edm.spec.in
 SPECFILE_OUT:=rpm/SPECS/tapir-edm.spec
 
-VERSION:=$$(git describe --tags --abbrev=0 2> /dev/null || echo "0.0.0")
+VERSION:=$$(git describe --tags --abbrev=0 2> /dev/null || echo "v0.0.0")
 SHA:=$$(git describe --dirty=+WiP --always)
 DATE:=$$(date +%Y%m%d)
 
