@@ -21,6 +21,7 @@ all:
 container:
 	KO_DOCKER_REPO=ko.local ko build --bare
 
+build: export GOSUMDB=sum.golang.org
 build: export GOTOOLCHAIN=auto
 build:
 	go mod download
