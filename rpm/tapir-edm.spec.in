@@ -27,7 +27,8 @@ BuildRequires: golang
 TAPIR Edge DNSTAP Minimiser
 
 # Disable building of debug packages for RHEL (we include symbols per default)
-%if 0%{?rhel} >= 9
+# ... also disable it for Fedora 42 and below to fix builds
+%if 0%{?rhel} >= 9 || 0%{?fedora} <= 42
 %global debug_package %{nil}
 %endif
 
