@@ -14,3 +14,11 @@ rpm/
 !rpm/dnstapir-edm.spec.in
 VERSION
 RPM_VERSION
+DEB_VERSION
+
+# Ignore deb build directory and related stuff
+*.deb
+deb/
+!deb/control.in
+!deb/DEBIAN/postinst
+!deb/DEBIAN/postrm

@@ -3,6 +3,8 @@
 OUTPUT=dnstapir-edm
 SPECFILE_IN:=rpm/dnstapir-edm.spec.in
 SPECFILE_OUT:=rpm/SPECS/dnstapir-edm.spec
+DEB_CONTROL_IN:=deb/control.in
+DEB_CONTROL_OUT:=deb/DEBIAN/control
 
 all:
 
@@ -19,9 +21,15 @@ clean:
 	-rm -f $(OUTPUT)
 	-rm -f VERSION
 	-rm -f RPM_VERSION
+	-rm -f DEB_VERSION
 	-rm -f *.tar.gz
 	-rm -f rpm/SOURCES/*.tar.gz
 	-rm -rf rpm/{BUILD,BUILDROOT,SPECS,SRPMS,RPMS}
+	@rm -rf deb/usr
+	@rm -rf deb/etc
+	@rm -rf deb/var
+	@rm -rf deb/DEBIAN/control
+	@rm -rf *.deb
 
 versions:
 	./gen-versions.sh
@@ -36,3 +44,16 @@ srpm: tarball
 	cp $(OUTPUT).tar.gz rpm/SOURCES/
 	rpmbuild -bs --define "%_topdir ./rpm" --undefine=dist $(SPECFILE_OUT)
 	test -z "$(outdir)" || cp rpm/SRPMS/*.src.rpm "$(outdir)"
+
+deb: build versions
+	mkdir -p deb/usr/bin
+	mkdir -p deb/etc/dnstapir/edm
+	mkdir -p deb/var/lib/dnstapir/edm/pebble
+	mkdir -p deb/usr/lib/systemd/system
+	cp dnstapir-edm deb/usr/bin
+	cp rpm/SOURCES/dnstapir-edm.service deb/usr/lib/systemd/system
+	cp rpm/SOURCES/well-known-domains.dawg deb/etc/dnstapir/edm
+	cp rpm/SOURCES/ignored.dawg deb/etc/dnstapir/edm
+	cp rpm/SOURCES/ignored-ips deb/etc/dnstapir/edm
+	sed -e "s/@@VERSION@@/$$(cat DEB_VERSION)/g" $(DEB_CONTROL_IN) > $(DEB_CONTROL_OUT)
+	dpkg-deb -b deb dnstapir-edm-$$(cat DEB_VERSION).deb

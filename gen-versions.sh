@@ -26,4 +26,5 @@ else
 	short_sha=$(git rev-parse --short HEAD)
 	date=$(date +%Y%m%d)
 	printf '%s\n' "$rpm_base_version^$date.$short_sha" >RPM_VERSION
+	printf '%s\n' "${rpm_base_version}+local$date.$short_sha" >DEB_VERSION
 fi
