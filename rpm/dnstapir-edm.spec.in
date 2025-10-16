@@ -1,13 +1,13 @@
-Name:          tapir-edm
+Name:          dnstapir-edm
 # Replaced by makefile when building srpm
 Version:       @@VERSION@@
 Release:       1%{?dist}
 Group:         dnstapir/edge
-Summary:       TAPIR Edge DNSTAP Minimiser
+Summary:       DNS TAPIR Edge DNSTAP Minimiser
 License:       BSD-2-Clause
 URL:           https://www.github.com/dnstapir/edm
 Source0:       %{name}.tar.gz
-Source1:       tapir-edm.service
+Source1:       dnstapir-edm.service
 Source2:       well-known-domains.dawg
 Source3:       ignored.dawg
 Source4:       ignored-ips
@@ -24,7 +24,7 @@ BuildRequires: golang
 %endif
 
 %description
-TAPIR Edge DNSTAP Minimiser
+DNS TAPIR Edge DNSTAP Minimiser
 
 # Disable building of debug packages for RHEL (we include symbols per default)
 # ... also disable it for Fedora 42 and below to fix builds
@@ -47,7 +47,9 @@ make build
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_sysconfdir}/dnstapir/edm
-mkdir -p %{buildroot}%{_sharedstatedir}/edm/pebble
+mkdir -p %{buildroot}%{_sharedstatedir}/dnstapir/edm
+mkdir -p %{buildroot}%{_sharedstatedir}/dnstapir/edm/pebble
+mkdir -p %{buildroot}%{_sharedstatedir}/dnstapir/edm/mqtt
 
 install -p -m 0755 %{name} %{buildroot}%{_bindir}/%{name}
 install -m 0644 %{SOURCE1} %{buildroot}%{_unitdir}
@@ -58,20 +60,22 @@ install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ip
 %files
 %license LICENSE
 
-%attr(0770,tapir-edm,dnstapir) %dir %{_sysconfdir}/dnstapir/edm
-%attr(0770,tapir-edm,dnstapir) %dir %{_sharedstatedir}/edm
-%attr(0770,tapir-edm,dnstapir) %dir %{_sharedstatedir}/edm/pebble
+%attr(0770,dnstapir-edm,dnstapir) %dir %{_sysconfdir}/dnstapir/edm
+%attr(0770,dnstapir-edm,dnstapir) %dir %{_sharedstatedir}/dnstapir
+%attr(0770,dnstapir-edm,dnstapir) %dir %{_sharedstatedir}/dnstapir/edm
+%attr(0770,dnstapir-edm,dnstapir) %dir %{_sharedstatedir}/dnstapir/edm/pebble
+%attr(0770,dnstapir-edm,dnstapir) %dir %{_sharedstatedir}/dnstapir/edm/mqtt
 
-%attr(0755,tapir-edm,dnstapir) %{_bindir}/%{name}
-%attr(0644,tapir-edm,dnstapir) %{_unitdir}/tapir-edm.service
-%attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/well-known-domains.dawg
-%attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored.dawg
-%attr(0664,tapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
-%attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/tapir-edm.toml
+%attr(0755,dnstapir-edm,dnstapir) %{_bindir}/%{name}
+%attr(0644,dnstapir-edm,dnstapir) %{_unitdir}/dnstapir-edm.service
+%attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/well-known-domains.dawg
+%attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored.dawg
+%attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
+%attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/dnstapir-edm.toml
 
 %pre
 /usr/bin/getent group dnstapir || /usr/sbin/groupadd -r dnstapir
-/usr/bin/getent passwd tapir-edm || /usr/sbin/useradd -r -d /etc/dnstapir -G dnstapir -s /sbin/nologin tapir-edm
+/usr/bin/getent passwd dnstapir-edm || /usr/sbin/useradd -r -d /etc/dnstapir -G dnstapir -s /sbin/nologin dnstapir-edm
 
 %post
 

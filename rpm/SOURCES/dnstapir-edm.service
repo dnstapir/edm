@@ -1,0 +1,11 @@
+[Unit]
+Description=DNS TAPIR Edge DNSTAP Minimiser
+
+[Service]
+Type=simple
+User=dnstapir-edm
+Group=dnstapir
+ExecStart=/usr/bin/dnstapir-edm --config-file /etc/dnstapir/dnstapir-edm.toml run
+
+[Install]
+WantedBy=multi-user.target
