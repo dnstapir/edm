@@ -80,8 +80,7 @@ run at the top level directory prior to commiting:
 
 ### Building
 #### Binary
-The most simple way of getting the binary while including a version string
-based on the current git commit is this:
+The most simple way of getting the `dnstapir-edm` binary is this:
 ```
 make build
 ```
