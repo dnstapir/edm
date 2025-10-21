@@ -1,16 +1,6 @@
-ARCH=		$(shell arch)
-TEST_ARCH=
 OUTPUT=dnstapir-edm
 SPECFILE_IN:=rpm/dnstapir-edm.spec.in
 SPECFILE_OUT:=rpm/SPECS/dnstapir-edm.spec
-
-run_tests=	yes
-ifdef TEST_ARCH
-ifneq "$(TEST_ARCH)" "$(ARCH)"
-run_tests=	no
-endif
-endif
-
 
 all:
 
@@ -23,7 +13,7 @@ build:
 	go mod download
 ifeq "$(run_tests)" "yes"
 	go vet ./...
-	go test -race ./...
+	GOOS= GOARCH= go test -race ./...
 endif
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
 
