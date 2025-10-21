@@ -1,18 +1,17 @@
+.PHONY: all build clean srpm tarball test versions
+
 OUTPUT=dnstapir-edm
 SPECFILE_IN:=rpm/dnstapir-edm.spec.in
 SPECFILE_OUT:=rpm/SPECS/dnstapir-edm.spec
 
 all:
 
-container:
-	KO_DOCKER_REPO=ko.local ko build --bare
+test:
+	GOOS= GOARCH= go test -race ./...
 
 build: export GOSUMDB=sum.golang.org
 build: export GOTOOLCHAIN=auto
 build:
-	go mod download
-	go vet ./...
-	GOOS= GOARCH= go test -race ./...
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
 
 clean: SHELL:=/bin/bash

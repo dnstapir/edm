@@ -85,12 +85,3 @@ based on the current git commit is this:
 ```
 make build
 ```
-
-#### Container
-For creating a container image you will need to install
-[ko](https://github.com/ko-build/ko) and once this is done you can build a
-container that is pushed to a local Docker daemon like so:
-```
-GITHUB_SHA=$(git log -1 --pretty=%H) ko build -L -B
-```
-You now have a `ko.local/edm:latest` available locally.
