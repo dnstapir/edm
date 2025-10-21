@@ -16,9 +16,9 @@ var (
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "edm",
+	Use:   "dnstapir-edm",
 	Short: "dnstap(ir) minimiser",
-	Long: `edm is a tool for reading dnstap data, pseudonymizing IP addresses and
+	Long: `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
 outputting minimised output data.`,
 	// Uncomment the following line if your bare application
 	// has an action associated with it:
@@ -44,7 +44,7 @@ func init() {
 	// Cobra supports persistent flags, which, if defined here,
 	// will be global for your application.
 
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.edm.toml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
@@ -64,7 +64,7 @@ func initConfig() {
 		// Search config in home directory with name ".edm" (without extension).
 		viper.AddConfigPath(home)
 		viper.SetConfigType("toml")
-		viper.SetConfigName(".edm")
+		viper.SetConfigName(".dnstapir-edm")
 	}
 
 	viper.AutomaticEnv() // read in environment variables that match

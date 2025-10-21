@@ -874,7 +874,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	vc := viperConfiger{}
 	edm, err := newDnstapMinimiser(logger, vc)
 	if err != nil {
-		logger.Error("unable to init edm", "error", err)
+		logger.Error("unable to init", "error", err)
 		os.Exit(1)
 	}
 	defer edm.stop()

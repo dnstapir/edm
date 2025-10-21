@@ -11,7 +11,7 @@ import (
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Run edm in dnstap capture mode",
+	Short: "Run dnstapir-edm in dnstap capture mode",
 	Run: func(_ *cobra.Command, _ []string) {
 		runner.Run(edmLogger, edmLoggerLevel)
 	},
@@ -52,7 +52,7 @@ func init() {
 	runCmd.Flags().String("well-known-domains-file", "well-known-domains.dawg", "the DAWG file used for filtering well-known domains")
 	runCmd.Flags().String("ignored-client-ips-file", "", "file containing a newline separated list of IPv4/IPv6 CIDRs of DNS clients that will be ignored")
 	runCmd.Flags().String("ignored-question-names-file", "", "a DAWG file containing question section names that will be ignored")
-	runCmd.Flags().String("data-dir", "/var/lib/edm", "directory where output data is written")
+	runCmd.Flags().String("data-dir", "/var/lib/dnstapir/edm", "directory where output data is written")
 	runCmd.Flags().Int("minimiser-workers", 1, "how many minimiser workers to start (0 means same as GOMAXPROCS)")
 	runCmd.Flags().String("mqtt-signing-key-file", "edm-mqtt-signer-key.pem", "ECSDSA key used for signing MQTT messages")
 	runCmd.Flags().String("mqtt-client-key-file", "edm-mqtt-client-key.pem", "ECSDSA client key used for authenticating to MQTT bus")

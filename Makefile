@@ -1,8 +1,8 @@
 ARCH=		$(shell arch)
 TEST_ARCH=
-OUTPUT=tapir-edm
-SPECFILE_IN:=rpm/tapir-edm.spec.in
-SPECFILE_OUT:=rpm/SPECS/tapir-edm.spec
+OUTPUT=dnstapir-edm
+SPECFILE_IN:=rpm/dnstapir-edm.spec.in
+SPECFILE_OUT:=rpm/SPECS/dnstapir-edm.spec
 
 run_tests=	yes
 ifdef TEST_ARCH
@@ -25,12 +25,11 @@ ifeq "$(run_tests)" "yes"
 	go vet ./...
 	go test -race ./...
 endif
-	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" -o $(OUTPUT)
+	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
 
 clean: SHELL:=/bin/bash
 clean:
 	-rm -f $(OUTPUT)
-	-rm -f edm
 	-rm -f VERSION
 	-rm -f RPM_VERSION
 	-rm -f *.tar.gz
