@@ -11,10 +11,8 @@ build: export GOSUMDB=sum.golang.org
 build: export GOTOOLCHAIN=auto
 build:
 	go mod download
-ifeq "$(run_tests)" "yes"
 	go vet ./...
 	GOOS= GOARCH= go test -race ./...
-endif
 	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
 
 clean: SHELL:=/bin/bash
