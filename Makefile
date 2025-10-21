@@ -1,16 +1,6 @@
-ARCH=		$(shell arch)
-TEST_ARCH=
 OUTPUT=dnstapir-edm
 SPECFILE_IN:=rpm/dnstapir-edm.spec.in
 SPECFILE_OUT:=rpm/SPECS/dnstapir-edm.spec
-
-run_tests=	yes
-ifdef TEST_ARCH
-ifneq "$(TEST_ARCH)" "$(ARCH)"
-run_tests=	no
-endif
-endif
-
 
 all:
 
