@@ -5,7 +5,7 @@ if [ -z "$2" ]; then
     getent passwd dnstapir-edm || adduser --ingroup dnstapir --system dnstapir-edm
 
     chown dnstapir-edm:dnstapir /etc/dnstapir/edm
-    chmod 660 /etc/dnstapir/edm
+    chmod 770 /etc/dnstapir/edm
 
     chown dnstapir-edm:dnstapir /etc/dnstapir/edm/ignored.dawg
     chmod 660 /etc/dnstapir/edm/ignored.dawg
