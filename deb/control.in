@@ -1,5 +1,5 @@
 Package: dnstapir-edm
-Architecture: any
+Architecture: all
 Version: @@VERSION@@
 Section: misc
 Maintainer: Leon Fernandez <leon.fernandez@internetstiftelsen.se>
