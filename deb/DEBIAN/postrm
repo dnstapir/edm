@@ -1,7 +1,17 @@
 #!/bin/bash
 
 case "$1" in
-    rm /usr/bin/dnstapir-edm
+#!/bin/bash
+
+case "$1" in
+    remove)
+        rm -rf /var/lib/dnstapir/edm
+        ;;
+    purge)
+        rm -rf /var/lib/dnstapir/edm
+        rm -rf /etc/dnstapir/edm
+        ;;
+esac
     remove)
         rm -rf /var/lib/dnstapir/edm
         ;;
