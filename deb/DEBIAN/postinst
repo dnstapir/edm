@@ -1,10 +1,10 @@
 #!/bin/bash
 set -e
 
-if [ -z "$2" ]; then
-    getent group dnstapir || addgroup dnstapir
-    getent passwd dnstapir-edm || adduser --ingroup dnstapir --system dnstapir-edm
+getent group dnstapir || addgroup dnstapir
+getent passwd dnstapir-edm || adduser --ingroup dnstapir --system dnstapir-edm
 
+if [ -z "$2" ]; then
     chown dnstapir-edm:dnstapir /etc/dnstapir/edm
     chmod 770 /etc/dnstapir/edm
 
