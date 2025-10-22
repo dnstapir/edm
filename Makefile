@@ -49,6 +49,7 @@ deb: build versions
 	mkdir -p deb/usr/bin
 	mkdir -p deb/etc/dnstapir/edm
 	mkdir -p deb/var/lib/dnstapir/edm/pebble
+	mkdir -p deb/var/lib/dnstapir/edm/mqtt
 	mkdir -p deb/usr/lib/systemd/system
 	cp dnstapir-edm deb/usr/bin
 	cp rpm/SOURCES/dnstapir-edm.service deb/usr/lib/systemd/system
