@@ -1,0 +1,8 @@
+Package: dnstapir-edm
+Architecture: all
+Version: @@VERSION@@
+Section: misc
+Maintainer: Leon Fernandez <leon.fernandez@internetstiftelsen.se>
+Priority: optional
+Standards-Version: 4.7.0
+Description: DNS TAPIR Edge DNSTAP Minimiser

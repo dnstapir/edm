@@ -1,0 +1,28 @@
+#!/bin/bash
+set -e
+
+getent group dnstapir || addgroup dnstapir
+getent passwd dnstapir-edm || adduser --ingroup dnstapir --system dnstapir-edm
+
+if [ -z "$2" ]; then
+    chown dnstapir-edm:dnstapir /etc/dnstapir/edm
+    chmod 770 /etc/dnstapir/edm
+
+    chown dnstapir-edm:dnstapir /etc/dnstapir/edm/ignored.dawg
+    chmod 660 /etc/dnstapir/edm/ignored.dawg
+
+    chown dnstapir-edm:dnstapir /etc/dnstapir/edm/well-known-domains.dawg
+    chmod 660 /etc/dnstapir/edm/well-known-domains.dawg
+
+    chown dnstapir-edm:dnstapir /etc/dnstapir/edm/ignored-ips
+    chmod 660 /etc/dnstapir/edm/ignored-ips
+
+    chown dnstapir-edm:dnstapir /var/lib/dnstapir/edm
+    chmod 770 /var/lib/dnstapir/edm
+
+    chown dnstapir-edm:dnstapir /var/lib/dnstapir/edm/pebble
+    chmod 770 /var/lib/dnstapir/edm/pebble
+
+    chown dnstapir-edm:dnstapir /var/lib/dnstapir/edm/mqtt
+    chmod 770 /var/lib/dnstapir/edm/mqtt
+fi
