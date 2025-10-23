@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
 
-rm -rf /var/lib/dnstapir/edm
 case "$1" in
     remove)
+        rm -rf /var/lib/dnstapir/edm
         ;;
     purge)
+        rm -rf /var/lib/dnstapir/edm
         rm -rf /etc/dnstapir/edm
         ;;
 esac
