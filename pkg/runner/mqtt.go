@@ -47,7 +47,7 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 	pel.logger.Error(fmt.Sprintf(format, v...))
 }
 
-func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, clientCertStore *certStore, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
+func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
 	u, err := url.Parse(server)
 	if err != nil {
 		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse URL: %w", err)
@@ -57,7 +57,7 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 		ServerUrls: []*url.URL{u},
 		TlsCfg: &tls.Config{
 			RootCAs:              caCertPool,
-			GetClientCertificate: clientCertStore.getClientCertificate,
+			GetClientCertificate: edm.mqttClientCertStore.getClientCertificate,
 			MinVersion:           tls.VersionTLS13,
 		},
 		KeepAlive:      mqttKeepAlive,
@@ -118,7 +118,7 @@ func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, mqttJWK 
 
 		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(mqttJWK.Algorithm(), mqttJWK))
 		if err != nil {
-			edm.log.Error("runAutoPaho: failed to created JWS message", "error", err)
+			edm.log.Error("runAutoPaho: failed to create JWS message", "error", err)
 			continue
 		}
 

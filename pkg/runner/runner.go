@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -66,7 +67,7 @@ const defaultLabelLimit = 10
 type config struct {
 	ConfigFile                    string `mapstructure:"config-file" validate:"required"`
 	DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
-	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender"`
+	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
 	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
@@ -75,27 +76,27 @@ type config struct {
 	InputTLSCertFile              string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
 	InputTLSKeyFile               string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
 	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
-	CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required"`
-	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required"`
+	CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required" reload:"true"`
+	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required" reload:"true"`
 	WellKnownDomainsFile          string `mapstructure:"well-known-domains-file" validate:"required"`
 	HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold" validate:"required,gte=0"`
-	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file"`
-	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file"`
+	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
+	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
 	DataDir                       string `mapstructure:"data-dir" validate:"required"`
 	MinimiserWorkers              int    `mapstructure:"minimiser-workers" validate:"required"`
 	MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
-	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT"`
-	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT"`
+	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT" reload:"true"`
+	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT" reload:"true"`
 	MQTTServer                    string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
 	MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
 	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
 	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
+	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries" reload:"true"`
 	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
 	HTTPCAFile                    string `mapstructure:"http-ca-file"`
 	HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
-	HTTPClientKeyFile             string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender"`
-	HTTPClientCertFile            string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender"`
+	HTTPClientKeyFile             string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender" reload:"true"`
+	HTTPClientCertFile            string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender" reload:"true"`
 	HTTPURL                       string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
 	Debug                         bool   `mapstructure:"debug"`
 	DebugDnstapFilename           string `mapstructure:"debug-dnstap-filename"`
@@ -263,7 +264,10 @@ type certStore struct {
 	mtx  sync.RWMutex
 }
 
-var errNoClientCertificate = errors.New("no client certificate loaded")
+var (
+	errNoClientCertificate = errors.New("no client certificate loaded")
+	errEmptyDawgFile       = errors.New("dawg file is empty")
+)
 
 // Implements tls.Config.GetClientCertificate
 func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
@@ -453,6 +457,10 @@ func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
 }
 
 func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
+	// Since not all config changes are dynamically picked up and requires
+	// a restart, keep a reference to what we started with.
+	startConf := edm.getConfig()
+
 	// The notifications from viper are based on
 	// https://github.com/fsnotify/fsnotify which means we can receive
 	// multiple events for the same file when someone modifies it. E.g. an
@@ -471,7 +479,9 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 	// future but stop it so it never runs by default.
 	var e fsnotify.Event
 	t := time.AfterFunc(math.MaxInt64, func() {
-		edm.log.Info("configUpdater: reacting to config file update", "filename", e.Name)
+		edm.log.Info("configUpdater: config file was modified", "filename", e.Name)
+
+		oldConf := edm.getConfig()
 
 		err := edm.updateConfig()
 		if err != nil {
@@ -481,9 +491,117 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 
 		conf := edm.getConfig()
 
-		err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+		// Log a warning if we detect a changed config key that
+		// does not have the 'reload:"true"' struct tag. If you
+		// implement new functionality below to handle dynamically
+		// reloading a new config key remember to also add the "reload"
+		// struct tag to it.
+		vOld := reflect.ValueOf(oldConf)
+		vNew := reflect.ValueOf(conf)
+		typ := vOld.Type()
+
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+
+			oldVal := vOld.Field(i).Interface()
+			newVal := vNew.Field(i).Interface()
+
+			if !reflect.DeepEqual(oldVal, newVal) {
+				if field.Tag.Get("reload") != "true" {
+					edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("mapstructure"))
+				}
+			}
+		}
+
+		if oldConf.CryptopanKey != conf.CryptopanKey ||
+			oldConf.CryptopanKeySalt != conf.CryptopanKeySalt ||
+			oldConf.CryptopanAddressEntries != conf.CryptopanAddressEntries {
+			edm.log.Info("configUpdater: updating Crypto-PAn instance")
+			err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+			if err != nil {
+				edm.log.Error("configUpdater: unable to update Crypto-PAn instance", "error", err)
+			}
+		}
+
+		if oldConf.IgnoredClientIPsFile != conf.IgnoredClientIPsFile {
+			err := edm.setIgnoredClientIPs()
+			if err != nil {
+				edm.log.Error("configUpdater: unable to run edm.setIgnoredClientIPs", "error", err)
+			}
+		}
+
+		if oldConf.IgnoredQuestionNamesFile != conf.IgnoredQuestionNamesFile {
+			err := edm.setIgnoredQuestionNames()
+			if err != nil {
+				edm.log.Error("configUpdater: unable to run edm.setIgnoredQuestionNames", "error", err)
+			}
+		}
+
+		if !conf.DisableHistogramSender {
+			if oldConf.HTTPClientCertFile != conf.HTTPClientCertFile ||
+				oldConf.HTTPClientKeyFile != conf.HTTPClientKeyFile {
+				err := edm.loadHTTPClientCert()
+				if err != nil {
+					edm.log.Error("configUpdater: unable to run edm.loadHTTPClientCert", "error", err)
+				}
+			}
+
+			// If the histogram sender was not enabled at startup
+			// we also need to initialize it.
+			edm.aggregSenderMutex.RLock()
+			isUninitialized := edm.aggregSender.aggrecURL == nil
+			edm.aggregSenderMutex.RUnlock()
+			if isUninitialized {
+				// Also make sure a client certificate is loaded
+				_, err := edm.httpClientCertStore.getClientCertificate(nil)
+				if err != nil {
+					if errors.Is(err, errNoClientCertificate) {
+						err := edm.loadHTTPClientCert()
+						if err != nil {
+							edm.log.Error("configUpdater: unable to init certs when setting up histogram sender", "error", err)
+						}
+					} else {
+						edm.log.Error("configUpdater: unable to call getClientCertificate", "error", err)
+					}
+				}
+				err = edm.setupHistogramSender()
+				if err != nil {
+					edm.log.Error("configUpdater: unable to setup histogram sender", "error", err)
+				}
+			}
+		}
+
+		if !conf.DisableMQTT {
+			if !startConf.DisableMQTT {
+				if oldConf.MQTTClientCertFile != conf.MQTTClientCertFile ||
+					oldConf.MQTTClientKeyFile != conf.MQTTClientKeyFile {
+					err := edm.loadMQTTClientCert()
+					if err != nil {
+						edm.log.Error("configUpdater: unable to run edm.loadMQTTClientCert", "error", err)
+					}
+				}
+			}
+		}
+
+		err = edm.configureFSWatchers(startConf)
 		if err != nil {
-			edm.log.Error("configUpdater: unable to update cryptopan instance", "error", err)
+			edm.log.Error("unable to update fs watchers", "error", err)
+		}
+
+		if oldConf != conf {
+			edm.reloadMinimiserMutex.RLock()
+			for minimiserID := range edm.reloadMinimiserConfigCh {
+				select {
+				case edm.reloadMinimiserConfigCh[minimiserID] <- struct{}{}:
+				default: // notify already queued
+				}
+			}
+			edm.reloadMinimiserMutex.RUnlock()
+
+			select {
+			case edm.reloadHistogramSenderConfigCh <- struct{}{}:
+			default: // notify already queued
+			}
 		}
 	})
 	t.Stop()
@@ -507,19 +625,17 @@ func getHllDefaults(explicitThreshold int) hll.Settings {
 	}
 }
 
-func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore) {
+func (edm *dnstapMinimiser) setupHistogramSender() error {
 	conf := edm.getConfig()
 
 	httpURL, err := url.Parse(conf.HTTPURL)
 	if err != nil {
-		edm.log.Error("unable to parse 'http-url' setting", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("setupHistogramSender: unable to parse 'http-url' setting: %w", err)
 	}
 
 	httpSigningJwk, err := edDsaJWKFromFile(conf.HTTPSigningKeyFile)
 	if err != nil {
-		edm.log.Error("unable to parse jwk from 'http-signing-key-file'", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
 	}
 
 	// Leaving these nil will use the OS default CA certs
@@ -529,19 +645,21 @@ func (edm *dnstapMinimiser) setupHistogramSender(httpClientCertStore *certStore)
 		// Setup CA cert for validating the aggregate-receiver connection
 		httpCACertPool, err = certPoolFromFile(conf.HTTPCAFile)
 		if err != nil {
-			edm.log.Error("failed to create CA cert pool for '-http-ca-file'", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("setupHistogramSender: failed to create CA cert pool for '-http-ca-file': %w", err)
 		}
 	}
 
-	edm.aggregSender, err = edm.newAggregateSender(httpURL, httpSigningJwk, httpCACertPool, httpClientCertStore)
+	edm.aggregSenderMutex.Lock()
+	edm.aggregSender, err = edm.newAggregateSender(httpURL, httpSigningJwk, httpCACertPool)
+	edm.aggregSenderMutex.Unlock()
 	if err != nil {
-		edm.log.Error("unable to create aggregate sender", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
 	}
+
+	return nil
 }
 
-func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
+func (edm *dnstapMinimiser) setupMQTT() {
 	conf := edm.getConfig()
 
 	mqttJWK, err := edDsaJWKFromFile(conf.MQTTSigningKeyFile)
@@ -583,7 +701,7 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 
 	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
 
-	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, mqttClientCertStore, conf.MQTTKeepalive, mqttFileQueue)
+	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
 	if err != nil {
 		edm.log.Error("unable to create autopaho config", "error", err)
 		os.Exit(1)
@@ -597,16 +715,30 @@ func (edm *dnstapMinimiser) setupMQTT(mqttClientCertStore *certStore) {
 		os.Exit(1)
 	}
 
-	// Setup channel for reading messages to publish
-	edm.mqttPubCh = make(chan []byte, 100)
-
 	// Connect to the broker - this will return immediately after initiating the connection process
 	edm.autopahoWg.Add(1)
 	go edm.runAutoPaho(autopahoCm, mqttJWK, mqttFileQueue != nil)
 }
 
-func (edm *dnstapMinimiser) setIgnoredQuestionNames(ignoredQuestionsFileName string) error {
-	if ignoredQuestionsFileName == "" {
+func (edm *dnstapMinimiser) loadHTTPClientCert() error {
+	conf := edm.getConfig()
+
+	edm.log.Info("loadHTTPClientCert: loading cert into HTTP cert store", "cert_file", conf.HTTPClientCertFile, "key_file", conf.HTTPClientKeyFile)
+	err := edm.httpClientCertStore.loadCert(conf.HTTPClientCertFile, conf.HTTPClientKeyFile)
+	return err
+}
+
+func (edm *dnstapMinimiser) loadMQTTClientCert() error {
+	conf := edm.getConfig()
+	edm.log.Info("loadMQTTClientCert: loading cert into MQTT cert store", "cert_file", conf.MQTTClientCertFile, "key_file", conf.MQTTClientKeyFile)
+	err := edm.mqttClientCertStore.loadCert(conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
+	return err
+}
+
+func (edm *dnstapMinimiser) setIgnoredQuestionNames() error {
+	conf := edm.getConfig()
+
+	if conf.IgnoredQuestionNamesFile == "" {
 		edm.ignoredQuestionsMutex.Lock()
 		if edm.ignoredQuestions != nil {
 			err := edm.ignoredQuestions.Close()
@@ -616,12 +748,28 @@ func (edm *dnstapMinimiser) setIgnoredQuestionNames(ignoredQuestionsFileName str
 			edm.ignoredQuestions = nil
 		}
 		edm.ignoredQuestionsMutex.Unlock()
+		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list unset", "filename", conf.IgnoredQuestionNamesFile, "num_names", 0)
 		return nil
 	}
 
-	dawgFinder, _, err := loadDawgFile(ignoredQuestionsFileName)
+	dawgFinder, _, err := loadDawgFile(conf.IgnoredQuestionNamesFile)
 	if err != nil {
-		return fmt.Errorf("setIgnoredQuestionsNames: unable to load dawg file '%s': %w", ignoredQuestionsFileName, err)
+		if errors.Is(err, errEmptyDawgFile) {
+			// Treat the same as unset filename
+			edm.ignoredQuestionsMutex.Lock()
+			if edm.ignoredQuestions != nil {
+				err := edm.ignoredQuestions.Close()
+				if err != nil {
+					edm.log.Error("setIgnoredQuestionNames: failed closing edm.ignoredQuestions for unset filename", "error", err)
+				}
+				edm.ignoredQuestions = nil
+			}
+			edm.ignoredQuestionsMutex.Unlock()
+			edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty", "filename", conf.IgnoredQuestionNamesFile, "num_names", 0)
+			return nil
+
+		}
+		return fmt.Errorf("setIgnoredQuestionNames: unable to load dawg file '%s': %w", conf.IgnoredQuestionNamesFile, err)
 	}
 
 	// We only use the dawg file if there exists at least one name
@@ -642,31 +790,34 @@ func (edm *dnstapMinimiser) setIgnoredQuestionNames(ignoredQuestionsFileName str
 	edm.ignoredQuestionsMutex.Unlock()
 
 	if dawgFinder.NumAdded() > 0 {
-		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", ignoredQuestionsFileName, "num_names", dawgFinder.NumAdded())
+		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
 	} else {
-		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", ignoredQuestionsFileName, "num_names", dawgFinder.NumAdded())
+		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
 	}
 
 	return nil
 }
 
-func (edm *dnstapMinimiser) setIgnoredClientIPs(ignoredClientsFileName string) error {
-	if ignoredClientsFileName == "" {
+func (edm *dnstapMinimiser) setIgnoredClientIPs() error {
+	conf := edm.getConfig()
+
+	if conf.IgnoredClientIPsFile == "" {
 		edm.ignoredClientsIPSetMutex.Lock()
 		edm.ignoredClientsIPSet = nil
 		edm.ignoredClientCIDRsParsed = 0
 		edm.ignoredClientsIPSetMutex.Unlock()
+		edm.log.Info("setIgnoredClientIPs: DNS client ignore list unset", "filename", conf.IgnoredClientIPsFile, "num_cidrs", 0)
 		return nil
 	}
 
-	fh, err := os.Open(filepath.Clean(ignoredClientsFileName))
+	fh, err := os.Open(filepath.Clean(conf.IgnoredClientIPsFile))
 	if err != nil {
 		return fmt.Errorf("setIgnoredClientsIPs: unable to open file: %w", err)
 	}
 	defer func() {
 		err := fh.Close()
 		if err != nil {
-			edm.log.Error("setIgnoredClientIPs: failed closing fh", "filename", ignoredClientsFileName, "error", err)
+			edm.log.Error("setIgnoredClientIPs: failed closing fh", "filename", conf.IgnoredClientIPsFile, "error", err)
 		}
 	}()
 
@@ -687,7 +838,7 @@ func (edm *dnstapMinimiser) setIgnoredClientIPs(ignoredClientsFileName string) e
 		numCIDRs++
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("setIgnoredClientIPs: error reading from '%s': %w", ignoredClientsFileName, err)
+		return fmt.Errorf("setIgnoredClientIPs: error reading from '%s': %w", conf.IgnoredClientIPsFile, err)
 	}
 
 	// Starts out as nil. We only set it to an initialized IPSet if there is at
@@ -706,9 +857,9 @@ func (edm *dnstapMinimiser) setIgnoredClientIPs(ignoredClientsFileName string) e
 	edm.ignoredClientsIPSetMutex.Unlock()
 
 	if ipset != nil {
-		edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", ignoredClientsFileName, "num_cidrs", numCIDRs)
+		edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
 	} else {
-		edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", ignoredClientsFileName, "num_cidrs", numCIDRs)
+		edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
 	}
 
 	return nil
@@ -728,10 +879,10 @@ func (edm *dnstapMinimiser) fsEventWatcher() {
 	timers := map[string]*time.Timer{}
 	timersMutex := new(sync.Mutex)
 
-	callbackHandler := func(callbacks []func(string) error, name string) func() {
+	callbackHandler := func(callbacks []func() error, name string) func() {
 		return func() {
 			for _, callback := range callbacks {
-				err := callback(name)
+				err := callback()
 				if err != nil {
 					edm.log.Error("fsEventWatcher: callback error", "filename", name, "error", err)
 				}
@@ -791,17 +942,102 @@ func (edm *dnstapMinimiser) fsEventWatcher() {
 	}
 }
 
-func (edm *dnstapMinimiser) registerFSWatcher(filename string, callback func(string) error) error {
-	// Adding the same dir multiple times is a no-op, so it is OK to
-	// add multiple files from the same directory.
-	err := edm.fsWatcher.Add(filepath.Dir(filename))
-	if err != nil {
-		return fmt.Errorf("registerFSWatcher: unable to add directory '%s': %w", filepath.Dir(filename), err)
+func (edm *dnstapMinimiser) configureFSWatchers(startConf config) error {
+	conf := edm.getConfig()
+
+	// Build fresh file -> []func mapping
+	fileToFuncs := map[string][]func() error{}
+
+	if conf.IgnoredClientIPsFile != "" {
+		fname, err := filepath.Abs(conf.IgnoredClientIPsFile)
+		if err != nil {
+			edm.log.Error("unable to create absolute filepath for conf.IgnoredClientsIPsFile", "error", err)
+		} else {
+			fileToFuncs[fname] = []func() error{edm.setIgnoredClientIPs}
+		}
+	}
+
+	if conf.IgnoredQuestionNamesFile != "" {
+		fname, err := filepath.Abs(conf.IgnoredQuestionNamesFile)
+		if err != nil {
+			edm.log.Error("unable to create absolute filepath for conf.IgnoredQuestionNamesFile", "error", err)
+		} else {
+			fileToFuncs[fname] = []func() error{edm.setIgnoredQuestionNames}
+		}
+	}
+
+	if !conf.DisableHistogramSender {
+		if conf.HTTPClientCertFile != "" {
+			fname, err := filepath.Abs(conf.HTTPClientCertFile)
+			if err != nil {
+				edm.log.Error("unable to create absolute filepath for conf.HTTPClientCertFile", "error", err)
+			} else {
+				fileToFuncs[fname] = []func() error{edm.loadHTTPClientCert}
+			}
+		}
+	}
+
+	// MQTT can only be enabled/disabled at startup
+	if !startConf.DisableMQTT {
+		if conf.MQTTClientCertFile != "" {
+			fname, err := filepath.Abs(conf.MQTTClientCertFile)
+			if err != nil {
+				edm.log.Error("unable to create absolute filepath for conf.MQTTClientCertFile", "error", err)
+			} else {
+				fileToFuncs[fname] = []func() error{edm.loadMQTTClientCert}
+			}
+		}
 	}
 
 	edm.fsWatcherMutex.Lock()
-	edm.fsWatcherFuncs[filename] = append(edm.fsWatcherFuncs[filename], callback)
+	edm.fsWatcherFuncs = fileToFuncs
 	edm.fsWatcherMutex.Unlock()
+
+	err := edm.addFSWatchers(fileToFuncs)
+	if err != nil {
+		return fmt.Errorf("configureFSWatchers: addFSWatchers failed: %w", err)
+	}
+
+	err = edm.cleanupFSWatchers()
+	if err != nil {
+		return fmt.Errorf("configureFSWatchers: cleanupFSWatchers failed: %w", err)
+	}
+
+	return nil
+}
+
+func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error) error {
+	// Adding the same dir multiple times is a no-op, so it is OK to
+	// add multiple files from the same directory.
+	for filename := range fileToFuncs {
+		err := edm.fsWatcher.Add(filepath.Dir(filename))
+		if err != nil {
+			return fmt.Errorf("addFSWatchers: unable to add directory '%s': %w", filepath.Dir(filename), err)
+		}
+	}
+
+	return nil
+}
+
+func (edm *dnstapMinimiser) cleanupFSWatchers() error {
+	edm.fsWatcherMutex.RLock()
+	for _, watchPath := range edm.fsWatcher.WatchList() {
+		watchPathInUse := false
+		for fsWatcherFuncFilename := range edm.fsWatcherFuncs {
+			if filepath.Dir(fsWatcherFuncFilename) == watchPath {
+				watchPathInUse = true
+			}
+		}
+
+		if !watchPathInUse {
+			edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
+			err := edm.fsWatcher.Remove(watchPath)
+			if err != nil {
+				return fmt.Errorf("cleanupFSWatchers: unable to remove path watcher '%s': %w", watchPath, err)
+			}
+		}
+	}
+	edm.fsWatcherMutex.RUnlock()
 
 	return nil
 }
@@ -834,7 +1070,24 @@ type viperConfiger struct{}
 
 func (vc viperConfiger) getConfig() (config, error) {
 	conf := config{}
-	err := viper.UnmarshalExact(&conf)
+
+	// viper.WatchConfig() does call viper.ReadInConfig() internally so
+	// ideally we should not need to call it again, but I have seen
+	// inconsistent behaviour where viper.UnmarshalExact() below returns
+	// stale data when the config file is modified in-place with an editor
+	// rather than being atomically replaced e.g. via mv(1).
+	//
+	// Since this getConfig() function is not called by configUpdater()
+	// until it has waited on notifications to settle this should make
+	// things behave better (it is still recommended that an updated config
+	// file is moved in place atomically rather than being modified with an
+	// editor directly).
+	err := viper.ReadInConfig()
+	if err != nil {
+		return config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)
+	}
+
+	err = viper.UnmarshalExact(&conf)
 	if err != nil {
 		return config{}, fmt.Errorf("getViperConfig: unable to unmarshal config: %w", err)
 	}
@@ -898,27 +1151,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		loggerLevel.Set(slog.LevelDebug)
 	}
 
-	err = edm.setIgnoredClientIPs(startConf.IgnoredClientIPsFile)
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		logger.Error("unable to configure ignored client IPs", "error", err)
 		os.Exit(1)
 	}
 
-	err = edm.registerFSWatcher(startConf.IgnoredClientIPsFile, edm.setIgnoredClientIPs)
-	if err != nil {
-		logger.Error("unable to register fsWatcher callback", "filename", startConf.IgnoredClientIPsFile, "error", err)
-		os.Exit(1)
-	}
-
-	err = edm.setIgnoredQuestionNames(startConf.IgnoredQuestionNamesFile)
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		logger.Error("unable to configure ignored question names", "error", err)
-		os.Exit(1)
-	}
-
-	err = edm.registerFSWatcher(startConf.IgnoredQuestionNamesFile, edm.setIgnoredQuestionNames)
-	if err != nil {
-		logger.Error("unable to register fsWatcher callback", "filename", startConf.IgnoredQuestionNamesFile, "error", err)
 		os.Exit(1)
 	}
 
@@ -943,50 +1184,34 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		}
 	}()
 
-	if !edm.histogramSenderDisabled {
-		// Setup client cert/key for mTLS authentication
-		httpClientCertStore := newCertStore()
-		err = httpClientCertStore.loadCert(startConf.HTTPClientCertFile, startConf.HTTPClientKeyFile)
+	if !startConf.DisableHistogramSender {
+		err := edm.loadHTTPClientCert()
 		if err != nil {
 			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
 			os.Exit(1)
 		}
 
-		edm.setupHistogramSender(httpClientCertStore)
-
-		err = edm.registerFSWatcher(startConf.HTTPClientCertFile, func(filename string) error {
-			conf := edm.getConfig()
-			edm.log.Info("reloading HTTP cert store because file was modified", "filename", filename)
-			err := httpClientCertStore.loadCert(conf.HTTPClientCertFile, conf.HTTPClientKeyFile)
-			return err
-		})
+		err = edm.setupHistogramSender()
 		if err != nil {
-			logger.Error("unable to register fsWatcher callback", "filename", startConf.HTTPClientCertFile, "error", err)
+			edm.log.Error("unable to setup histogram sender", "error", err)
 			os.Exit(1)
 		}
 	}
 
-	if !edm.mqttDisabled {
-		// Setup client cert/key for mTLS authentication
-		mqttClientCertStore := newCertStore()
-		err = mqttClientCertStore.loadCert(startConf.MQTTClientCertFile, startConf.MQTTClientKeyFile)
+	if !startConf.DisableMQTT {
+		err := edm.loadMQTTClientCert()
 		if err != nil {
 			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
 			os.Exit(1)
 		}
 
-		edm.setupMQTT(mqttClientCertStore)
+		edm.setupMQTT()
+	}
 
-		err = edm.registerFSWatcher(startConf.MQTTClientCertFile, func(filename string) error {
-			conf := edm.getConfig()
-			edm.log.Info("reloading MQTT cert store because file was modified", "filename", filename)
-			err := mqttClientCertStore.loadCert(conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
-			return err
-		})
-		if err != nil {
-			logger.Error("unable to register fsWatcher callback", "filename", startConf.MQTTClientCertFile, "error", err)
-			os.Exit(1)
-		}
+	err = edm.configureFSWatchers(startConf)
+	if err != nil {
+		logger.Error("unable to configure fsWatchers", "error", err)
+		os.Exit(1)
 	}
 
 	go edm.fsEventWatcher()
@@ -1096,11 +1321,9 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	go edm.sessionWriter(dataDir, &wg)
 	wg.Add(1)
 	go edm.histogramWriter(defaultLabelLimit, outboxDir, &wg)
-	if !edm.histogramSenderDisabled {
-		wg.Add(1)
-		go edm.histogramSender(outboxDir, sentDir, &wg)
-	}
-	if !edm.mqttDisabled {
+	wg.Add(1)
+	go edm.histogramSender(outboxDir, sentDir, &wg)
+	if !startConf.DisableMQTT {
 		wg.Add(1)
 		go edm.newQnamePublisher(&wg)
 	}
@@ -1159,11 +1382,20 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}
 
 	// Start minimiser
+	edm.reloadMinimiserMutex.Lock()
 	for minimiserID := 0; minimiserID < numMinimiserWorkers; minimiserID++ {
 		edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
+		// This append aims to map 1:1 between offset in the resulting
+		// slice and minimiserID of a worker, so edm.reloadMinimiserConfigCh[3]
+		// should be a channel read by the worker with minimiserID 3
+		//
+		// Capacity is set to 1 so we can do a send without hanging if
+		// the worker is currently busy.
+		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, make(chan struct{}, 1))
 		minimiserWg.Add(1)
-		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, startConf.DisableSessionFiles, debugDnstapFile, defaultLabelLimit, wkdTracker)
+		go edm.runMinimiser(minimiserID, &minimiserWg, seenQnameLRU, pdb, debugDnstapFile, defaultLabelLimit, wkdTracker)
 	}
+	edm.reloadMinimiserMutex.Unlock()
 
 	// Start dnstap.Input
 	go dti.ReadInto(edm.inputChannel)
@@ -1178,7 +1410,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	close(edm.newQnamePublisherCh)
 
 	// Stop the MQTT publisher
-	if !edm.mqttDisabled {
+	if !startConf.DisableMQTT {
 		edm.log.Info("Run: stopping MQTT publisher")
 		edm.autopahoCancel()
 	}
@@ -1188,54 +1420,58 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	wg.Wait()
 
 	// Wait for graceful disconnection from MQTT bus
-	if !edm.mqttDisabled {
+	if !startConf.DisableMQTT {
 		edm.log.Info("Run: waiting on MQTT disconnection")
 		edm.autopahoWg.Wait()
 	}
 }
 
 type dnstapMinimiser struct {
-	configer                  edmConfiger
-	conf                      config
-	confMutex                 sync.RWMutex
-	inputChannel              chan []byte          // the channel expected to be passed to dnstap ReadInto()
-	log                       *slog.Logger         // any information logging is sent here
-	cryptopan                 *cryptopan.Cryptopan // used for pseudonymising IP addresses
-	cryptopanCache            *lru.Cache[netip.Addr, netip.Addr]
-	cryptopanMutex            sync.RWMutex // Mutex for protecting updates cryptopan at runtime
-	promReg                   *prometheus.Registry
-	promCryptopanCacheHit     prometheus.Counter
-	promCryptopanCacheEvicted prometheus.Counter
-	promDnstapProcessed       prometheus.Counter
-	promNewQnameQueued        prometheus.Counter
-	promNewQnameDiscarded     prometheus.Counter
-	promSeenQnameLRUEvicted   prometheus.Counter
-	promNewQnameChannelLen    prometheus.Gauge
-	promClientIPIgnored       prometheus.Counter
-	promClientIPIgnoredError  prometheus.Counter
-	promQuestionNameIgnored   prometheus.Counter
-	ctx                       context.Context
-	stop                      context.CancelFunc // call this to gracefully stop runMinimiser()
-	debug                     bool               // if we should print debug messages during operation
-	sessionWriterCh           chan *prevSessions
-	histogramWriterCh         chan *wellKnownDomainsData
-	newQnamePublisherCh       chan *protocols.NewQnameJSON
-	sessionCollectorCh        chan *sessionData
-	histogramSenderDisabled   bool
-	aggregSender              aggregateSender
-	mqttDisabled              bool
-	mqttPubCh                 chan []byte
-	autopahoCtx               context.Context
-	autopahoCancel            context.CancelFunc
-	autopahoWg                sync.WaitGroup
-	ignoredClientsIPSet       *netipx.IPSet
-	ignoredClientCIDRsParsed  uint64
-	ignoredClientsIPSetMutex  sync.RWMutex // Mutex for protecting updates to ignored client IPs at runtime
-	ignoredQuestions          dawg.Finder
-	ignoredQuestionsMutex     sync.RWMutex
-	fsWatcher                 *fsnotify.Watcher
-	fsWatcherFuncs            map[string][]func(string) error
-	fsWatcherMutex            sync.RWMutex
+	configer                      edmConfiger
+	conf                          config
+	confMutex                     sync.RWMutex
+	inputChannel                  chan []byte          // the channel expected to be passed to dnstap ReadInto()
+	log                           *slog.Logger         // any information logging is sent here
+	cryptopan                     *cryptopan.Cryptopan // used for pseudonymising IP addresses
+	cryptopanCache                *lru.Cache[netip.Addr, netip.Addr]
+	cryptopanMutex                sync.RWMutex // Mutex for protecting updates cryptopan at runtime
+	promReg                       *prometheus.Registry
+	promCryptopanCacheHit         prometheus.Counter
+	promCryptopanCacheEvicted     prometheus.Counter
+	promDnstapProcessed           prometheus.Counter
+	promNewQnameQueued            prometheus.Counter
+	promNewQnameDiscarded         prometheus.Counter
+	promSeenQnameLRUEvicted       prometheus.Counter
+	promNewQnameChannelLen        prometheus.Gauge
+	promClientIPIgnored           prometheus.Counter
+	promClientIPIgnoredError      prometheus.Counter
+	promQuestionNameIgnored       prometheus.Counter
+	ctx                           context.Context
+	stop                          context.CancelFunc // call this to gracefully stop runMinimiser()
+	debug                         bool               // if we should print debug messages during operation
+	sessionWriterCh               chan *prevSessions
+	histogramWriterCh             chan *wellKnownDomainsData
+	newQnamePublisherCh           chan *protocols.NewQnameJSON
+	sessionCollectorCh            chan *sessionData
+	aggregSenderMutex             sync.RWMutex
+	aggregSender                  aggregateSender
+	mqttPubCh                     chan []byte
+	autopahoCtx                   context.Context
+	autopahoCancel                context.CancelFunc
+	autopahoWg                    sync.WaitGroup
+	ignoredClientsIPSet           *netipx.IPSet
+	ignoredClientCIDRsParsed      uint64
+	ignoredClientsIPSetMutex      sync.RWMutex // Mutex for protecting updates to ignored client IPs at runtime
+	ignoredQuestions              dawg.Finder
+	ignoredQuestionsMutex         sync.RWMutex
+	fsWatcher                     *fsnotify.Watcher
+	fsWatcherFuncs                map[string][]func() error
+	fsWatcherMutex                sync.RWMutex
+	httpClientCertStore           *certStore // client cert/key for mTLS authentication
+	mqttClientCertStore           *certStore // client cert/key for mTLS authentication
+	reloadMinimiserMutex          sync.RWMutex
+	reloadMinimiserConfigCh       []chan struct{}
+	reloadHistogramSenderConfigCh chan struct{}
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -1338,15 +1574,24 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	edm.inputChannel = make(chan []byte, 32)
 	edm.log = logger
 	edm.debug = conf.Debug
-	edm.histogramSenderDisabled = conf.DisableHistogramSender
-	edm.mqttDisabled = conf.DisableMQTT
+
+	// Capacity is set to 1 so we can do a send without hanging if
+	// the histogram sender is currently busy.
+	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
 	edm.fsWatcher, err = fsnotify.NewWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("newDnstapMinimiser: unable to create fsWatcher: %w", err)
 	}
 
-	edm.fsWatcherFuncs = map[string][]func(string) error{}
+	edm.fsWatcherFuncs = map[string][]func() error{}
+
+	// Prepare client cert/key storage for mTLS authentication
+	edm.httpClientCertStore = newCertStore()
+	edm.mqttClientCertStore = newCertStore()
+
+	// Setup channel for reading messages to publish
+	edm.mqttPubCh = make(chan []byte, 100)
 
 	// Setup channels for feeding writers and data senders that should do
 	// their work outside the main minimiser loop. They are buffered to
@@ -1539,7 +1784,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 			return nil, fmt.Errorf("rotateTracker: dawg.Load(): %w", err)
 		}
 		dawgFileChanged = true
-		edm.log.Info("dawg file modificatiom changed, will reload file", "prev_time", wkd.dawgModTime, "cur_time", fileInfo.ModTime())
+		edm.log.Info("dawg file modification changed, will reload file", "prev_time", wkd.dawgModTime, "cur_time", fileInfo.ModTime())
 	}
 
 	prevWKD := &wellKnownDomainsData{}
@@ -1658,10 +1903,16 @@ func (edm *dnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
 // runMinimiser is the main loop of the program, it reads dnstap from
 // inputChannel and decides what further processing to do.
 // To gracefully stop runMinimiser() you can call edm.stop().
-func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, disableSessionFiles bool, debugDnstapFile *os.File, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, debugDnstapFile *os.File, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	defer wg.Done()
 
 	dt := &dnstap.Dnstap{}
+
+	// startConf is used for things that do not handle reconfiguration at runtime
+	startConf := edm.getConfig()
+
+	// conf is meant to be dynamically modified if the config changes at runtime
+	conf := edm.getConfig()
 
 minimiserLoop:
 	for {
@@ -1744,7 +1995,7 @@ minimiserLoop:
 			}
 
 			if !edm.qnameSeen(msg, seenQnameLRU, pdb) {
-				if !edm.mqttDisabled {
+				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
 					select {
@@ -1757,10 +2008,24 @@ minimiserLoop:
 				}
 			}
 
-			if !disableSessionFiles {
+			if !conf.DisableSessionFiles {
 				session := edm.newSession(dt, msg, isQuery, labelLimit, timestamp)
 				edm.sessionCollectorCh <- session
 			}
+		case <-edm.reloadMinimiserConfigCh[minimiserID]:
+			if edm.debug {
+				edm.log.Debug("reloading minimiser config", "minimiser_id", minimiserID)
+			}
+			newConf := edm.getConfig()
+			if conf.DisableSessionFiles != newConf.DisableSessionFiles {
+				if newConf.DisableSessionFiles {
+					edm.log.Info("disabling session files", "minimiser_id", minimiserID)
+				} else {
+					edm.log.Info("enabling session files", "minimiser_id", minimiserID)
+				}
+			}
+
+			conf = newConf
 		case <-edm.ctx.Done():
 			break minimiserLoop
 		}
@@ -1939,7 +2204,7 @@ func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	edm.log.Info("sessionStructWriter: starting")
+	edm.log.Info("sessionWriter: starting")
 
 	for ps := range edm.sessionWriterCh {
 		_, err := edm.createSessionFile(ps, dataDir)
@@ -1948,7 +2213,7 @@ func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 		}
 	}
 
-	edm.log.Info("sessionStructWriter: exiting loop")
+	edm.log.Info("sessionWriter: exiting loop")
 }
 
 func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
@@ -2068,7 +2333,7 @@ func (edm *dnstapMinimiser) createFile(dst string) (*os.File, error) {
 		}
 
 		if errors.Is(err, fs.ErrNotExist) {
-			// If the destionation directory does not exist we will
+			// If the destination directory does not exist we will
 			// need to create it and then retry the file Create()
 			// the next iteration of the loop.
 			err = os.MkdirAll(dstDir, 0o750)
@@ -2086,8 +2351,6 @@ func (edm *dnstapMinimiser) createFile(dst string) (*os.File, error) {
 func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	edm.log.Info("histogramSender: starting")
-
 	backoffDuration := time.Second * 15
 
 	// We will scan the outbox directory each tick for histogram parquet
@@ -2095,10 +2358,21 @@ func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg
 	ticker := time.NewTicker(time.Second * 10)
 	defer ticker.Stop()
 
+	conf := edm.getConfig()
+
+	stateString := "enabled"
+	if conf.DisableHistogramSender {
+		stateString = "disabled"
+	}
+
+	edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
 	for {
 		select {
 		case <-ticker.C:
+			if conf.DisableHistogramSender {
+				continue
+			}
 			dirEntries, err := os.ReadDir(outboxDir)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
@@ -2122,7 +2396,15 @@ timerLoop:
 
 					absPath := filepath.Join(outboxDir, dirEntry.Name())
 					absPathSent := filepath.Join(sentDir, dirEntry.Name())
-					err = edm.aggregSender.send(absPath, startTS, duration)
+
+					// Make a copy of the struct under lock
+					// so the network communication from
+					// send() does not block aggregSender
+					// management.
+					edm.aggregSenderMutex.RLock()
+					as := edm.aggregSender
+					edm.aggregSenderMutex.RUnlock()
+					err = as.send(absPath, startTS, duration)
 					if err != nil {
 						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
 						time.Sleep(backoffDuration)
@@ -2133,6 +2415,19 @@ timerLoop:
 						edm.log.Error("histogramSender: unable to rename sent histogram file", "error", err)
 					}
 				}
+			}
+		case <-edm.reloadHistogramSenderConfigCh:
+			edm.log.Info("histogramSender: reloading config")
+			newConf := edm.getConfig()
+
+			if conf.DisableHistogramSender != newConf.DisableHistogramSender {
+				if newConf.DisableHistogramSender {
+					edm.log.Info("histogramSender: disabling histogram sender")
+				} else {
+					edm.log.Info("histogramSender: enabling histogram sender")
+				}
+
+				conf = newConf
 			}
 		case <-edm.ctx.Done():
 			break timerLoop
@@ -2190,16 +2485,24 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 	qa := net.IP(dt.Message.QueryAddress)
 	ra := net.IP(dt.Message.ResponseAddress)
 
-	// Query address: 10.10.10.10:31337 or ?
-	if qa != nil {
+	// Query address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
+	if qa != nil && dt.Message.QueryPort != nil {
 		queryAddress = qa.String() + ":" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
+	} else if qa != nil {
+		queryAddress = qa.String() + ":?"
+	} else if dt.Message.ResponsePort != nil {
+		queryAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
 	} else {
 		queryAddress = "?"
 	}
 
-	// Response address: 10.10.10.10:31337 or ?
-	if ra != nil {
+	// Response address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
+	if ra != nil && dt.Message.ResponsePort != nil {
 		responseAddress = ra.String() + ":" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
+	} else if ra != nil {
+		responseAddress = ra.String() + ":?"
+	} else if dt.Message.ResponsePort != nil {
+		responseAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
 	} else {
 		responseAddress = "?"
 	}
@@ -2586,9 +2889,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 
 	retryChannelClosed := false
 
-	startupConf := edm.getConfig()
+	conf := edm.getConfig()
 
-	hllSettings := getHllDefaults(startupConf.HistogramHLLExplicitThreshold)
+	hllSettings := getHllDefaults(conf.HistogramHLLExplicitThreshold)
 
 collectorLoop:
 	for {
@@ -2666,7 +2969,7 @@ collectorLoop:
 			}
 
 			// See if we need to modify anything based on a config update
-			conf := edm.getConfig()
+			conf = edm.getConfig()
 
 			if conf.HistogramHLLExplicitThreshold != hllSettings.ExplicitThreshold {
 				edm.log.Info("updating HLL explicit threshold based on config change", "from", hllSettings.ExplicitThreshold, "to", conf.HistogramHLLExplicitThreshold)
@@ -2701,9 +3004,14 @@ func loadDawgFile(dawgFile string) (dawg.Finder, time.Time, error) {
 		return nil, time.Time{}, fmt.Errorf("loadDawgFile: unable to stat dawg file '%s': %w", dawgFile, err)
 	}
 
+	// dawg.Load() panics on an empty file
+	if dawgFileInfo.Size() == 0 {
+		return nil, time.Time{}, errEmptyDawgFile
+	}
+
 	dawgFinder, err := dawg.Load(dawgFile)
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("loadDawgFile: unable to load DAWG file: %w", err)
+		return nil, time.Time{}, fmt.Errorf("loadDawgFile: unable to load dawg file: %w", err)
 	}
 
 	return dawgFinder, dawgFileInfo.ModTime(), nil
