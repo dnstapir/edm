@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -21,14 +22,14 @@ import (
 )
 
 type aggregateSender struct {
-	edm               *dnstapMinimiser
+	log               *slog.Logger
 	aggrecURL         *url.URL
 	signingKey        ed25519.PrivateKey
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, clientCertStore *certStore) (aggregateSender, error) {
+func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
 	err := signingJwk.Raw(&signingKey)
@@ -47,7 +48,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 			ResponseHeaderTimeout: 10 * time.Second,
 			TLSClientConfig: &tls.Config{
 				RootCAs:              caCertPool,
-				GetClientCertificate: clientCertStore.getClientCertificate,
+				GetClientCertificate: edm.httpClientCertStore.getClientCertificate,
 				MinVersion:           tls.VersionTLS13,
 			},
 		},
@@ -66,7 +67,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
 	return aggregateSender{
-		edm:               edm,
+		log:               edm.log,
 		aggrecURL:         aggrecURL,
 		signingKey:        signingKey,
 		caCertPool:        caCertPool,
@@ -127,7 +128,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	minutes := int(math.Round(minutesFloat))
 	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/PT%dM", ts.Truncate(time.Minute).Format(time.RFC3339), minutes))
 
-	as.edm.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
+	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
 	startTime := time.Now()
 	res, err := as.signingHTTPClient.Do(req)
 	elapsedTime := time.Since(startTime)
@@ -146,7 +147,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	}
 
 	if res.StatusCode != http.StatusCreated {
-		as.edm.log.Error(string(bodyData))
+		as.log.Error(string(bodyData))
 		return fmt.Errorf("sendAggregateFile: unexpected status code: %d", res.StatusCode)
 	}
 
@@ -163,7 +164,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 		locationURL.Host = as.aggrecURL.Host
 	}
 
-	as.edm.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
+	as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 
 	return nil
 }
