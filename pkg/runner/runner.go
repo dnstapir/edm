@@ -1314,7 +1314,8 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
 	sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
-	go edm.monitorChannelLen()
+	wg.Add(1)
+	go edm.monitorChannelLen(&wg)
 
 	// Start record writers and data senders in the background
 	wg.Add(1)
@@ -2033,10 +2034,21 @@ minimiserLoop:
 	edm.log.Info("runMinimiser: exiting loop", "minimiser_id", minimiserID)
 }
 
-func (edm *dnstapMinimiser) monitorChannelLen() {
+func (edm *dnstapMinimiser) monitorChannelLen(wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	edm.log.Info("monitorChannelLen: starting")
 	for {
-		edm.promNewQnameChannelLen.Set(float64(len(edm.newQnamePublisherCh)))
-		time.Sleep(time.Second * 1)
+		select {
+		case <-ticker.C:
+			edm.promNewQnameChannelLen.Set(float64(len(edm.newQnamePublisherCh)))
+		case <-edm.ctx.Done():
+			edm.log.Info("monitorChannelLen: exiting loop")
+			return
+		}
 	}
 }
 
