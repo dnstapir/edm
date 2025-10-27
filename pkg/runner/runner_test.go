@@ -1096,31 +1096,31 @@ func TestSetSessionLabels(t *testing.T) {
 		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[9])
 	}
 	if *sd.Label1 != labels[8] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[8])
+		t.Fatalf("have: %s, want: %s", *sd.Label1, labels[8])
 	}
 	if *sd.Label2 != labels[7] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[7])
+		t.Fatalf("have: %s, want: %s", *sd.Label2, labels[7])
 	}
 	if *sd.Label3 != labels[6] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[6])
+		t.Fatalf("have: %s, want: %s", *sd.Label3, labels[6])
 	}
 	if *sd.Label4 != labels[5] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[5])
+		t.Fatalf("have: %s, want: %s", *sd.Label4, labels[5])
 	}
 	if *sd.Label5 != labels[4] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[4])
+		t.Fatalf("have: %s, want: %s", *sd.Label5, labels[4])
 	}
 	if *sd.Label6 != labels[3] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[3])
+		t.Fatalf("have: %s, want: %s", *sd.Label6, labels[3])
 	}
 	if *sd.Label7 != labels[2] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[2])
+		t.Fatalf("have: %s, want: %s", *sd.Label7, labels[2])
 	}
 	if *sd.Label8 != labels[1] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[1])
+		t.Fatalf("have: %s, want: %s", *sd.Label8, labels[1])
 	}
 	if *sd.Label9 != labels[0] {
-		t.Fatalf("have: %s, want: %s", *sd.Label0, labels[0])
+		t.Fatalf("have: %s, want: %s", *sd.Label9, labels[0])
 	}
 }
 
