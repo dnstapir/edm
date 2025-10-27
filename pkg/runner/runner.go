@@ -953,7 +953,7 @@ func (edm *dnstapMinimiser) configureFSWatchers(startConf config) error {
 		if err != nil {
 			edm.log.Error("unable to create absolute filepath for conf.IgnoredClientsIPsFile", "error", err)
 		} else {
-			fileToFuncs[fname] = []func() error{edm.setIgnoredClientIPs}
+			fileToFuncs[fname] = append(fileToFuncs[fname], edm.setIgnoredClientIPs)
 		}
 	}
 
@@ -962,7 +962,7 @@ func (edm *dnstapMinimiser) configureFSWatchers(startConf config) error {
 		if err != nil {
 			edm.log.Error("unable to create absolute filepath for conf.IgnoredQuestionNamesFile", "error", err)
 		} else {
-			fileToFuncs[fname] = []func() error{edm.setIgnoredQuestionNames}
+			fileToFuncs[fname] = append(fileToFuncs[fname], edm.setIgnoredQuestionNames)
 		}
 	}
 
@@ -972,7 +972,7 @@ func (edm *dnstapMinimiser) configureFSWatchers(startConf config) error {
 			if err != nil {
 				edm.log.Error("unable to create absolute filepath for conf.HTTPClientCertFile", "error", err)
 			} else {
-				fileToFuncs[fname] = []func() error{edm.loadHTTPClientCert}
+				fileToFuncs[fname] = append(fileToFuncs[fname], edm.loadHTTPClientCert)
 			}
 		}
 	}
@@ -984,7 +984,7 @@ func (edm *dnstapMinimiser) configureFSWatchers(startConf config) error {
 			if err != nil {
 				edm.log.Error("unable to create absolute filepath for conf.MQTTClientCertFile", "error", err)
 			} else {
-				fileToFuncs[fname] = []func() error{edm.loadMQTTClientCert}
+				fileToFuncs[fname] = append(fileToFuncs[fname], edm.loadMQTTClientCert)
 			}
 		}
 	}
