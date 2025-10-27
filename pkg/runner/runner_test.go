@@ -227,7 +227,8 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	testdataFile1 := "testdata/ignored-client-ips.valid1"
 	testdataFile2 := "testdata/ignored-client-ips.valid2"
 
-	err = edm.setIgnoredClientIPs(testdataFile1)
+	edm.conf.IgnoredClientIPsFile = testdataFile1
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -311,7 +312,8 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	}
 
 	// Load a new file and make sure older ignored IPs are no longer ignored
-	err = edm.setIgnoredClientIPs(testdataFile2)
+	edm.conf.IgnoredClientIPsFile = testdataFile2
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -408,7 +410,8 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 
 	testdataFile := "testdata/ignored-client-ips.empty-lines-and-comments"
 
-	err = edm.setIgnoredClientIPs(testdataFile)
+	edm.conf.IgnoredClientIPsFile = testdataFile
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -473,7 +476,8 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 
 	testdataFile := "testdata/ignored-client-ips.valid1"
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
-	err = edm.setIgnoredClientIPs(testdataFile)
+	edm.conf.IgnoredClientIPsFile = testdataFile
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -490,7 +494,8 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	}
 
 	testdataFile = "testdata/ignored-client-ips.empty"
-	err = edm.setIgnoredClientIPs(testdataFile)
+	edm.conf.IgnoredClientIPsFile = testdataFile
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -558,13 +563,15 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 
 	// To make sure unsetting the filename used for ignored client IPs
 	// resets stuff as expected first read in a file with content
-	err = edm.setIgnoredClientIPs("testdata/ignored-client-ips.valid1")
+	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
 	// Now run the function with an empty filename
-	err = edm.setIgnoredClientIPs("")
+	edm.conf.IgnoredClientIPsFile = ""
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to set empty filename: %s", err)
 	}
@@ -630,7 +637,8 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 	// Even if we are testing invalid data we still need to have loaded a
 	// IP file with at least one valid entry in it to even inspect the
 	// value.
-	err = edm.setIgnoredClientIPs("testdata/ignored-client-ips.valid1")
+	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -652,7 +660,8 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 	// Also verify that if we load an empty list this means we are not
 	// inspecting client addresses at all so not even broken client
 	// addresses are ignored in this case.
-	err = edm.setIgnoredClientIPs("testdata/ignored-client-ips.empty")
+	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.empty"
+	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -678,7 +687,8 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	// Magic value counted by hand
 	expectedNumNames := 2
 
-	err = edm.setIgnoredQuestionNames(testdataFile1)
+	edm.conf.IgnoredQuestionNamesFile = testdataFile1
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -745,7 +755,8 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	}
 
 	// Load a new file and make sure older ignored IPs are no longer ignored
-	err = edm.setIgnoredQuestionNames(testdataFile2)
+	edm.conf.IgnoredQuestionNamesFile = testdataFile2
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -823,7 +834,8 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
 	testdataFile := "testdata/ignored-question-names.valid1.dawg"
-	err = edm.setIgnoredQuestionNames(testdataFile)
+	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -836,7 +848,8 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 	}
 
 	testdataFile = "testdata/ignored-question-names.empty.dawg"
-	err = edm.setIgnoredQuestionNames(testdataFile)
+	edm.conf.IgnoredQuestionNamesFile = testdataFile
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -902,7 +915,8 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	// To make sure unsetting the filename used for ignored question names
 	// resets stuff as expected first read in a file with content
 	testdataFile := "testdata/ignored-question-names.valid1.dawg"
-	err = edm.setIgnoredQuestionNames(testdataFile)
+	edm.conf.IgnoredQuestionNamesFile = testdataFile
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -915,7 +929,8 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	}
 
 	// Now set an empty filename
-	err = edm.setIgnoredQuestionNames("")
+	edm.conf.IgnoredQuestionNamesFile = ""
+	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -1415,7 +1430,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	if origQueryAddr6 == pseudoQueryAddrUpdated6 {
 		t.Fatalf("updated pseudonymised IPv6 query address %s is the same as the orignal address %s", pseudoQueryAddrUpdated6, origQueryAddr6)
 	}
-	if origRespAddr4 == pseudoRespAddrUpdated4 {
+	if origRespAddr6 == pseudoRespAddrUpdated6 {
 		t.Fatalf("updated pseudonymised IPv6 response address %s is the same as the orignal address %s", pseudoRespAddrUpdated6, origRespAddr6)
 	}
 
