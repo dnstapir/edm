@@ -2014,9 +2014,7 @@ minimiserLoop:
 				edm.sessionCollectorCh <- session
 			}
 		case <-edm.reloadMinimiserConfigCh[minimiserID]:
-			if edm.debug {
-				edm.log.Debug("reloading minimiser config", "minimiser_id", minimiserID)
-			}
+			edm.log.Info("runMinimiser: reloading config", "minimiser_id", minimiserID)
 			newConf := edm.getConfig()
 			if conf.DisableSessionFiles != newConf.DisableSessionFiles {
 				if newConf.DisableSessionFiles {
