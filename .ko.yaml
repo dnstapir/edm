@@ -2,4 +2,5 @@ defaultPlatforms:
 - linux/amd64
 - linux/arm64
 builds:
-  - ldflags: -X main.version={{.Env.GITHUB_SHA}}
+  - main: ./cmd/dnstapir-edm
+    ldflags: -X main.version={{.Env.VERSION}}
