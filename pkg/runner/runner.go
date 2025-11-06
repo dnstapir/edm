@@ -2768,9 +2768,9 @@ func certPoolFromFile(fileName string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("certPoolFromFile: unable to read file: %w", err)
 	}
 	certPool := x509.NewCertPool()
-	ok := certPool.AppendCertsFromPEM([]byte(cert))
+	ok := certPool.AppendCertsFromPEM(cert)
 	if !ok {
-		return nil, fmt.Errorf("certPoolFromFile: failed to append certs from pem: %w", err)
+		return nil, fmt.Errorf("certPoolFromFile: failed to append certs from PEM file '%s'", fileName)
 	}
 
 	return certPool, nil
