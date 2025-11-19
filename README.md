@@ -17,7 +17,7 @@ sent to Core via MQTT messages.
 ## Usage
 Running `dnstapir-edm` requires the creation of a TOML config file for holding the
 crypto-PAn secret used for pseudonymisation as well as a
-`well-known-domains.dawg` file which can be created using `tapir-cli` from
+`well-known-domains.dawg` file which can be created using `dnstapir-cli` from
 <https://github.com/dnstapir/cli>
 
 ### Steps for a basic local-only setup
@@ -29,7 +29,7 @@ make build
 echo 'cryptopan-key = "mysecret"' > dnstapir-edm.toml
 curl -O https://www.domcop.com/files/top/top10milliondomains.csv.zip
 unzip top10milliondomains.csv.zip
-tapir-cli dawg --standalone compile --format csv --src top10milliondomains.csv --dawg well-known-domains.dawg
+dnstapir-cli dawg --standalone compile --format csv --src top10milliondomains.csv --dawg well-known-domains.dawg
 dnstapir-edm run --input-unix /tmp/dnstapir-edm/input.sock --data-dir /tmp/dnstapir-edm/data --config-file dnstapir-edm.toml --well-known-domains-file well-known-domains.dawg --disable-mqtt --disable-histogram-sender
 ```
 Since all communication with Core is disabled this is helpful for creating some
