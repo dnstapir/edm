@@ -30,6 +30,7 @@ clean:
 	@rm -rf deb/var
 	@rm -rf deb/DEBIAN/control
 	@rm -rf *.deb
+	@rm -rf out
 
 versions:
 	./gen-versions.sh
@@ -44,6 +45,12 @@ srpm: tarball
 	cp $(OUTPUT).tar.gz rpm/SOURCES/
 	rpmbuild -bs --define "%_topdir ./rpm" --undefine=dist $(SPECFILE_OUT)
 	test -z "$(outdir)" || cp rpm/SRPMS/*.src.rpm "$(outdir)"
+
+rpm: srpm
+	mkdir ./out
+	cp -r ./rpm ./out/
+	rpmbuild --rebuild --define "%_topdir $$(pwd)/out/rpm" --undefine=dist $$(pwd)/out/rpm/SRPMS/$(OUTPUT)-$$(cat RPM_VERSION)-*.src.rpm
+	test -z "$(outdir)" || cp $$(pwd)/out/rpm/RPMS/**/$(OUTPUT)-$$(cat RPM_VERSION)-*.rpm "$(outdir)"
 
 deb: build versions
 	mkdir -p deb/usr/bin

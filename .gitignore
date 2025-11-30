@@ -11,6 +11,7 @@ rpm/
 !rpm/SOURCES/ignored-ips
 !rpm/SOURCES/well-known-domains.dawg
 !rpm/SOURCES/dnstapir-edm.service
+!rpm/SOURCES/dnstapir-edm.sysusers.conf
 !rpm/dnstapir-edm.spec.in
 VERSION
 RPM_VERSION
@@ -22,3 +23,6 @@ deb/
 !deb/control.in
 !deb/DEBIAN/postinst
 !deb/DEBIAN/postrm
+
+# Ignore output folder containing build artefacts
+out/
