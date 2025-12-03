@@ -50,7 +50,7 @@ rpm: srpm
 	mkdir ./out
 	cp -r ./rpm ./out/
 	rpmbuild --rebuild --define "%_topdir $$(pwd)/out/rpm" --undefine=dist $$(pwd)/out/rpm/SRPMS/$(OUTPUT)-$$(cat RPM_VERSION)-*.src.rpm
-	test -z "$(outdir)" || cp $$(pwd)/out/rpm/RPMS/**/$(OUTPUT)-$$(cat RPM_VERSION)-*.rpm "$(outdir)"
+	test -z "$(outdir)" || cp $$(pwd)/out/rpm/RPMS/*/$(OUTPUT)-$$(cat RPM_VERSION)-*.rpm "$(outdir)"
 
 deb: build versions
 	mkdir -p deb/usr/bin
