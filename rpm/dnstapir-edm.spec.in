@@ -86,7 +86,7 @@ install -m 0644 -D %{SOURCE5} %{buildroot}%{_sysusersdir}/dnstapir-edm.conf
 %attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
 %attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/dnstapir-edm.toml
 
-%{_sysusersdir}/dnstapir-edm.conf
+%attr(0644,root,root) %{_sysusersdir}/dnstapir-edm.conf
 
 %if %{with sysusers_compat}
 %pre
