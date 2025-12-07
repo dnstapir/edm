@@ -47,7 +47,7 @@ srpm: tarball
 	test -z "$(outdir)" || cp rpm/SRPMS/*.src.rpm "$(outdir)"
 
 rpm: srpm
-	mkdir ./out
+	mkdir -p ./out
 	cp -r ./rpm ./out/
 	rpmbuild --rebuild --define "%_topdir $$(pwd)/out/rpm" --undefine=dist $$(pwd)/out/rpm/SRPMS/$(OUTPUT)-$$(cat RPM_VERSION)-*.src.rpm
 	test -z "$(outdir)" || cp $$(pwd)/out/rpm/RPMS/*/$(OUTPUT)-$$(cat RPM_VERSION)-*.rpm "$(outdir)"

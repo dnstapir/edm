@@ -2,7 +2,7 @@
 %global debug_package %{nil}
 
 # Handle backwards compat for sysuser creation
-%if 0%{?fedora} < 42 || (0%{?rhel} && 0%{?rhel} <= 10) || (0%{?mageia} && 0%{?mageia} < 10) || (0%{?suse_version} && 0%{?suse_version} < 1660)
+%if (0%{?fedora} && 0%{?fedora} < 42) || (0%{?rhel} && 0%{?rhel} <= 10) || (0%{?suse_version} && 0%{?suse_version} < 1660)
 %bcond_without sysusers_compat
 %else
 %bcond_with sysusers_compat
