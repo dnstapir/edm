@@ -1,3 +1,13 @@
+# Disable building of debug packages
+%global debug_package %{nil}
+
+# Handle backwards compat for sysuser creation
+%if (0%{?fedora} && 0%{?fedora} < 42) || (0%{?rhel} && 0%{?rhel} <= 10) || (0%{?suse_version} && 0%{?suse_version} < 1660)
+%bcond_without sysusers_compat
+%else
+%bcond_with sysusers_compat
+%endif
+
 Name:          dnstapir-edm
 # Replaced by makefile when building srpm
 Version:       @@VERSION@@
@@ -11,6 +21,7 @@ Source1:       dnstapir-edm.service
 Source2:       well-known-domains.dawg
 Source3:       ignored.dawg
 Source4:       ignored-ips
+Source5:       dnstapir-edm.sysusers.conf
 BuildRequires: git
 %if 0%{?suse_version}
 BuildRequires: go
@@ -23,17 +34,16 @@ BuildRequires: go-race
 BuildRequires: golang
 %endif
 
+%if %{with sysusers_compat} && 0%{?suse_version}
+Provides: user(dnstapir-edm)
+Provides: group(dnstapir)
+%endif
+
 %description
 DNS TAPIR Edge DNSTAP Minimiser
 
-# Disable building of debug packages for RHEL (we include symbols per default)
-# ... also disable it for Fedora 42 and newer to fix builds
-%if 0%{?rhel} >= 9 || 0%{?fedora} >= 42
-%global debug_package %{nil}
-%endif
-
-%{!?_unitdir: %define _unitdir /usr/lib/systemd/system/}
-%{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d/}
+%{!?_unitdir: %define _unitdir /usr/lib/systemd/system}
+%{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d}
 %{!?_localstatedir: %define _localstatedir /var}
 %{!?_sharedstatedir: %define _sharedstatedir %{_localstatedir}/lib}
 
@@ -57,6 +67,9 @@ install -m 0664 -D %{SOURCE2} %{buildroot}%{_sysconfdir}/dnstapir/edm/well-known
 install -m 0664 -D %{SOURCE3} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored.dawg
 install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ips
 
+# Users and Groups
+install -m 0644 -D %{SOURCE5} %{buildroot}%{_sysusersdir}/dnstapir-edm.conf
+
 %files
 %license LICENSE
 
@@ -73,9 +86,13 @@ install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ip
 %attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
 %attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/dnstapir-edm.toml
 
+%attr(0644,root,root) %{_sysusersdir}/dnstapir-edm.conf
+
+%if %{with sysusers_compat}
 %pre
 /usr/bin/getent group dnstapir || /usr/sbin/groupadd -r dnstapir
 /usr/bin/getent passwd dnstapir-edm || /usr/sbin/useradd -r -d /etc/dnstapir -G dnstapir -s /sbin/nologin dnstapir-edm
+%endif
 
 %post
 
