@@ -167,15 +167,10 @@ type histogramData struct {
 	V4ClientCount uint64 `parquet:"v4client_count"`
 	V6ClientCount uint64 `parquet:"v6client_count"`
 
-	// Would probably be cleaner to use a []byte instead of string with
-	// struct tag "bytes" here, but it seems the parquet-go library does
-	// not handle "optional" []byte fields correctly right now, see:
-	// https://github.com/parquet-go/parquet-go/issues/303
-	//
 	// These fields are NULL when HLL uses explicit storage, otherwise
 	// contain the probabilistic HLL bytes
-	V4ClientCountHLLBytes string `parquet:"v4client_count_hll,bytes,optional"`
-	V6ClientCountHLLBytes string `parquet:"v6client_count_hll,bytes,optional"`
+	V4ClientCountHLLBytes []byte `parquet:"v4client_count_hll,optional"`
+	V6ClientCountHLLBytes []byte `parquet:"v6client_count_hll,optional"`
 }
 
 // We need to create the session data schema by hand instead of basing it of
@@ -2720,10 +2715,10 @@ func (edm *dnstapMinimiser) writeHistogramParquet(output io.Writer, startTime ti
 
 		// Include bytes from our hll data structures if they are stored with a probabilistic storage type
 		if v4HLLType == hllSparse || v4HLLType == hllDense {
-			hGramData.V4ClientCountHLLBytes = string(v4HLLBytes)
+			hGramData.V4ClientCountHLLBytes = v4HLLBytes
 		}
 		if v6HLLType == hllSparse || v6HLLType == hllDense {
-			hGramData.V6ClientCountHLLBytes = string(v6HLLBytes)
+			hGramData.V6ClientCountHLLBytes = v6HLLBytes
 		}
 
 		_, err = parquetWriter.Write([]histogramData{*hGramData})

@@ -1879,8 +1879,8 @@ func TestHistogramWriter(t *testing.T) {
 		FailCount:             19,
 		OtherRcodeCount:       20,
 		EDMStatusBits:         21,
-		V4ClientCountHLLBytes: string(v4hll.ToBytes()),
-		V6ClientCountHLLBytes: string(v6hll.ToBytes()),
+		V4ClientCountHLLBytes: v4hll.ToBytes(),
+		V6ClientCountHLLBytes: v6hll.ToBytes(),
 	}
 
 	_, err = parquetWriter.Write([]histogramData{hd})
@@ -1957,8 +1957,8 @@ func BenchmarkHistogramWriter(b *testing.B) {
 		FailCount:             19,
 		OtherRcodeCount:       20,
 		EDMStatusBits:         21,
-		V4ClientCountHLLBytes: string(v4hll.ToBytes()),
-		V6ClientCountHLLBytes: string(v6hll.ToBytes()),
+		V4ClientCountHLLBytes: v4hll.ToBytes(),
+		V6ClientCountHLLBytes: v6hll.ToBytes(),
 	}
 
 	for b.Loop() {
@@ -2130,14 +2130,14 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 		}
 
 		for _, row := range rows {
-			if test.ipv4HllIsNull && len(row.V4ClientCountHLLBytes) != 0 {
-				t.Fatalf("IPv4 HLL data should be length 0 but is %d", len(row.V4ClientCountHLLBytes))
+			if test.ipv4HllIsNull && row.V4ClientCountHLLBytes != nil {
+				t.Fatalf("IPv4 HLL data should be nil but is %#v", row.V4ClientCountHLLBytes)
 			}
 			if !test.ipv4HllIsNull && len(row.V4ClientCountHLLBytes) == 0 {
 				t.Fatal("IPv4 HLL data is 0 when it should have content")
 			}
-			if test.ipv6HllIsNull && len(row.V6ClientCountHLLBytes) != 0 {
-				t.Fatalf("IPv6 HLL data should be length 0 but is %d", len(row.V6ClientCountHLLBytes))
+			if test.ipv6HllIsNull && row.V6ClientCountHLLBytes != nil {
+				t.Fatalf("IPv6 HLL data should be nil but is %#v", row.V6ClientCountHLLBytes)
 			}
 			if !test.ipv6HllIsNull && len(row.V6ClientCountHLLBytes) == 0 {
 				t.Fatal("IPv6 HLL data is 0 when it should have content")
