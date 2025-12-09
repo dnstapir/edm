@@ -42,8 +42,8 @@ Provides: group(dnstapir)
 %description
 DNS TAPIR Edge DNSTAP Minimiser
 
-%{!?_unitdir: %define _unitdir /usr/lib/systemd/system/}
-%{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d/}
+%{!?_unitdir: %define _unitdir /usr/lib/systemd/system}
+%{!?_sysusersdir: %define _sysusersdir /usr/lib/sysusers.d}
 %{!?_localstatedir: %define _localstatedir /var}
 %{!?_sharedstatedir: %define _sharedstatedir %{_localstatedir}/lib}
 
