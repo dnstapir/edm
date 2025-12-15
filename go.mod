@@ -11,7 +11,7 @@ require (
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.9
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/lestrrat-go/jwx/v2 v2.1.6
-	github.com/miekg/dns v1.1.68
+	github.com/miekg/dns v1.1.69
 	github.com/parquet-go/parquet-go v0.26.1
 	github.com/prometheus/client_golang v1.23.2
 	github.com/segmentio/go-hll v1.0.1
