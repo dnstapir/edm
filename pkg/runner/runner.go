@@ -1442,6 +1442,9 @@ type dnstapMinimiser struct {
 	promClientIPIgnored           prometheus.Counter
 	promClientIPIgnoredError      prometheus.Counter
 	promQuestionNameIgnored       prometheus.Counter
+	promDNSParseError             prometheus.Counter
+	promEmptyQuestionSection      prometheus.Counter
+	promInvalidQuestionName       prometheus.Counter
 	ctx                           context.Context
 	stop                          context.CancelFunc // call this to gracefully stop runMinimiser()
 	debug                         bool               // if we should print debug messages during operation
@@ -1562,6 +1565,21 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	edm.promQuestionNameIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
 		Name: "edm_ignored_question_name_total",
 		Help: "The total number of times we have ignored a dnstap packet because of the name in the question section",
+	})
+
+	edm.promDNSParseError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+		Name: "edm_ignored_dns_parse_error_total",
+		Help: "The total number of times we have ignored a dnstap packet because we were unable to parse the DNS data",
+	})
+
+	edm.promEmptyQuestionSection = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+		Name: "edm_ignored_empty_question_section_total",
+		Help: "The total number of times we have ignored a dnstap packet because it had no entries in the question section",
+	})
+
+	edm.promInvalidQuestionName = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+		Name: "edm_ignored_invalid_question_name_total",
+		Help: "The total number of times we have ignored a dnstap packet because it contained an invalid name in the question section",
 	})
 
 	edm.promReg = promReg
@@ -1962,19 +1980,19 @@ minimiserLoop:
 			// For cases where we were unable to unpack the DNS message we
 			// skip parsing.
 			if msg == nil {
-				edm.log.Error("unable to parse dnstap message, skipping parsing", "minimiser_id", minimiserID)
+				edm.promDNSParseError.Inc()
 				continue
 			}
 
 			if len(msg.Question) == 0 {
-				edm.log.Error("no question section in dnstap message, skipping parsing", "minimiser_id", minimiserID)
+				edm.promEmptyQuestionSection.Inc()
 				continue
 			}
 
-			for i, question := range msg.Question {
+			for _, question := range msg.Question {
 				if _, ok := dns.IsDomainName(question.Name); !ok {
-					edm.log.Error("question name is invalid, skipping parsing", "minimiser_id", minimiserID, "question_index", i)
-					continue
+					edm.promInvalidQuestionName.Inc()
+					continue minimiserLoop
 				}
 			}
 
