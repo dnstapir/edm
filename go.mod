@@ -19,7 +19,7 @@ require (
 	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
-	github.com/yaronf/httpsign v0.4.1
+	github.com/yaronf/httpsign v0.5.1
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/crypto v0.47.0
