@@ -1831,19 +1831,21 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 	// only move an already added entry to the front of the
 	// eviction list which should be OK.
 
-	_, ok := seenQnameLRU.Get(msg.Question[0].Name)
+	qname := strings.ToLower(msg.Question[0].Name)
+
+	_, ok := seenQnameLRU.Get(qname)
 	if ok {
 		// It exists in the LRU cache
 		return true
 	}
 	// Add it to the LRU
-	evicted := seenQnameLRU.Add(msg.Question[0].Name, struct{}{})
+	evicted := seenQnameLRU.Add(qname, struct{}{})
 	if evicted {
 		edm.promSeenQnameLRUEvicted.Inc()
 	}
 
 	// It was not in the LRU cache, does it exist in pebble (on disk)?
-	_, closer, err := pdb.Get([]byte(msg.Question[0].Name))
+	_, closer, err := pdb.Get([]byte(qname))
 	if err == nil {
 		// The value exists in pebble
 		if err := closer.Close(); err != nil {
@@ -1854,7 +1856,7 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	// If the key does not exist in pebble we insert it
 	if errors.Is(err, pebble.ErrNotFound) {
-		if err := pdb.Set([]byte(msg.Question[0].Name), []byte{}, pebble.Sync); err != nil {
+		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
