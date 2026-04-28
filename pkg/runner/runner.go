@@ -83,7 +83,7 @@ type config struct {
 	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
 	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
 	DataDir                       string `mapstructure:"data-dir" validate:"required"`
-	MinimiserWorkers              int    `mapstructure:"minimiser-workers" validate:"required"`
+	MinimiserWorkers              int    `mapstructure:"minimiser-workers"`
 	MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
 	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT" reload:"true"`
 	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT" reload:"true"`
@@ -1585,7 +1585,12 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	edm.promReg = promReg
 	// Size 32 matches unexported "const outputChannelSize = 32" in
 	// https://github.com/dnstap/golang-dnstap/blob/master/dnstap.go
-	edm.inputChannel = make(chan []byte, 32)
+	// Buffer enough frames to absorb scheduling jitter under high QPS:
+	// at 200K qps a 32-deep buffer drains in ~160µs, well below typical
+	// kernel preemption latency. 1024 keeps producers from stalling
+	// without growing memory meaningfully (raw frames are <1 KiB each
+	// → ~1 MiB worst case). See TIER1OPT.md.
+	edm.inputChannel = make(chan []byte, 1024)
 	edm.log = logger
 	edm.debug = conf.Debug
 
@@ -1856,7 +1861,11 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	// If the key does not exist in pebble we insert it
 	if errors.Is(err, pebble.ErrNotFound) {
-		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
+		// pebble.NoSync: the seen-qname store is a deduplication hint, not
+		// a system of record. On crash we lose the last few seconds of
+		// "we've seen this" state and re-publish those qnames as new on
+		// the MQTT side — which is bounded and fine. See TIER1OPT.md.
+		if err := pdb.Set([]byte(qname), []byte{}, pebble.NoSync); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
@@ -1924,6 +1933,13 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
 	dt := &dnstap.Dnstap{}
 
+	// Per-worker scratch buffer for the unpseudonymised client IP we
+	// pass to wkdTracker.sendUpdate for HLL hashing. Sized to fit IPv6;
+	// resliced to len(QueryAddress) per frame. Using a per-worker buffer
+	// avoids one heap allocation per processed frame on the hot path.
+	// See TIER1OPT.md for the consumer-safety analysis.
+	var dangerScratch [16]byte
+
 	// startConf is used for things that do not handle reconfiguration at runtime
 	startConf := edm.getConfig()
 
@@ -1967,8 +1983,19 @@ minimiserLoop:
 
 			// Keep around the unpseudonymised client IP for HLL
 			// data, be careful with logging or otherwise handling
-			// this IP as it is sensitive.
-			dangerRealClientIP := make([]byte, len(dt.Message.QueryAddress))
+			// this IP as it is sensitive. We borrow the per-worker
+			// scratch buffer here; sendUpdate must not retain the
+			// slice past the call (it doesn't — see TIER1OPT.md).
+			n := len(dt.Message.QueryAddress)
+			var dangerRealClientIP []byte
+			if n <= len(dangerScratch) {
+				dangerRealClientIP = dangerScratch[:n]
+			} else {
+				// Defensive: dnstap addresses should be 4 or 16
+				// bytes. If we ever see something larger, fall
+				// back to a fresh allocation rather than truncate.
+				dangerRealClientIP = make([]byte, n)
+			}
 			copy(dangerRealClientIP, dt.Message.QueryAddress)
 
 			edm.pseudonymiseDnstap(dt)
