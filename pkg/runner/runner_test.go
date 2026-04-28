@@ -223,6 +223,7 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	testdataFile1 := "testdata/ignored-client-ips.valid1"
 	testdataFile2 := "testdata/ignored-client-ips.valid2"
@@ -407,6 +408,7 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	testdataFile := "testdata/ignored-client-ips.empty-lines-and-comments"
 
@@ -473,6 +475,7 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	testdataFile := "testdata/ignored-client-ips.valid1"
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
@@ -560,6 +563,7 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	// To make sure unsetting the filename used for ignored client IPs
 	// resets stuff as expected first read in a file with content
@@ -633,6 +637,7 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	// Even if we are testing invalid data we still need to have loaded a
 	// IP file with at least one valid entry in it to even inspect the
@@ -680,6 +685,7 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	testdataFile1 := "testdata/ignored-question-names.valid1.dawg"
 	testdataFile2 := "testdata/ignored-question-names.valid2.dawg"
@@ -831,6 +837,7 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
 	testdataFile := "testdata/ignored-question-names.valid1.dawg"
@@ -911,6 +918,7 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	// To make sure unsetting the filename used for ignored question names
 	// resets stuff as expected first read in a file with content
@@ -1264,6 +1272,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	if edm.testCryptopanCache() != nil {
 		if edm.testCryptopanCache().Len() != 0 {
@@ -1569,6 +1578,7 @@ func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
+	b.Cleanup(func() { _ = edm.Close() })
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1601,6 +1611,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
+	b.Cleanup(func() { _ = edm.Close() })
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1630,6 +1641,7 @@ func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
+	b.Cleanup(func() { _ = edm.Close() })
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1662,6 +1674,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 	if err != nil {
 		b.Fatalf("unable to setup edm: %s", err)
 	}
+	b.Cleanup(func() { _ = edm.Close() })
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -2054,6 +2067,7 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	t.Cleanup(func() { _ = edm.Close() })
 
 	tests := []struct {
 		description       string

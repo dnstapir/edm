@@ -1613,6 +1613,23 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	return edm, nil
 }
 
+// Close releases resources held by the minimiser that aren't owned by the
+// run lifecycle (notably the fsnotify watcher, which holds an inotify
+// instance — a scarce per-user resource on Linux). Production callers go
+// through the run loop in Run(), which already defers fsWatcher.Close;
+// tests that construct a minimiser without running it must call this
+// directly (typically via t.Cleanup) to avoid exhausting
+// /proc/sys/fs/inotify/max_user_instances under -count=N.
+func (edm *dnstapMinimiser) Close() error {
+	if edm.fsWatcher != nil {
+		if err := edm.fsWatcher.Close(); err != nil {
+			return err
+		}
+		edm.fsWatcher = nil
+	}
+	return nil
+}
+
 // dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is
 // an interface) can be stored in an atomic.Pointer. Used for the
 // ignoredQuestions atomic snapshot.
