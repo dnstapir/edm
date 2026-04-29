@@ -63,3 +63,11 @@
 - **Fix:** The sender now preserves the exact start timestamp and formats the duration as an ISO 8601 duration with second precision when needed.
 - **Reasoning:** The filename parser already preserves start/stop seconds, and aggrec accepts ISO 8601 start/duration intervals, so the upload metadata should reflect the file's actual interval rather than a rounded minute bucket.
 - **Tests:** Added duration formatting coverage and an aggregate sender test that posts to a local HTTP server and verifies the exact `Aggregate-Interval` header.
+
+## Concurrent New-Qname Deduplication
+
+- **Bug:** The first-seen qname check used separate LRU and Pebble operations without an atomic per-qname critical section.
+- **Impact:** Two minimiser workers processing the same previously unseen qname at the same time could both decide it was new and enqueue duplicate `new_qname` events.
+- **Fix:** Added sharded per-qname locking around the LRU/Pebble check-add-set sequence.
+- **Reasoning:** Identical qnames must be deduplicated as a single logical operation, while unrelated qnames should still proceed concurrently without a global lock.
+- **Tests:** Added concurrent `qnameSeen` coverage proving exactly one worker reports a qname as first-seen.

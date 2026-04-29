@@ -1454,6 +1454,7 @@ type dnstapMinimiser struct {
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
+	seenQnameLocks                [256]sync.Mutex
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -1853,18 +1854,24 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	return prevWKD, nil
 }
 
+func seenQnameLockIndex(qname string) int {
+	// FNV-1a over the lower-cased qname. The low byte is enough to choose
+	// one of the sharded locks; correctness only requires identical qnames
+	// to pick the same lock.
+	var h uint32 = 2166136261
+	for i := 0; i < len(qname); i++ {
+		h ^= uint32(qname[i])
+		h *= 16777619
+	}
+	return int(h % 256)
+}
+
 // Check if we have already seen this qname since we started.
 func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB) bool {
-	// NOTE: This looks like it might be a race (calling
-	// Get() followed by separate Add()) but since we want
-	// to keep often looked-up names in the cache we need to
-	// use Get() for updating recent-ness, and there is no
-	// GetOrAdd() method available. However, it should be
-	// safe for multiple threads to call Add() as this will
-	// only move an already added entry to the front of the
-	// eviction list which should be OK.
-
 	qname := strings.ToLower(msg.Question[0].Name)
+	seenLock := &edm.seenQnameLocks[seenQnameLockIndex(qname)]
+	seenLock.Lock()
+	defer seenLock.Unlock()
 
 	_, ok := seenQnameLRU.Get(qname)
 	if ok {
