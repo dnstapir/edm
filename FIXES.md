@@ -31,3 +31,11 @@
 - **Fix:** Malformed frames and structurally incomplete dnstap messages are logged and skipped while the worker continues.
 - **Reasoning:** Capture streams can contain bad frames; one invalid payload should not terminate long-lived processing.
 - **Tests:** Added a worker-level regression that sends malformed bytes, a dnstap message without payload, a payload without message type, and then a valid response that must still be processed.
+
+## Partial Dnstap Message Nil-Safety
+
+- **Bug:** Some optional dnstap protobuf fields were dereferenced as required fields, and query endpoint formatting checked `ResponsePort` while dereferencing `QueryPort`.
+- **Impact:** Decodable but partially populated dnstap messages could panic processing; endpoint logs could also crash when only a query port was present.
+- **Fix:** Packet parsing now uses safe timestamp fallback and shared endpoint formatting, while session creation tolerates missing socket family/protocol metadata.
+- **Reasoning:** Optional protobuf fields should produce dropped packets or partial output, not process panics.
+- **Tests:** Added coverage for missing query/response timestamps, missing socket family/protocol in session creation, and query-port-without-address endpoint formatting.
