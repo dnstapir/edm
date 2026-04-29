@@ -1313,6 +1313,25 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	wg.Add(1)
 	go edm.diskCleaner(&wg, sentDir)
 
+	// Start pprof and metrics servers (graceful shutdown handled below)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := pprofServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprofServer error", "error", err)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		err := metricsServer.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metricsServer error", "error", err)
+		}
+	}()
+
 	dawgFile := startConf.WellKnownDomainsFile
 
 	dawgFinder, dawgModTime, err := loadDawgFile(dawgFile)
@@ -1380,10 +1399,17 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	edm.reloadMinimiserMutex.Unlock()
 
 	// Start dnstap.Input
-	go dti.ReadInto(edm.inputChannel)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		dti.ReadInto(edm.inputChannel)
+	}()
 
 	// Wait here until all instances of runMinimiser() is done
 	minimiserWg.Wait()
+
+	// Close inputChannel to signal dti.ReadInto to exit
+	close(edm.inputChannel)
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
@@ -1395,6 +1421,16 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !startConf.DisableMQTT {
 		edm.log.Info("Run: stopping MQTT publisher")
 		edm.autopahoCancel()
+	}
+
+	// Gracefully shutdown HTTP servers before waiting for workers
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pprofServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		edm.log.Error("pprofServer shutdown error", "error", err)
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		edm.log.Error("metricsServer shutdown error", "error", err)
 	}
 
 	// Wait for all workers to exit

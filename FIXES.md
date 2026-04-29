@@ -1,5 +1,21 @@
 # Fixes
 
+## Input Channel Not Closed and DNStap Reader Not Synchronized
+
+- **Bug:** The dnstap reader goroutine (`dti.ReadInto(edm.inputChannel)`) was started at line 1383 without being tracked in a WaitGroup. The `inputChannel` was never explicitly closed. When `minimiserWg.Wait()` completed, minimisers stopped reading from the channel, but `dti.ReadInto` could still be blocked trying to send.
+- **Impact:** Goroutine leak; unclean shutdown; potential panic if channel is closed while dti.ReadInto is sending; no guarantee of orderly shutdown.
+- **Fix:** Wrapped `dti.ReadInto` in a tracked goroutine with `wg.Add(1)` and `defer wg.Done()`, and added `close(edm.inputChannel)` after `minimiserWg.Wait()` to signal the reader to exit.
+- **Reasoning:** All long-lived goroutines must be tracked in the main WaitGroup for proper shutdown sequencing; channels should be explicitly closed by the sender when done.
+- **Tests:** Verified by running full test suite; no new test needed as the fix ensures orderly shutdown already tested by existing tests.
+
+## HTTP Servers (pprof and metrics) Not Synchronized or Gracefully Shut Down
+
+- **Bug:** The pprof and metrics HTTP servers (lines 1269-1272 and 1285-1288) were started as goroutines without WaitGroup tracking. Neither server received graceful shutdown signals; both `ListenAndServe()` blocks indefinitely. When `wg.Wait()` completed, they were still running.
+- **Impact:** Unclean HTTP server shutdown; potential connection leaks; incomplete request handling; goroutines forced to terminate abruptly on process exit.
+- **Fix:** (1) Wrapped both servers in tracked goroutines with `wg.Add(1)` and `defer wg.Done()`, handling `http.ErrServerClosed` as expected error. (2) Added graceful `Shutdown(ctx)` calls with 5-second timeout before `wg.Wait()`.
+- **Reasoning:** HTTP servers need explicit graceful shutdown to drain pending requests and close connections cleanly; all goroutines should be tracked for proper ordering.
+- **Tests:** Verified by running full test suite and checking that shutdown completes without errors.
+
 ## Disk Cleaner Retention Period
 
 - **Bug:** The `diskCleaner` used a variable named `oneDay` but set it to `time.Hour * 12` (12 hours), not 24 hours. Sent histogram files were deleted after 12 hours instead of the intended 24 hours.
