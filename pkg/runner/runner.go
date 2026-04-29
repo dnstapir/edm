@@ -1470,46 +1470,46 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 }
 
 type dnstapMinimiser struct {
-	configer                      edmConfiger
-	conf                          config
-	confMutex                     sync.RWMutex
-	inputChannel                  chan []byte  // the channel expected to be passed to dnstap ReadInto()
-	log                           *slog.Logger // any information logging is sent here
+	configer     edmConfiger
+	conf         config
+	confMutex    sync.RWMutex
+	inputChannel chan []byte  // the channel expected to be passed to dnstap ReadInto()
+	log          *slog.Logger // any information logging is sent here
 
 	// Cryptopan instance is held in an atomic.Pointer so the hot path
 	// reads it without locking. setCryptopan swaps the pointer and
 	// bumps cryptopanGen; per-worker caches compare their last-seen
 	// generation against this and Purge when it changes. See TIER2OPT.md.
-	cryptopan    atomic.Pointer[cryptopan.Cryptopan]
-	cryptopanGen atomic.Uint64
-	promReg                       *prometheus.Registry
-	promCryptopanCacheHit         prometheus.Counter
-	promCryptopanCacheEvicted     prometheus.Counter
-	promDnstapProcessed           prometheus.Counter
-	promNewQnameQueued            prometheus.Counter
-	promNewQnameDiscarded         prometheus.Counter
-	promSeenQnameLRUEvicted       prometheus.Counter
-	promNewQnameChannelLen        prometheus.Gauge
-	promClientIPIgnored           prometheus.Counter
-	promClientIPIgnoredError      prometheus.Counter
-	promQuestionNameIgnored       prometheus.Counter
-	promDNSParseError             prometheus.Counter
-	promEmptyQuestionSection      prometheus.Counter
-	promInvalidQuestionName       prometheus.Counter
-	ctx                           context.Context
-	stop                          context.CancelFunc // call this to gracefully stop runMinimiser()
-	debug                         bool               // if we should print debug messages during operation
-	sessionWriterCh               chan *prevSessions
-	histogramWriterCh             chan *wellKnownDomainsData
-	newQnamePublisherCh           chan *protocols.NewQnameJSON
-	sessionCollectorCh            chan *sessionData
-	aggregSenderMutex             sync.RWMutex
-	aggregSender                  aggregateSender
-	mqttPubCh                     chan []byte // unsigned, from minimisers
-	mqttSignedCh                  chan []byte // signed, to autopaho publisher
-	autopahoCtx                   context.Context
-	autopahoCancel                context.CancelFunc
-	autopahoWg                    sync.WaitGroup
+	cryptopan                 atomic.Pointer[cryptopan.Cryptopan]
+	cryptopanGen              atomic.Uint64
+	promReg                   *prometheus.Registry
+	promCryptopanCacheHit     prometheus.Counter
+	promCryptopanCacheEvicted prometheus.Counter
+	promDnstapProcessed       prometheus.Counter
+	promNewQnameQueued        prometheus.Counter
+	promNewQnameDiscarded     prometheus.Counter
+	promSeenQnameLRUEvicted   prometheus.Counter
+	promNewQnameChannelLen    prometheus.Gauge
+	promClientIPIgnored       prometheus.Counter
+	promClientIPIgnoredError  prometheus.Counter
+	promQuestionNameIgnored   prometheus.Counter
+	promDNSParseError         prometheus.Counter
+	promEmptyQuestionSection  prometheus.Counter
+	promInvalidQuestionName   prometheus.Counter
+	ctx                       context.Context
+	stop                      context.CancelFunc // call this to gracefully stop runMinimiser()
+	debug                     bool               // if we should print debug messages during operation
+	sessionWriterCh           chan *prevSessions
+	histogramWriterCh         chan *wellKnownDomainsData
+	newQnamePublisherCh       chan *protocols.NewQnameJSON
+	sessionCollectorCh        chan *sessionData
+	aggregSenderMutex         sync.RWMutex
+	aggregSender              aggregateSender
+	mqttPubCh                 chan []byte // unsigned, from minimisers
+	mqttSignedCh              chan []byte // signed, to autopaho publisher
+	autopahoCtx               context.Context
+	autopahoCancel            context.CancelFunc
+	autopahoWg                sync.WaitGroup
 	// Hot-path lookups (clientIPIsIgnored, questionIsIgnored) read these
 	// without locking. Reload writers atomic.Store a fresh value; the
 	// dawgFinderHolder wrapper is needed because dawg.Finder is an
@@ -1518,9 +1518,9 @@ type dnstapMinimiser struct {
 	// swap would race with hot-path readers still holding the old
 	// pointer. With reloads being rare and the underlying mmap small,
 	// the bounded leak is acceptable. See TIER2OPT.md.
-	ignoredClientsIPSet      atomic.Pointer[netipx.IPSet]
-	ignoredClientCIDRsParsed atomic.Uint64
-	ignoredQuestions         atomic.Pointer[dawgFinderHolder]
+	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
+	ignoredClientCIDRsParsed      atomic.Uint64
+	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
 	fsWatcher                     *fsnotify.Watcher
 	fsWatcherFuncs                map[string][]func() error
 	fsWatcherMutex                sync.RWMutex
@@ -1977,7 +1977,9 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 		// a system of record. On crash we lose the last few seconds of
 		// "we've seen this" state and re-publish those qnames as new on
 		// the MQTT side — which is bounded and fine. See TIER1OPT.md.
-		if err := pdb.Set([]byte(qname), []byte{}, pebble.NoSync); err != nil {
+		//
+		// Revert to Sync for now. Not sure how NoSync affects correctness.
+		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
