@@ -155,6 +155,26 @@ func validDnstapResponseFrame(t *testing.T, qname string) []byte {
 	})
 }
 
+func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
+	edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "example.com.")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go edm.runMinimiser(0, &wg, seenQnameLRU, pdb, nil, defaultLabelLimit, wkdTracker)
+
+	sessionCap := cap(edm.sessionCollectorCh)
+	for i := 0; i < sessionCap; i++ {
+		edm.sessionCollectorCh <- &sessionData{}
+	}
+
+	edm.inputChannel <- validDnstapResponseFrame(t, "example.com.")
+
+	time.Sleep(50 * time.Millisecond)
+
+	edm.stop()
+	waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit when sessionCollectorCh was full and context was cancelled")
+}
+
 func marshalDnstap(t *testing.T, dt *dnstap.Dnstap, opts ...proto.MarshalOptions) []byte {
 	t.Helper()
 

@@ -16,6 +16,14 @@
 - **Reasoning:** Using `defer` ensures the lock is always released, even on error return paths, preventing mutex deadlocks.
 - **Tests:** Added `TestCleanupFSWatchersReleasesLockOnError` which calls `cleanupFSWatchers()` and then verifies `fsWatcherMutex.TryLock()` succeeds, confirming the read lock was released.
 
+## Minimiser Session Send Backpressure
+
+- **Bug:** In `runMinimiser()`, the send to `sessionCollectorCh` at line 2121 was a plain blocking send. If the channel filled up (capacity 100), the minimiser goroutine would block inside the inputFrame processing case and could never reach the outer `case <-edm.ctx.Done()` to exit.
+- **Impact:** A slow or stalled `dataCollector` could prevent minimiser workers from shutting down gracefully, blocking `minimiserWg.Wait()` and stalling the entire shutdown sequence including the histogram flush.
+- **Fix:** Wrapped the channel send with a `select` that includes `case <-edm.ctx.Done()`, allowing the minimiser to exit when context is cancelled even if the channel is full.
+- **Reasoning:** All sends inside the main minimiser select must have a context escape hatch to honour graceful shutdown.
+- **Tests:** Added `TestRunMinimiserSessionSendUnblocksOnContextCancel` which fills `sessionCollectorCh` to capacity and verifies the minimiser exits promptly (within 2 seconds) when context is cancelled.
+
 ## Histogram Sender Backoff Interruptibility
 
 - **Bug:** In `histogramSender()`, when `as.send()` failed, the code called `time.Sleep(backoffDuration)` unconditionally (15 seconds). The sleep had no way to be interrupted by context cancellation, delaying shutdown by up to 15 seconds.

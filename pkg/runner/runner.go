@@ -2118,7 +2118,10 @@ minimiserLoop:
 
 			if !conf.DisableSessionFiles {
 				session := edm.newSession(dt, msg, isQuery, labelLimit, timestamp)
-				edm.sessionCollectorCh <- session
+				select {
+				case edm.sessionCollectorCh <- session:
+				case <-edm.ctx.Done():
+				}
 			}
 		case <-edm.reloadMinimiserConfigCh[minimiserID]:
 			edm.log.Info("runMinimiser: reloading config", "minimiser_id", minimiserID)
