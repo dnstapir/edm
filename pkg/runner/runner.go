@@ -2956,7 +2956,11 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Crypto
 }
 
 func timeUntilNextMinute() time.Duration {
-	return time.Second * time.Duration(60-time.Now().Second())
+	return timeUntilNextMinuteFrom(time.Now())
+}
+
+func timeUntilNextMinuteFrom(now time.Time) time.Duration {
+	return now.Truncate(time.Minute).Add(time.Minute).Sub(now)
 }
 
 func (edm *dnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMatch bool) *histogramData {

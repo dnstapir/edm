@@ -47,3 +47,11 @@
 - **Fix:** After minimiser workers stop, the collector now drains queued session/update work and flushes any accumulated session and histogram data before closing writer channels.
 - **Reasoning:** Graceful shutdown should preserve already accepted data even if the current collection interval is incomplete.
 - **Tests:** Added collector shutdown coverage that queues a session and histogram update, stops the collector, and verifies both writer channels receive flushed data.
+
+## Minute-Boundary Scheduling
+
+- **Bug:** The delay until the next minute ignored sub-second time, so a start at `12:30:00.500` waited a full 60 seconds instead of 59.5 seconds.
+- **Impact:** Periodic rotation could drift nearly one second late and keep doing so after every reset.
+- **Fix:** The timer now computes the duration from the current instant to `now.Truncate(time.Minute).Add(time.Minute)`.
+- **Reasoning:** Computing against the actual next minute boundary preserves sub-second precision without changing the intended one-minute cadence.
+- **Tests:** Added fixed-time coverage for exact minute, half-second-after-minute, and one-millisecond-before-minute cases.
