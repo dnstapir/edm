@@ -15,3 +15,11 @@
 - **Fix:** Removed the required validation from `input-tls-client-ca-file` while keeping the existing conditional mTLS setup in the listener.
 - **Reasoning:** Server TLS and mTLS are separate choices; an omitted client CA should mean encrypted transport without client cert verification.
 - **Tests:** Added config validation coverage showing `input-tls` with server cert/key and no client CA is valid.
+
+## MQTT Server URL Normalization
+
+- **Bug:** The default MQTT server value was documented and configured as a bare `host:port`, but the MQTT client expects URL-shaped values.
+- **Impact:** A default or operator-provided bare address could be parsed with the host portion as a scheme and fail later during connection setup.
+- **Fix:** Bare MQTT server values are normalized to `tls://host:port`; explicit schemes are parsed and preserved.
+- **Reasoning:** The default port is the TLS MQTT port, so the secure scheme is the least surprising default while still allowing explicit plaintext or websocket schemes.
+- **Tests:** Added MQTT URL parsing coverage for bare IPv4/IPv6 addresses, explicit TLS/MQTT/TCP schemes, missing hosts, and unsupported schemes.
