@@ -1,5 +1,13 @@
 # Fixes
 
+## fsEventWatcher Goroutine Not Tracked
+
+- **Bug:** The `fsEventWatcher` goroutine was started at line 1204 with `go edm.fsEventWatcher()` and was not tracked in any WaitGroup. When `Run()` exited, the goroutine was forced to terminate abruptly via `fsWatcher.Close()` on the deferred path, with no way to verify it had completed.
+- **Impact:** Inconsistent shutdown semantics; potential for fsEventWatcher to be processing an event while the rest of the program shuts down; in the worst case, a callback could run while shared state was being torn down.
+- **Fix:** (1) Added a `*sync.WaitGroup` parameter to `fsEventWatcher` with `defer wg.Done()`. (2) Tracked it in the main `wg` via `wg.Add(1); go edm.fsEventWatcher(&wg)`. (3) Moved fsEventWatcher start to after `wg` is declared. (4) Added explicit `fsWatcher.Close()` before `wg.Wait()` so the goroutine has a signal to exit. (5) Made the deferred fsWatcher.Close into a safety net that checks for nil.
+- **Reasoning:** All long-lived goroutines should be tracked by a WaitGroup for proper shutdown sequencing, matching the pattern used by other goroutines in the program.
+- **Tests:** Verified by running the full test suite; no regressions.
+
 ## NewQnameEvent Empty Question Section Panic
 
 - **Bug:** In `pkg/protocols/protocols.go`, `NewQnameEvent()` accessed `msg.Question[0]` without first checking whether the Question section had any entries. While all current callers in the runner package validate this before calling, the function itself was unsafe and would panic on an empty Question section.

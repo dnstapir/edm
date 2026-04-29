@@ -856,7 +856,8 @@ func (edm *dnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
 	return edm.ignoredClientCIDRsParsed.Load()
 }
 
-func (edm *dnstapMinimiser) fsEventWatcher() {
+func (edm *dnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) {
+	defer wg.Done()
 	// Like in
 	// https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
 	// we keep a timer per registered filename
@@ -1115,7 +1116,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		os.Exit(1)
 	}
 	defer edm.stop()
-	defer edm.fsWatcher.Close()
+	defer func() {
+		// Safety net: if Run() exits early before the explicit
+		// fsWatcher.Close() below wg.Wait(), close it here.
+		if edm.fsWatcher != nil {
+			if err := edm.fsWatcher.Close(); err != nil {
+				edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
+			}
+		}
+	}()
 
 	// Create startConf for some initial setup. Other edm methods that need
 	// to read the config should call edm.getConfig() internally so they
@@ -1200,8 +1209,6 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		logger.Error("unable to configure fsWatchers", "error", err)
 		os.Exit(1)
 	}
-
-	go edm.fsEventWatcher()
 
 	// Setup the dnstap.Input, only one at a time is supported.
 	var dti *dnstap.FrameStreamSockInput
@@ -1294,6 +1301,12 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}()
 
 	var wg sync.WaitGroup
+
+	// Track the fsEventWatcher goroutine so it can be properly synchronized
+	// during shutdown. It exits when fsWatcher.Close() is called (which is
+	// deferred in Run()).
+	wg.Add(1)
+	go edm.fsEventWatcher(&wg)
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
@@ -1438,6 +1451,13 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		edm.log.Error("metricsServer shutdown error", "error", err)
 	}
+
+	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
+	// wg.Wait() since fsEventWatcher is now tracked in wg.
+	if err := edm.fsWatcher.Close(); err != nil {
+		edm.log.Error("Run: fsWatcher.Close error", "error", err)
+	}
+	edm.fsWatcher = nil
 
 	// Wait for all workers to exit
 	edm.log.Info("Run: waiting for other workers to exit")
