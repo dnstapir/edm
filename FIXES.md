@@ -8,6 +8,14 @@
 - **Reasoning:** The retention period should match the intended 24-hour window for aggregate data recovery.
 - **Tests:** Added `TestDiskCleanerRetentionThreshold` to verify the retention threshold is correctly set to 24 hours.
 
+## HTTP Response Body Leak on Read Error
+
+- **Bug:** In `aggregateSender.send()`, if `io.ReadAll(res.Body)` returned an error, the function returned early without closing `res.Body`. This leaked the HTTP connection from the transport pool.
+- **Impact:** Transient network errors reading the aggregate receiver's response body permanently removed one HTTP connection from the pool, gradually exhausting the pool over time.
+- **Fix:** Added `defer res.Body.Close()` immediately after the successful `Do()` call and removed the explicit `res.Body.Close()` call that was only reachable on the success path.
+- **Reasoning:** Using `defer` ensures the body is closed on all return paths, including error paths, which is the idiomatic Go pattern for HTTP response bodies.
+- **Tests:** Added `TestAggregateSenderClosesBodyOnReadError` which uses an HTTP connection hijacker to truncate the response body mid-delivery, verifying that `send()` returns an error without leaking the connection.
+
 ## Config Env Isolation
 
 - **Bug:** Viper accepted unprefixed environment variables, so unrelated ambient variables such as `DEBUG=release` were treated as EDM config.
