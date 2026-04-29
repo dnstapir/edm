@@ -320,6 +320,80 @@ With Tier-1's 1024 buffer the channel itself absorbs jitter, but
 the listener can only deserialise one frame at a time. This is the
 Tier-3 entry point ("per-worker pipeline" or "multi-listener input").
 
+## Side effect: paho file queue exposure
+
+Tier 2 lifts the JWS-sign rate from ~40 K/s (sequential, single goroutine)
+to whatever GOMAXPROCS allows (~10×). The next bottleneck downstream
+turned out to be EDM's default-on **MQTT file queue**, configured at
+`runner.go:684` to `<DataDir>/mqtt/queue`. Paho's
+`autopaho/queue/file.(*Queue).Peek` calls `oldestEntry()` on every
+dequeue, which does:
+
+```go
+entries := os.ReadDir(dir)        // O(N)
+for _, e := range entries {
+    info := os.Lstat(...)         // O(N) syscalls + allocations
+    // pick oldest
+}
+```
+
+That is O(N) per dequeue, O(N²) per N enqueues. As the queue fills, the
+manager's drain rate falls below the enqueue rate, the queue grows, GC
+pressure climbs, and end-to-end throughput collapses. Symptom from the
+outside: rate runs steady for some seconds, then plummets to near zero
+as the queue crosses ~10 K files. We confirmed this on a stress run by
+heap-profiling EDM under sustained 100 K qps:
+
+```
+55% alloc_space   autopaho.managePublishQueue → file.Queue.Peek
+                  → oldestEntry → os.ReadDir + os.Lstat
+```
+
+…and observing the queue dir grow to **88 903 files / 350 MB** at the
+moment of the stall. Goroutine count stayed flat at ~96 — this is not
+a goroutine leak; it is allocation pressure compounding into GC stalls.
+
+### Why this isn't a Tier 2 regression in the strict sense
+
+Pre-Tier-2, JWS signing capped the rate at ~40 K/s, well below the
+queue's collapse point. The queue's O(N²) behaviour was always there;
+Tier 2 just removed the upstream throttle that was hiding it. A
+deployment that has its broker available and processes load at any
+non-trivial sustained rate will eventually hit this regardless of
+Tier 2 — Tier 2 only made the time-to-failure noticeable in a 100 K-qps
+load test.
+
+### What we did
+
+For dev/test setups (the load-gen smoke), the file queue is unnecessary:
+the broker is always up, QoS 0 publishes are best-effort anyway, and
+the durability the queue provides has no value. The fix is the existing
+`--disable-mqtt-filequeue` flag (already in EDM's CLI surface). The
+companion repo's `dev.sh` now passes it.
+
+Without the file queue, paho buffers messages in-memory only, with its
+own bounded internal queue applying real backpressure. In our smoke at
+100 K qps with all Tier 1 + Tier 2 changes:
+
+- `edm_new_qname_discarded_total`: **0** (vs ~94 % discards before)
+- queue dir: empty
+- end-to-end throughput: stable ~67 K qps for the 3-minute run
+
+### What we did *not* do
+
+We did **not** change the file queue's default. The queue is meant to
+provide durability across broker disconnects — disabling it weakens
+that guarantee, and operators in real deployments should make that
+choice consciously. The right long-term fix is paho-side: replace the
+`oldestEntry()` directory scan with an in-memory ordered index of the
+queue files (the same maintenance pass paho already does for cleanup
+could maintain it). That is upstream work, not in scope here.
+
+If you do run a deployment with the file queue enabled at high publish
+rates, monitor `<DataDir>/mqtt/queue` size and pre-emptively trim or
+disable when the broker can't keep up. Adding a queue-size Prometheus
+metric would also be worth doing — open issue.
+
 ## What is *not* in Tier 2
 
 For the record, the following changes were considered for Tier 2 but
