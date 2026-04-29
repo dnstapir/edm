@@ -23,3 +23,11 @@
 - **Fix:** Bare MQTT server values are normalized to `tls://host:port`; explicit schemes are parsed and preserved.
 - **Reasoning:** The default port is the TLS MQTT port, so the secure scheme is the least surprising default while still allowing explicit plaintext or websocket schemes.
 - **Tests:** Added MQTT URL parsing coverage for bare IPv4/IPv6 addresses, explicit TLS/MQTT/TCP schemes, missing hosts, and unsupported schemes.
+
+## Malformed Dnstap Frame Handling
+
+- **Bug:** A single protobuf unmarshal error caused a minimiser worker to exit, and missing message/type fields could panic before the frame was dropped.
+- **Impact:** One malformed frame could permanently reduce processing capacity or crash the process.
+- **Fix:** Malformed frames and structurally incomplete dnstap messages are logged and skipped while the worker continues.
+- **Reasoning:** Capture streams can contain bad frames; one invalid payload should not terminate long-lived processing.
+- **Tests:** Added a worker-level regression that sends malformed bytes, a dnstap message without payload, a payload without message type, and then a valid response that must still be processed.
