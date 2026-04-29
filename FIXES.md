@@ -16,13 +16,11 @@
 - **Reasoning:** Public functions should validate their inputs or be safe against edge cases. The fix provides graceful degradation rather than panicking.
 - **Tests:** Added `TestNewQnameEventValid` and `TestNewQnameEventEmptyQuestion` in `pkg/protocols/protocols_test.go` to verify both the happy path and the empty-question case.
 
-## Input Channel Not Closed and DNStap Reader Not Synchronized
+## DNStap Reader Goroutine Limitation
 
-- **Bug:** The dnstap reader goroutine (`dti.ReadInto(edm.inputChannel)`) was started at line 1383 without being tracked in a WaitGroup. The `inputChannel` was never explicitly closed. When `minimiserWg.Wait()` completed, minimisers stopped reading from the channel, but `dti.ReadInto` could still be blocked trying to send.
-- **Impact:** Goroutine leak; unclean shutdown; potential panic if channel is closed while dti.ReadInto is sending; no guarantee of orderly shutdown.
-- **Fix:** Wrapped `dti.ReadInto` in a tracked goroutine with `wg.Add(1)` and `defer wg.Done()`, and added `close(edm.inputChannel)` after `minimiserWg.Wait()` to signal the reader to exit.
-- **Reasoning:** All long-lived goroutines must be tracked in the main WaitGroup for proper shutdown sequencing; channels should be explicitly closed by the sender when done.
-- **Tests:** Verified by running full test suite; no new test needed as the fix ensures orderly shutdown already tested by existing tests.
+- **Note:** The dnstap reader goroutine (`dti.ReadInto(edm.inputChannel)`) is started fire-and-forget without WaitGroup tracking. An earlier attempt to track it in `wg` and close `inputChannel` on shutdown caused SIGINT to hang because the upstream `golang-dnstap` library does not expose a stop/close mechanism for `ReadInto` — the goroutine blocks reading from the socket indefinitely. Closing `inputChannel` from `Run()` would also race with `ReadInto` sending and panic.
+- **Impact:** The `ReadInto` goroutine leaks on shutdown, but the OS reclaims it on process exit.
+- **Status:** Documented as an upstream library limitation. Fixing this properly would require either a patch to `golang-dnstap` to support cancellation, or closing the underlying listener from outside, which the current `FrameStreamSockInput` does not expose.
 
 ## HTTP Servers (pprof and metrics) Not Synchronized or Gracefully Shut Down
 

@@ -1417,18 +1417,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
-	// Start dnstap.Input
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		dti.ReadInto(edm.inputChannel)
-	}()
+	// Start dnstap.Input. The golang-dnstap library does not provide a
+	// stop/close mechanism for ReadInto, so we cannot track this goroutine
+	// in the WaitGroup — doing so would block shutdown indefinitely. The
+	// inputChannel is intentionally left unclosed because ReadInto sends
+	// to it and would panic; the OS reclaims the goroutine on process exit.
+	go dti.ReadInto(edm.inputChannel)
 
 	// Wait here until all instances of runMinimiser() is done
 	minimiserWg.Wait()
-
-	// Close inputChannel to signal dti.ReadInto to exit
-	close(edm.inputChannel)
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
