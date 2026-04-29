@@ -39,3 +39,11 @@
 - **Fix:** Packet parsing now uses safe timestamp fallback and shared endpoint formatting, while session creation tolerates missing socket family/protocol metadata.
 - **Reasoning:** Optional protobuf fields should produce dropped packets or partial output, not process panics.
 - **Tests:** Added coverage for missing query/response timestamps, missing socket family/protocol in session creation, and query-port-without-address endpoint formatting.
+
+## Shutdown Flush
+
+- **Bug:** The collector only wrote sessions and histograms on the minute ticker; pending data could be left in memory when shutdown happened before the next tick.
+- **Impact:** The final partial interval of session rows and well-known-domain histogram updates could be silently lost during graceful shutdown.
+- **Fix:** After minimiser workers stop, the collector now drains queued session/update work and flushes any accumulated session and histogram data before closing writer channels.
+- **Reasoning:** Graceful shutdown should preserve already accepted data even if the current collection interval is incomplete.
+- **Tests:** Added collector shutdown coverage that queues a session and histogram update, stops the collector, and verifies both writer channels receive flushed data.

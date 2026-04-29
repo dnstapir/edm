@@ -3015,69 +3015,107 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 
 	hllSettings := getHllDefaults(conf.HistogramHLLExplicitThreshold)
 
+	processSession := func(sd *sessionData) {
+		if sd == nil {
+			return
+		}
+		sessions = append(sessions, sd)
+		sessionUpdated = true
+	}
+
+	flushSessions := func(rotationTime time.Time) {
+		if !sessionUpdated {
+			return
+		}
+		ps := &prevSessions{
+			sessions:     sessions,
+			rotationTime: rotationTime,
+		}
+		sessions = []*sessionData{}
+		sessionUpdated = false
+		edm.sessionWriterCh <- ps
+	}
+
+	processWKDUpdate := func(wu wkdUpdate) {
+		// It is possible an update sitting in the queue has
+		// been created with an outdated dawgModTime due to a
+		// call to rotateTracker(). If this is the case we need
+		// to do a new lookup against the new dawg to make sure
+		// we have the correct index number (or if it is even
+		// present in the new dawg).
+		if wu.dawgModTime != wkd.snap.Load().dawgModTime {
+			if !retryChannelClosed {
+				wkd.retryCh <- wu
+			} else {
+				edm.log.Info("discarding retry of wkd update because we are shutting down")
+			}
+			return
+		}
+
+		if _, exists := wkd.m[wu.dawgIndex]; !exists {
+			wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
+		}
+
+		wkd.m[wu.dawgIndex].OKCount += wu.OKCount
+		wkd.m[wu.dawgIndex].NXCount += wu.NXCount
+		wkd.m[wu.dawgIndex].FailCount += wu.FailCount
+		wkd.m[wu.dawgIndex].ACount += wu.ACount
+		wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
+		wkd.m[wu.dawgIndex].MXCount += wu.MXCount
+		wkd.m[wu.dawgIndex].NSCount += wu.NSCount
+		wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
+		wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
+		wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
+
+		if wu.ip.IsValid() {
+			if wu.ip.Unmap().Is4() {
+				wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
+			} else {
+				wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
+			}
+		}
+	}
+
+	drainCollectorQueues := func() {
+		for {
+			select {
+			case sd := <-edm.sessionCollectorCh:
+				processSession(sd)
+			case wu := <-wkd.updateCh:
+				processWKDUpdate(wu)
+			default:
+				return
+			}
+		}
+	}
+
+	flushHistogram := func(rotationTime time.Time) {
+		if len(wkd.m) == 0 {
+			return
+		}
+		snap := wkd.snap.Load()
+		edm.histogramWriterCh <- &wellKnownDomainsData{
+			m:            wkd.m,
+			rotationTime: rotationTime,
+			dawgFinder:   snap.dawgFinder,
+		}
+		wkd.m = map[int]*histogramData{}
+	}
+
 collectorLoop:
 	for {
 		select {
 		case sd := <-edm.sessionCollectorCh:
-			sessions = append(sessions, sd)
-			sessionUpdated = true
+			processSession(sd)
 
 		case wu := <-wkd.updateCh:
-			// It is possible an update sitting in the queue has
-			// been created with an outdated dawgModTime due to a
-			// call to rotateTracker(). If this is the case we need
-			// to do a new lookup against the new dawg to make sure
-			// we have the correct index number (or if it is even
-			// present in the new dawg).
-			if wu.dawgModTime != wkd.snap.Load().dawgModTime {
-				if !retryChannelClosed {
-					wkd.retryCh <- wu
-				} else {
-					edm.log.Info("discarding retry of wkd update because we are shutting down")
-				}
-				continue
-			}
-
-			if _, exists := wkd.m[wu.dawgIndex]; !exists {
-				wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
-			}
-
-			wkd.m[wu.dawgIndex].OKCount += wu.OKCount
-			wkd.m[wu.dawgIndex].NXCount += wu.NXCount
-			wkd.m[wu.dawgIndex].FailCount += wu.FailCount
-			wkd.m[wu.dawgIndex].ACount += wu.ACount
-			wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
-			wkd.m[wu.dawgIndex].MXCount += wu.MXCount
-			wkd.m[wu.dawgIndex].NSCount += wu.NSCount
-			wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
-			wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
-			wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
-
-			if wu.ip.IsValid() {
-				if wu.ip.Unmap().Is4() {
-					wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
-				} else {
-					wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
-				}
-			}
+			processWKDUpdate(wu)
 
 		case ts := <-ticker.C:
 			// We want to tick at the start of each minute
 			ticker.Reset(timeUntilNextMinute())
 
-			if sessionUpdated {
-				ps := &prevSessions{
-					sessions:     sessions,
-					rotationTime: ts,
-				}
-
-				sessions = []*sessionData{}
-
-				// We have reset the sessions slice
-				sessionUpdated = false
-
-				edm.sessionWriterCh <- ps
-			}
+			flushSessions(ts)
 
 			prevWKD, err := wkd.rotateTracker(edm, dawgFile, ts)
 			if err != nil {
@@ -3107,8 +3145,13 @@ collectorLoop:
 			// read from it again in this select statement now that
 			// it is closed.
 			wkd.stop = nil
+
 		case <-wkd.retryerDone:
 			edm.log.Info("dataCollector: update retryer is done")
+			drainCollectorQueues()
+			shutdownTime := time.Now().UTC()
+			flushSessions(shutdownTime)
+			flushHistogram(shutdownTime)
 			break collectorLoop
 		}
 	}
