@@ -375,6 +375,38 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not drain and exit")
 }
 
+// TestMqttPublishWorkerExitsOnContextCancel verifies that mqttPublishWorker
+// exits when autopahoCtx is cancelled even if mqttSignedCh is empty. Without
+// the fix, the goroutine blocks on the channel receive and can only exit when
+// the channel is closed (the !ok path) or a message arrives, not on context
+// cancellation.
+func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { _ = edm.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	edm.autopahoCtx = ctx
+
+	edm.mqttSignedCh = make(chan []byte)
+
+	cm := &blockingMQTTConnectionManager{
+		publishStarted: make(chan []byte, 1),
+		release:        make(chan struct{}),
+	}
+
+	edm.autopahoWg.Add(1)
+	go edm.mqttPublishWorker(cm, "events/up/test/new_qname", false)
+
+	time.Sleep(50 * time.Millisecond)
+
+	cancel()
+	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit after context cancel")
+}
+
 // waitOrFail waits for wg with a deadline, calling t.Fatalf with the
 // supplied message on timeout. Centralised so the timeout discipline is
 // uniform across the MQTT worker tests.

@@ -183,6 +183,7 @@ func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) 
 func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic string, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
+	var signedMsg []byte
 	for {
 		// We only need to wait for a server connection if we have no
 		// local queue. Otherwise we can just start appending messages
@@ -195,9 +196,15 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 			}
 		}
 
-		signedMsg, ok := <-edm.mqttSignedCh
-		if !ok {
-			edm.log.Info("mqttPublishWorker: signed queue closed, exiting")
+		var ok bool
+		select {
+		case signedMsg, ok = <-edm.mqttSignedCh:
+			if !ok {
+				edm.log.Info("mqttPublishWorker: signed queue closed, exiting")
+				return
+			}
+		case <-edm.autopahoCtx.Done():
+			edm.log.Info("mqttPublishWorker: context cancelled, exiting")
 			return
 		}
 

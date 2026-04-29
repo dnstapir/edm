@@ -16,6 +16,14 @@
 - **Reasoning:** Using `defer` ensures the lock is always released, even on error return paths, preventing mutex deadlocks.
 - **Tests:** Added `TestCleanupFSWatchersReleasesLockOnError` which calls `cleanupFSWatchers()` and then verifies `fsWatcherMutex.TryLock()` succeeds, confirming the read lock was released.
 
+## MQTT Publish Worker Context Cancellation
+
+- **Bug:** In `mqttPublishWorker()`, the channel read from `mqttSignedCh` at line 198 was a plain blocking receive with no `select` on `autopahoCtx.Done()`. When the context was cancelled while the channel was empty, the goroutine blocked indefinitely and could not exit.
+- **Impact:** Context cancellation alone could not stop the publish worker; shutdown depended entirely on the channel being closed, which only happens after sign workers finish. This delayed shutdown by requiring the channel closure path instead of honoring immediate cancellation.
+- **Fix:** Replaced the plain blocking read with a `select` that listens to both `mqttSignedCh` and `autopahoCtx.Done()`.
+- **Reasoning:** All goroutines participating in graceful shutdown must be interruptible via context cancellation.
+- **Tests:** Added `TestMqttPublishWorkerExitsOnContextCancel` which starts the worker with an empty channel and verifies it exits promptly (within 2 seconds) when the context is cancelled.
+
 ## HTTP Response Body Leak on Read Error
 
 - **Bug:** In `aggregateSender.send()`, if `io.ReadAll(res.Body)` returned an error, the function returned early without closing `res.Body`. This leaked the HTTP connection from the transport pool.
