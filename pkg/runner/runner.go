@@ -71,6 +71,7 @@ type config struct {
 	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
+	PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
 	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
 	InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
@@ -1038,6 +1039,7 @@ type testConfiger struct {
 	Debug                   bool
 	DisableHistogramSender  bool
 	DisableMQTT             bool
+	PebbleSync              bool
 }
 
 func (tc testConfiger) getConfig() (config, error) {
@@ -1048,6 +1050,7 @@ func (tc testConfiger) getConfig() (config, error) {
 		Debug:                   tc.Debug,
 		DisableHistogramSender:  tc.DisableHistogramSender,
 		DisableMQTT:             tc.DisableMQTT,
+		PebbleSync:              tc.PebbleSync,
 	}, nil
 }
 
@@ -1943,8 +1946,15 @@ func seenQnameLockIndex(qname string) int {
 	return int(h % 256)
 }
 
+func seenQnameWriteOptions(conf config) *pebble.WriteOptions {
+	if conf.PebbleSync {
+		return pebble.Sync
+	}
+	return pebble.NoSync
+}
+
 // Check if we have already seen this qname since we started.
-func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB) bool {
+func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, conf config) bool {
 	qname := strings.ToLower(msg.Question[0].Name)
 	seenLock := &edm.seenQnameLocks[seenQnameLockIndex(qname)]
 	seenLock.Lock()
@@ -1977,9 +1987,8 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 		// a system of record. On crash we lose the last few seconds of
 		// "we've seen this" state and re-publish those qnames as new on
 		// the MQTT side — which is bounded and fine. See TIER1OPT.md.
-		//
-		// Revert to Sync for now. Not sure how NoSync affects correctness.
-		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
+		// Operators can opt back into pebble.Sync with --pebble-sync.
+		if err := pdb.Set([]byte(qname), []byte{}, seenQnameWriteOptions(conf)); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
@@ -2178,7 +2187,7 @@ minimiserLoop:
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, pdb) {
+			if !edm.qnameSeen(msg, seenQnameLRU, pdb, conf) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 

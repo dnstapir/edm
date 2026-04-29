@@ -61,7 +61,7 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			results <- edm.qnameSeen(msg, seenQnameLRU, pdb)
+			results <- edm.qnameSeen(msg, seenQnameLRU, pdb, config{})
 		}()
 	}
 
@@ -77,6 +77,16 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 	}
 	if firstSeen != 1 {
 		t.Fatalf("first-seen results have: %d, want: 1", firstSeen)
+	}
+}
+
+func TestSeenQnameWriteOptions(t *testing.T) {
+	if got := seenQnameWriteOptions(config{}); got != pebble.NoSync {
+		t.Fatalf("default seen-qname write option = %p, want pebble.NoSync %p", got, pebble.NoSync)
+	}
+
+	if got := seenQnameWriteOptions(config{PebbleSync: true}); got != pebble.Sync {
+		t.Fatalf("pebble-sync seen-qname write option = %p, want pebble.Sync %p", got, pebble.Sync)
 	}
 }
 
