@@ -15,6 +15,7 @@ import (
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/fsnotify/fsnotify"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -2169,6 +2170,39 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { _ = edm.Close() })
+
+	tempDir := t.TempDir()
+
+	edm.fsWatcher, err = fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %s", err)
+	}
+	defer edm.fsWatcher.Close()
+
+	if err := edm.fsWatcher.Add(tempDir); err != nil {
+		t.Fatalf("Add watch path: %s", err)
+	}
+
+	edm.fsWatcherFuncs = make(map[string][]func() error)
+
+	err = edm.cleanupFSWatchers()
+	if err != nil {
+		t.Fatalf("cleanupFSWatchers: %s", err)
+	}
+
+	if !edm.fsWatcherMutex.TryLock() {
+		t.Fatal("fsWatcherMutex.TryLock() failed - mutex is still locked after cleanupFSWatchers")
+	}
+	edm.fsWatcherMutex.Unlock()
 }
 
 func TestDiskCleanerRetentionThreshold(t *testing.T) {

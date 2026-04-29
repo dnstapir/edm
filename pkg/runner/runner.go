@@ -989,6 +989,7 @@ func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error)
 
 func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 	edm.fsWatcherMutex.RLock()
+	defer edm.fsWatcherMutex.RUnlock()
 	for _, watchPath := range edm.fsWatcher.WatchList() {
 		watchPathInUse := false
 		for fsWatcherFuncFilename := range edm.fsWatcherFuncs {
@@ -1005,7 +1006,6 @@ func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 			}
 		}
 	}
-	edm.fsWatcherMutex.RUnlock()
 
 	return nil
 }

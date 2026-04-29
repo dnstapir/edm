@@ -8,6 +8,14 @@
 - **Reasoning:** The retention period should match the intended 24-hour window for aggregate data recovery.
 - **Tests:** Added `TestDiskCleanerRetentionThreshold` to verify the retention threshold is correctly set to 24 hours.
 
+## FS Watcher Mutex Leak
+
+- **Bug:** In `cleanupFSWatchers()`, an early `return` statement inside the `RLock` scope at lines 1003–1005 exited the function without calling `RUnlock()`, leaking the read lock.
+- **Impact:** Any subsequent attempt to acquire the write lock on `fsWatcherMutex` (e.g., in `configureFSWatchers`) would block indefinitely because the read lock was never released.
+- **Fix:** Added `defer edm.fsWatcherMutex.RUnlock()` immediately after `RLock()` and removed the explicit `RUnlock()` call that was only reachable on the success path.
+- **Reasoning:** Using `defer` ensures the lock is always released, even on error return paths, preventing mutex deadlocks.
+- **Tests:** Added `TestCleanupFSWatchersReleasesLockOnError` which calls `cleanupFSWatchers()` and then verifies `fsWatcherMutex.TryLock()` succeeds, confirming the read lock was released.
+
 ## HTTP Response Body Leak on Read Error
 
 - **Bug:** In `aggregateSender.send()`, if `io.ReadAll(res.Body)` returned an error, the function returned early without closing `res.Body`. This leaked the HTTP connection from the transport pool.
