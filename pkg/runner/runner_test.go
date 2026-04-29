@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -2167,5 +2168,62 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 				t.Fatal("IPv6 HLL data is 0 when it should have content")
 			}
 		}
+	}
+}
+
+func TestDiskCleanerRetentionThreshold(t *testing.T) {
+	t.Helper()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { _ = edm.Close() })
+
+	tempDir := t.TempDir()
+	now := time.Now()
+
+	oldFile := filepath.Join(tempDir, "dns_histogram-2025-01-01T00-00-00Z.parquet")
+	newFile := filepath.Join(tempDir, "dns_histogram-2025-01-02T12-00-00Z.parquet")
+
+	if err := os.WriteFile(oldFile, []byte("old"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+	if err := os.WriteFile(newFile, []byte("new"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+
+	oldMtime := now.Add(-25 * time.Hour)
+	newMtime := now.Add(-23 * time.Hour)
+
+	if err := os.Chtimes(oldFile, oldMtime, oldMtime); err != nil {
+		t.Fatalf("Chtimes oldFile: %s", err)
+	}
+	if err := os.Chtimes(newFile, newMtime, newMtime); err != nil {
+		t.Fatalf("Chtimes newFile: %s", err)
+	}
+
+	fOld, err := os.Stat(oldFile)
+	if err != nil {
+		t.Fatalf("Stat oldFile: %s", err)
+	}
+
+	fNew, err := os.Stat(newFile)
+	if err != nil {
+		t.Fatalf("Stat newFile: %s", err)
+	}
+
+	deleteThreshold := time.Hour * 24
+
+	oldElapsed := time.Since(fOld.ModTime())
+	newElapsed := time.Since(fNew.ModTime())
+
+	if oldElapsed <= deleteThreshold {
+		t.Fatalf("test setup error: oldFile elapsed %v should be > deleteThreshold %v", oldElapsed, deleteThreshold)
+	}
+
+	if newElapsed >= deleteThreshold {
+		t.Fatalf("test setup error: newFile elapsed %v should be < deleteThreshold %v", newElapsed, deleteThreshold)
 	}
 }

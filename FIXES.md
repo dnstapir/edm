@@ -1,5 +1,13 @@
 # Fixes
 
+## Disk Cleaner Retention Period
+
+- **Bug:** The `diskCleaner` used a variable named `oneDay` but set it to `time.Hour * 12` (12 hours), not 24 hours. Sent histogram files were deleted after 12 hours instead of the intended 24 hours.
+- **Impact:** Histogram files were retained for only half the intended duration, potentially causing data loss if the aggregate receiver was unavailable for more than 12 hours.
+- **Fix:** Changed `oneDay := time.Hour * 12` to `oneDay := time.Hour * 24`.
+- **Reasoning:** The retention period should match the intended 24-hour window for aggregate data recovery.
+- **Tests:** Added `TestDiskCleanerRetentionThreshold` to verify the retention threshold is correctly set to 24 hours.
+
 ## Config Env Isolation
 
 - **Bug:** Viper accepted unprefixed environment variables, so unrelated ambient variables such as `DEBUG=release` were treated as EDM config.

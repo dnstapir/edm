@@ -374,7 +374,7 @@ func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) {
 	ticker := time.NewTicker(time.Second * 60)
 	defer ticker.Stop()
 
-	oneDay := time.Hour * 12
+	oneDay := time.Hour * 24
 
 timerLoop:
 	for {
