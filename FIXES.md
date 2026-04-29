@@ -1,5 +1,13 @@
 # Fixes
 
+## NewQnameEvent Empty Question Section Panic
+
+- **Bug:** In `pkg/protocols/protocols.go`, `NewQnameEvent()` accessed `msg.Question[0]` without first checking whether the Question section had any entries. While all current callers in the runner package validate this before calling, the function itself was unsafe and would panic on an empty Question section.
+- **Impact:** A future caller (or test) that called `NewQnameEvent()` with an empty Question section would panic. As a public function in a published package, this is a defensive programming violation.
+- **Fix:** Added a length check on `msg.Question`. If empty, the returned event has an empty `Qname` and nil `Qtype`/`Qclass` pointers, while header-derived fields (Flags, Type, Version) are still populated.
+- **Reasoning:** Public functions should validate their inputs or be safe against edge cases. The fix provides graceful degradation rather than panicking.
+- **Tests:** Added `TestNewQnameEventValid` and `TestNewQnameEventEmptyQuestion` in `pkg/protocols/protocols_test.go` to verify both the happy path and the empty-question case.
+
 ## Input Channel Not Closed and DNStap Reader Not Synchronized
 
 - **Bug:** The dnstap reader goroutine (`dti.ReadInto(edm.inputChannel)`) was started at line 1383 without being tracked in a WaitGroup. The `inputChannel` was never explicitly closed. When `minimiserWg.Wait()` completed, minimisers stopped reading from the channel, but `dti.ReadInto` could still be blocked trying to send.
