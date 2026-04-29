@@ -16,6 +16,14 @@
 - **Reasoning:** HTTP servers need explicit graceful shutdown to drain pending requests and close connections cleanly; all goroutines should be tracked for proper ordering.
 - **Tests:** Verified by running full test suite and checking that shutdown completes without errors.
 
+## HTTP Client Transport Resource Leak on Reload
+
+- **Bug:** In `setupHistogramSender()`, when the aggregateSender was replaced (e.g., during config reload), the old aggregateSender's HTTP transport's connection pool was never closed. The transport holds idle connections that accumulate over time.
+- **Impact:** Over multiple config reloads, idle HTTP connections accumulate and are not returned to the OS, exhausting per-process connection limits and file descriptors.
+- **Fix:** (1) Added `httpTransport` field to `aggregateSender` struct to track the transport. (2) In `setupHistogramSender()`, call `CloseIdleConnections()` on the old transport before replacing it.
+- **Reasoning:** HTTP transports maintain connection pools that must be explicitly cleaned up when the client is replaced, or connections will remain open until GC runs or the process exits.
+- **Tests:** Verified by running full test suite with no regressions.
+
 ## Disk Cleaner Retention Period
 
 - **Bug:** The `diskCleaner` used a variable named `oneDay` but set it to `time.Hour * 12` (12 hours), not 24 hours. Sent histogram files were deleted after 12 hours instead of the intended 24 hours.
