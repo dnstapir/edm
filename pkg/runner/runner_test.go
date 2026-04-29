@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2203,6 +2204,39 @@ func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
 		t.Fatal("fsWatcherMutex.TryLock() failed - mutex is still locked after cleanupFSWatchers")
 	}
 	edm.fsWatcherMutex.Unlock()
+}
+
+func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { _ = edm.Close() })
+
+	viperNotifyCh := make(chan fsnotify.Event, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		configUpdater(viperNotifyCh, edm)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	edm.stop()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("configUpdater did not exit after context cancel")
+	}
 }
 
 func TestDiskCleanerRetentionThreshold(t *testing.T) {

@@ -598,13 +598,23 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 	})
 	t.Stop()
 
-	for e = range viperNotifyCh {
-		// If an event has been recevied this means we now want to
-		// enable the timer so the function will be called "soon", but
-		// if more events occur we will reset it again. This allows us
-		// to wait until events on the file settles down before
-		// actually calling the update function.
-		t.Reset(100 * time.Millisecond)
+	for {
+		select {
+		case event, ok := <-viperNotifyCh:
+			if !ok {
+				return
+			}
+			e = event
+			// If an event has been recevied this means we now want to
+			// enable the timer so the function will be called "soon", but
+			// if more events occur we will reset it again. This allows us
+			// to wait until events on the file settles down before
+			// actually calling the update function.
+			t.Reset(100 * time.Millisecond)
+		case <-edm.ctx.Done():
+			t.Stop()
+			return
+		}
 	}
 }
 
@@ -1131,12 +1141,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		os.Exit(1)
 	}
 
-	viperNotifyCh := make(chan fsnotify.Event)
+	viperNotifyCh := make(chan fsnotify.Event, 1)
 
 	go configUpdater(viperNotifyCh, edm)
 
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		viperNotifyCh <- e
+		select {
+		case viperNotifyCh <- e:
+		default:
+		}
 	})
 
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
@@ -1387,6 +1400,8 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	// Wait for all workers to exit
 	edm.log.Info("Run: waiting for other workers to exit")
 	wg.Wait()
+
+	close(viperNotifyCh)
 
 	// Wait for graceful disconnection from MQTT bus
 	if !startConf.DisableMQTT {

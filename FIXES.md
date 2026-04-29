@@ -16,6 +16,14 @@
 - **Reasoning:** Using `defer` ensures the lock is always released, even on error return paths, preventing mutex deadlocks.
 - **Tests:** Added `TestCleanupFSWatchersReleasesLockOnError` which calls `cleanupFSWatchers()` and then verifies `fsWatcherMutex.TryLock()` succeeds, confirming the read lock was released.
 
+## Config Updater Goroutine Leak
+
+- **Bug:** In `Run()`, `configUpdater` looped over an unbuffered `viperNotifyCh` that was never closed. The `for e = range viperNotifyCh` loop at line 601 could only exit when the channel was closed, which never happened, causing the goroutine to leak on shutdown. Additionally, the `viper.OnConfigChange` callback did a blocking send on the unbuffered channel, which could deadlock the viper watcher goroutine if `configUpdater` was busy.
+- **Impact:** The `configUpdater` goroutine leaked on every `Run()` call, accumulating unreleased resources in long-lived processes or test suites.
+- **Fix:** Three changes: (1) Made `viperNotifyCh` buffered with capacity 1 (line 1134), (2) Changed the `viper.OnConfigChange` callback to use a non-blocking send with `select` and `default` (lines 1139–1141), (3) Changed `configUpdater`'s loop from `for e = range` to a `select` that also listens to `edm.ctx.Done()` (lines 601–617), (4) Added `close(viperNotifyCh)` at the end of `Run()` after `wg.Wait()` (line 1405).
+- **Reasoning:** Config-change events are idempotent (the dedup timer already coalesces multiple events), so dropping duplicates is correct. The goroutine must respond to context cancellation for clean shutdown. Closing the channel signals the end of events and allows the `range` loop to exit.
+- **Tests:** Added `TestConfigUpdaterExitsOnContextCancel` which starts `configUpdater` with a buffered channel and verifies it exits promptly (within 2 seconds) when the context is cancelled.
+
 ## Minimiser Session Send Backpressure
 
 - **Bug:** In `runMinimiser()`, the send to `sessionCollectorCh` at line 2121 was a plain blocking send. If the channel filled up (capacity 100), the minimiser goroutine would block inside the inputFrame processing case and could never reach the outer `case <-edm.ctx.Done()` to exit.
