@@ -3,6 +3,7 @@ package runner
 import (
 	"io"
 	"log/slog"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -63,6 +64,24 @@ func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
 	}
 	if sd.SourceIPv4 != nil || sd.DestIPv4 != nil || sd.SourceIPv6Network != nil || sd.DestIPv6Network != nil {
 		t.Fatalf("IP fields should stay nil when SocketFamily is missing: %#v", sd)
+	}
+}
+
+func TestNewSessionIgnoresMismatchedIPv4FamilyAddress(t *testing.T) {
+	edm := newPartialDnstapTestMinimiser()
+	msg := new(dns.Msg)
+	msg.SetQuestion("example.com.", dns.TypeA)
+
+	socketFamily := dnstap.SocketFamily_INET
+	sd := edm.newSession(&dnstap.Dnstap{
+		Message: &dnstap.Message{
+			SocketFamily: &socketFamily,
+			QueryAddress: netip.MustParseAddr("2001:db8::1").AsSlice(),
+		},
+	}, msg, false, defaultLabelLimit, time.Unix(0, 0).UTC())
+
+	if sd.SourceIPv4 != nil {
+		t.Fatalf("SourceIPv4 should stay nil for IPv6 bytes with INET socket family, have: %d", *sd.SourceIPv4)
 	}
 }
 

@@ -71,3 +71,11 @@
 - **Fix:** Added sharded per-qname locking around the LRU/Pebble check-add-set sequence.
 - **Reasoning:** Identical qnames must be deduplicated as a single logical operation, while unrelated qnames should still proceed concurrently without a global lock.
 - **Tests:** Added concurrent `qnameSeen` coverage proving exactly one worker reports a qname as first-seen.
+
+## Mismatched IPv4 Session Address Safety
+
+- **Bug:** Session creation trusted `SocketFamily_INET` enough to call `netip.Addr.As4()` on the raw address bytes without first proving the parsed address was IPv4.
+- **Impact:** A malformed dnstap message with IPv4 socket family metadata but IPv6-sized address bytes could panic the minimiser while building session output.
+- **Fix:** IPv4 address conversion now unmapps IPv4-mapped addresses and returns an error for non-IPv4 parsed addresses instead of panicking.
+- **Reasoning:** Socket family metadata is external input; mismatches should omit the affected session IP field and log the conversion error, not crash processing.
+- **Tests:** Added session coverage for `SocketFamily_INET` paired with IPv6 query address bytes.
