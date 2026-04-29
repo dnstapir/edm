@@ -120,6 +120,7 @@ func (edm *dnstapMinimiser) startMQTTPipeline(cm *autopaho.ConnectionManager, mq
 
 	edm.autopahoWg.Add(1)
 	go func() {
+		defer edm.autopahoWg.Done()
 		signWg.Wait()
 		close(edm.mqttSignedCh)
 	}()
