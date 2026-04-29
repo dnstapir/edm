@@ -45,6 +45,12 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	if len(ps.sessions) != 1 {
 		t.Fatalf("flushed sessions have: %d, want: 1", len(ps.sessions))
 	}
+	if ps.startTime.IsZero() {
+		t.Fatal("flushed sessions should carry the collector interval start")
+	}
+	if ps.rotationTime.Before(ps.startTime) {
+		t.Fatalf("session interval is inverted: start=%s stop=%s", ps.startTime, ps.rotationTime)
+	}
 
 	prevWKD, ok := <-edm.histogramWriterCh
 	if !ok {
@@ -60,5 +66,11 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	}
 	if got.ACount != 1 || got.OKCount != 1 {
 		t.Fatalf("flushed histogram counts have A=%d OK=%d, want A=1 OK=1", got.ACount, got.OKCount)
+	}
+	if prevWKD.startTime.IsZero() {
+		t.Fatal("flushed histogram should carry the collector interval start")
+	}
+	if prevWKD.rotationTime.Before(prevWKD.startTime) {
+		t.Fatalf("histogram interval is inverted: start=%s stop=%s", prevWKD.startTime, prevWKD.rotationTime)
 	}
 }

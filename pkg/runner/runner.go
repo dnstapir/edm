@@ -253,6 +253,7 @@ type sessionData struct {
 
 type prevSessions struct {
 	sessions     []*sessionData
+	startTime    time.Time
 	rotationTime time.Time
 }
 
@@ -1670,6 +1671,7 @@ type wellKnownDomainsTracker struct {
 // strings), m is the previous bucket map, dawgIsRotated marks the boundary.
 type wellKnownDomainsData struct {
 	m             map[int]*histogramData
+	startTime     time.Time
 	rotationTime  time.Time
 	dawgFinder    dawg.Finder
 	dawgIsRotated bool
@@ -1814,7 +1816,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	wkd.updateCh <- wu
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, rotationTime time.Time) (*wellKnownDomainsData, error) {
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
 	dawgFileChanged := false
 	var dawgFinder dawg.Finder
 
@@ -1840,6 +1842,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	prevWKD := &wellKnownDomainsData{
 		m:            wkd.m,
 		dawgFinder:   curSnap.dawgFinder,
+		startTime:    startTime,
 		rotationTime: rotationTime,
 	}
 	wkd.m = map[int]*histogramData{}
@@ -2261,7 +2264,7 @@ func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 	// Write session file to a sessions dir where it can be read by other tools
 	sessionsDir := filepath.Join(dataDir, "parquet", "sessions")
 
-	startTime := getStartTimeFromRotationTime(ps.rotationTime)
+	startTime := intervalStartFromTimes(ps.startTime, ps.rotationTime)
 
 	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(sessionsDir, "dns_session_block", startTime, ps.rotationTime)
 
@@ -2334,7 +2337,7 @@ func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 }
 
 func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
-	startTime := getStartTimeFromRotationTime(prevWellKnownDomainsData.rotationTime)
+	startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime)
 
 	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, "dns_histogram", startTime, prevWellKnownDomainsData.rotationTime)
 
@@ -2752,6 +2755,13 @@ func getStartTimeFromRotationTime(rotationTime time.Time) time.Time {
 	return rotationTime.Add(-time.Second * 60)
 }
 
+func intervalStartFromTimes(startTime time.Time, rotationTime time.Time) time.Time {
+	if !startTime.IsZero() {
+		return startTime
+	}
+	return getStartTimeFromRotationTime(rotationTime)
+}
+
 // Unfortunately the hll library does not expose what format
 // the HLL is being stored in so figure things out manually.
 //
@@ -3020,6 +3030,8 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 	go wkd.updateRetryer(edm, &retryerWg)
 
 	sessions := []*sessionData{}
+	sessionIntervalStart := time.Now().UTC()
+	histogramIntervalStart := sessionIntervalStart
 
 	ticker := time.NewTicker(timeUntilNextMinute())
 	defer ticker.Stop()
@@ -3038,12 +3050,13 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 		sessionUpdated = true
 	}
 
-	flushSessions := func(rotationTime time.Time) {
+	flushSessions := func(startTime time.Time, rotationTime time.Time) {
 		if !sessionUpdated {
 			return
 		}
 		ps := &prevSessions{
 			sessions:     sessions,
+			startTime:    startTime,
 			rotationTime: rotationTime,
 		}
 		sessions = []*sessionData{}
@@ -3104,13 +3117,14 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 		}
 	}
 
-	flushHistogram := func(rotationTime time.Time) {
+	flushHistogram := func(startTime time.Time, rotationTime time.Time) {
 		if len(wkd.m) == 0 {
 			return
 		}
 		snap := wkd.snap.Load()
 		edm.histogramWriterCh <- &wellKnownDomainsData{
 			m:            wkd.m,
+			startTime:    startTime,
 			rotationTime: rotationTime,
 			dawgFinder:   snap.dawgFinder,
 		}
@@ -3130,9 +3144,10 @@ collectorLoop:
 			// We want to tick at the start of each minute
 			ticker.Reset(timeUntilNextMinute())
 
-			flushSessions(ts)
+			flushSessions(sessionIntervalStart, ts)
+			sessionIntervalStart = ts
 
-			prevWKD, err := wkd.rotateTracker(edm, dawgFile, ts)
+			prevWKD, err := wkd.rotateTracker(edm, dawgFile, histogramIntervalStart, ts)
 			if err != nil {
 				edm.log.Error("unable to rotate histogram map", "error", err)
 				continue
@@ -3142,6 +3157,7 @@ collectorLoop:
 			if len(prevWKD.m) > 0 {
 				edm.histogramWriterCh <- prevWKD
 			}
+			histogramIntervalStart = ts
 
 			// See if we need to modify anything based on a config update
 			conf = edm.getConfig()
@@ -3165,8 +3181,8 @@ collectorLoop:
 			edm.log.Info("dataCollector: update retryer is done")
 			drainCollectorQueues()
 			shutdownTime := time.Now().UTC()
-			flushSessions(shutdownTime)
-			flushHistogram(shutdownTime)
+			flushSessions(sessionIntervalStart, shutdownTime)
+			flushHistogram(histogramIntervalStart, shutdownTime)
 			break collectorLoop
 		}
 	}

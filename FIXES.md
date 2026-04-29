@@ -79,3 +79,11 @@
 - **Fix:** IPv4 address conversion now unmapps IPv4-mapped addresses and returns an error for non-IPv4 parsed addresses instead of panicking.
 - **Reasoning:** Socket family metadata is external input; mismatches should omit the affected session IP field and log the conversion error, not crash processing.
 - **Tests:** Added session coverage for `SocketFamily_INET` paired with IPv6 query address bytes.
+
+## Shutdown Partial Interval Metadata
+
+- **Bug:** Shutdown-flushed session and histogram files still derived their start time as `rotationTime - 60s`, even when shutdown happened partway through the current interval.
+- **Impact:** The final partial interval could be written with filenames and aggregate metadata that overlapped the previous minute or claimed a longer collection window than the data actually covered.
+- **Fix:** The collector now tracks session and histogram interval starts explicitly and carries those starts into flushed writer payloads; legacy callers still fall back to the previous one-minute calculation.
+- **Reasoning:** Once shutdown can flush partial intervals, the writer contract needs both interval boundaries instead of reconstructing the start from the stop time.
+- **Tests:** Extended collector shutdown coverage to assert flushed session and histogram payloads carry non-zero, non-inverted interval boundaries.
