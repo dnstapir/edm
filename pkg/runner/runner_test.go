@@ -861,8 +861,8 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions.Load() != nil {
-		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions)
+	if got := edm.ignoredQuestions.Load(); got != nil {
+		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", got)
 	}
 
 	// Try to look for things that was present in the initial valid data
@@ -943,8 +943,8 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions.Load() != nil {
-		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions)
+	if got := edm.ignoredQuestions.Load(); got != nil {
+		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", got)
 	}
 
 	// Try to look for things that was present in the initial valid data
