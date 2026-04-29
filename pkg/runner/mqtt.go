@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -47,6 +48,12 @@ func (pel pahoErrorLogger) Println(v ...interface{}) {
 
 func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 	pel.logger.Error(fmt.Sprintf(format, v...))
+}
+
+type mqttConnectionManager interface {
+	AwaitConnection(context.Context) error
+	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
+	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
 }
 
 func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
@@ -118,7 +125,7 @@ func parseMQTTServerURL(server string) (*url.URL, error) {
 // box). Splitting them lets sign work parallelise across cores while
 // the paho ConnectionManager's single-connection requirement is preserved
 // by the lone publisher. See TIER2OPT.md.
-func (edm *dnstapMinimiser) startMQTTPipeline(cm *autopaho.ConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
+func (edm *dnstapMinimiser) startMQTTPipeline(cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
 	if signWorkers <= 0 {
 		signWorkers = 1
 	}
@@ -171,9 +178,9 @@ func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) 
 }
 
 // mqttPublishWorker is the single goroutine that talks to paho. Single-writer
-// matches paho's ConnectionManager expectations and avoids head-of-line
-// blocking on the signed-message queue while we sign.
-func (edm *dnstapMinimiser) mqttPublishWorker(cm *autopaho.ConnectionManager, topic string, usingFileQueue bool) {
+// matches paho's ConnectionManager expectations; signing remains parallel
+// upstream while broker back-pressure is contained to this publisher.
+func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic string, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
 	for {
@@ -206,24 +213,21 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm *autopaho.ConnectionManager, to
 				edm.log.Error("error writing message to queue", "error", err)
 			}
 		} else {
-			// Publish will block so we run it in a goroutine
-			go func(msg []byte) {
-				pr, err := cm.Publish(edm.autopahoCtx, &paho.Publish{
-					QoS:     0,
-					Topic:   topic,
-					Payload: msg,
-				})
-				if err != nil {
-					edm.log.Error("error publishing", "error", err)
-				} else if pr != nil && pr.ReasonCode != 0 && pr.ReasonCode != 16 {
-					// pr is only non-nil for QoS 1 and up;
-					// 16 = "no subscribers" which is fine.
-					edm.log.Info("reason code received", "reason_code", pr.ReasonCode)
-				}
-				if edm.debug {
-					edm.log.Info("sent message", "content", string(msg))
-				}
-			}(signedMsg)
+			pr, err := cm.Publish(edm.autopahoCtx, &paho.Publish{
+				QoS:     0,
+				Topic:   topic,
+				Payload: signedMsg,
+			})
+			if err != nil {
+				edm.log.Error("error publishing", "error", err)
+			} else if pr != nil && pr.ReasonCode != 0 && pr.ReasonCode != 16 {
+				// pr is only non-nil for QoS 1 and up;
+				// 16 = "no subscribers" which is fine.
+				edm.log.Info("reason code received", "reason_code", pr.ReasonCode)
+			}
+			if edm.debug {
+				edm.log.Info("sent message", "content", string(signedMsg))
+			}
 		}
 
 		select {

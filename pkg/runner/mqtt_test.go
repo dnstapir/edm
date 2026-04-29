@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/eclipse/paho.golang/autopaho"
+	"github.com/eclipse/paho.golang/paho"
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jws"
@@ -291,6 +294,85 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 
 	close(edm.mqttPubCh)
 	waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit cleanly")
+}
+
+type blockingMQTTConnectionManager struct {
+	publishStarted chan []byte
+	release        chan struct{}
+	active         atomic.Int32
+	concurrent     atomic.Bool
+}
+
+func (cm *blockingMQTTConnectionManager) AwaitConnection(context.Context) error {
+	return nil
+}
+
+func (cm *blockingMQTTConnectionManager) PublishViaQueue(context.Context, *autopaho.QueuePublish) error {
+	return nil
+}
+
+func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *paho.Publish) (*paho.PublishResponse, error) {
+	if cm.active.Add(1) > 1 {
+		cm.concurrent.Store(true)
+	}
+	defer cm.active.Add(-1)
+
+	select {
+	case cm.publishStarted <- publish.Payload:
+	default:
+	}
+
+	select {
+	case <-cm.release:
+	case <-ctx.Done():
+	}
+	return nil, nil
+}
+
+func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { _ = edm.Close() })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	edm.autopahoCtx = ctx
+	t.Cleanup(cancel)
+
+	edm.mqttSignedCh = make(chan []byte, 2)
+	cm := &blockingMQTTConnectionManager{
+		publishStarted: make(chan []byte, 2),
+		release:        make(chan struct{}),
+	}
+
+	edm.autopahoWg.Add(1)
+	go edm.mqttPublishWorker(cm, "events/up/test/new_qname", false)
+
+	edm.mqttSignedCh <- []byte("first")
+	select {
+	case got := <-cm.publishStarted:
+		if string(got) != "first" {
+			t.Fatalf("first publish payload have: %s, want: first", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first publish did not start")
+	}
+
+	edm.mqttSignedCh <- []byte("second")
+	select {
+	case got := <-cm.publishStarted:
+		t.Fatalf("second publish started before first publish completed: %s", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if cm.concurrent.Load() {
+		t.Fatal("mqttPublishWorker called Publish concurrently")
+	}
+
+	close(cm.release)
+	close(edm.mqttSignedCh)
+	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not drain and exit")
 }
 
 // waitOrFail waits for wg with a deadline, calling t.Fatalf with the

@@ -87,3 +87,11 @@
 - **Fix:** The collector now tracks session and histogram interval starts explicitly and carries those starts into flushed writer payloads; legacy callers still fall back to the previous one-minute calculation.
 - **Reasoning:** Once shutdown can flush partial intervals, the writer contract needs both interval boundaries instead of reconstructing the start from the stop time.
 - **Tests:** Extended collector shutdown coverage to assert flushed session and histogram payloads carry non-zero, non-inverted interval boundaries.
+
+## Serial MQTT Publishing
+
+- **Bug:** The MQTT publish worker was documented as the single paho writer but spawned a new goroutine for every non-filequeue publish.
+- **Impact:** Slow publishes could overlap, creating concurrent calls into the connection manager and letting the worker appear drained while publish goroutines were still running.
+- **Fix:** The worker now calls `Publish` directly in the single publisher goroutine; signing remains parallel upstream.
+- **Reasoning:** Back-pressure belongs at the publish boundary, and the lifecycle wait group should represent all publish work accepted by the worker.
+- **Tests:** Added a fake blocking MQTT connection manager that fails if a second publish starts before the first publish is released.
