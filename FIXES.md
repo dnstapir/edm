@@ -16,6 +16,14 @@
 - **Reasoning:** Using `defer` ensures the lock is always released, even on error return paths, preventing mutex deadlocks.
 - **Tests:** Added `TestCleanupFSWatchersReleasesLockOnError` which calls `cleanupFSWatchers()` and then verifies `fsWatcherMutex.TryLock()` succeeds, confirming the read lock was released.
 
+## Histogram Sender Backoff Interruptibility
+
+- **Bug:** In `histogramSender()`, when `as.send()` failed, the code called `time.Sleep(backoffDuration)` unconditionally (15 seconds). The sleep had no way to be interrupted by context cancellation, delaying shutdown by up to 15 seconds.
+- **Impact:** Graceful shutdown could be delayed by up to 15 seconds for each failed histogram send attempt, preventing timely process termination.
+- **Fix:** Replaced `time.Sleep(backoffDuration)` with a `select` that listens to both the timer and `edm.ctx.Done()`, allowing immediate exit on context cancellation.
+- **Reasoning:** Long-running operations inside goroutines must be interruptible by context cancellation for clean shutdown.
+- **Tests:** Verified by running the full test suite; no new test added as the fix is an internal optimization that doesn't change externally observable behavior (existing tests confirm the backoff still fires when intended).
+
 ## MQTT Publish Worker Context Cancellation
 
 - **Bug:** In `mqttPublishWorker()`, the channel read from `mqttSignedCh` at line 198 was a plain blocking receive with no `select` on `autopahoCtx.Done()`. When the context was cancelled while the channel was empty, the goroutine blocked indefinitely and could not exit.
