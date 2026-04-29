@@ -55,3 +55,11 @@
 - **Fix:** The timer now computes the duration from the current instant to `now.Truncate(time.Minute).Add(time.Minute)`.
 - **Reasoning:** Computing against the actual next minute boundary preserves sub-second precision without changing the intended one-minute cadence.
 - **Tests:** Added fixed-time coverage for exact minute, half-second-after-minute, and one-millisecond-before-minute cases.
+
+## Exact Aggregate Intervals
+
+- **Bug:** Histogram upload metadata truncated the interval start to the minute and rounded the duration to whole minutes.
+- **Impact:** Partial histogram files, including shutdown flushes or any second-precision filename interval, could be reported to aggrec with the wrong `Aggregate-Interval`, such as a 45-second interval becoming `PT1M` or `PT0M`.
+- **Fix:** The sender now preserves the exact start timestamp and formats the duration as an ISO 8601 duration with second precision when needed.
+- **Reasoning:** The filename parser already preserves start/stop seconds, and aggrec accepts ISO 8601 start/duration intervals, so the upload metadata should reflect the file's actual interval rather than a rounded minute bucket.
+- **Tests:** Added duration formatting coverage and an aggregate sender test that posts to a local HTTP server and verifies the exact `Aggregate-Interval` header.
