@@ -2566,6 +2566,10 @@ func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
 	if !ok {
 		return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
 	}
+	ip = ip.Unmap()
+	if !ip.Is4() {
+		return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
+	}
 
 	// Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
 	ip4 := ip.As4()
