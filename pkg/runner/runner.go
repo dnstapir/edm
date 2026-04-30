@@ -251,6 +251,7 @@ type sessionData struct {
 
 type prevSessions struct {
 	sessions     []*sessionData
+	startTime    time.Time
 	rotationTime time.Time
 }
 
@@ -1634,6 +1635,7 @@ type wellKnownDomainsData struct {
 	// Store a pointer to histogramData so we can assign to it without
 	// "cannot assign to struct field in map" issues
 	m             map[int]*histogramData
+	startTime     time.Time
 	rotationTime  time.Time
 	dawgFinder    dawg.Finder
 	dawgIsRotated bool
@@ -1783,7 +1785,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	wkd.updateCh <- wu
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, rotationTime time.Time) (*wellKnownDomainsData, error) {
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
 	dawgFileChanged := false
 	var dawgFinder dawg.Finder
 
@@ -1807,6 +1809,8 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	wkd.mutex.Lock()
 	prevWKD.m = wkd.m
 	prevWKD.dawgFinder = wkd.dawgFinder
+	prevWKD.startTime = startTime
+	prevWKD.rotationTime = rotationTime
 	wkd.m = map[int]*histogramData{}
 	if dawgFileChanged {
 		wkd.dawgFinder = dawgFinder
@@ -1814,8 +1818,6 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 		prevWKD.dawgIsRotated = true
 	}
 	wkd.mutex.Unlock()
-
-	prevWKD.rotationTime = rotationTime
 
 	return prevWKD, nil
 }
@@ -2169,7 +2171,7 @@ func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 	// Write session file to a sessions dir where it can be read by other tools
 	sessionsDir := filepath.Join(dataDir, "parquet", "sessions")
 
-	startTime := getStartTimeFromRotationTime(ps.rotationTime)
+	startTime := intervalStartFromTimes(ps.startTime, ps.rotationTime)
 
 	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(sessionsDir, "dns_session_block", startTime, ps.rotationTime)
 
@@ -2242,7 +2244,7 @@ func (edm *dnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
 }
 
 func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
-	startTime := getStartTimeFromRotationTime(prevWellKnownDomainsData.rotationTime)
+	startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime)
 
 	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, "dns_histogram", startTime, prevWellKnownDomainsData.rotationTime)
 
@@ -2643,6 +2645,13 @@ func getStartTimeFromRotationTime(rotationTime time.Time) time.Time {
 	return rotationTime.Add(-time.Second * 60)
 }
 
+func intervalStartFromTimes(startTime time.Time, rotationTime time.Time) time.Time {
+	if !startTime.IsZero() {
+		return startTime
+	}
+	return getStartTimeFromRotationTime(rotationTime)
+}
+
 // Unfortunately the hll library does not expose what format
 // the HLL is being stored in so figure things out manually.
 //
@@ -2908,6 +2917,8 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 	go wkd.updateRetryer(edm, &retryerWg)
 
 	sessions := []*sessionData{}
+	sessionIntervalStart := time.Now().UTC()
+	histogramIntervalStart := sessionIntervalStart
 
 	ticker := time.NewTicker(timeUntilNextMinute())
 	defer ticker.Stop()
@@ -2918,71 +2929,111 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 
 	hllSettings := getHllDefaults(conf.HistogramHLLExplicitThreshold)
 
+	processSession := func(sd *sessionData) {
+		if sd == nil {
+			return
+		}
+		sessions = append(sessions, sd)
+		sessionUpdated = true
+	}
+
+	flushSessions := func(startTime time.Time, rotationTime time.Time) {
+		if !sessionUpdated {
+			return
+		}
+		ps := &prevSessions{
+			sessions:     sessions,
+			startTime:    startTime,
+			rotationTime: rotationTime,
+		}
+		sessions = []*sessionData{}
+		sessionUpdated = false
+		edm.sessionWriterCh <- ps
+	}
+
+	processWKDUpdate := func(wu wkdUpdate) {
+		// It is possible an update sitting in the queue has
+		// been created with an outdated dawgModTime due to a
+		// call to rotateTracker(). If this is the case we need
+		// to do a new lookup against the new dawg to make sure
+		// we have the correct index number (or if it is even
+		// present in the new dawg).
+		if wu.dawgModTime != wkd.dawgModTime {
+			if !retryChannelClosed {
+				wkd.retryCh <- wu
+			} else {
+				edm.log.Info("discarding retry of wkd update because we are shutting down")
+			}
+			return
+		}
+
+		if _, exists := wkd.m[wu.dawgIndex]; !exists {
+			wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
+		}
+
+		wkd.m[wu.dawgIndex].OKCount += wu.OKCount
+		wkd.m[wu.dawgIndex].NXCount += wu.NXCount
+		wkd.m[wu.dawgIndex].FailCount += wu.FailCount
+		wkd.m[wu.dawgIndex].ACount += wu.ACount
+		wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
+		wkd.m[wu.dawgIndex].MXCount += wu.MXCount
+		wkd.m[wu.dawgIndex].NSCount += wu.NSCount
+		wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
+		wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
+		wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
+
+		if wu.ip.IsValid() {
+			if wu.ip.Unmap().Is4() {
+				wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
+			} else {
+				wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
+			}
+		}
+	}
+
+	drainCollectorQueues := func() {
+		for {
+			select {
+			case sd := <-edm.sessionCollectorCh:
+				processSession(sd)
+			case wu := <-wkd.updateCh:
+				processWKDUpdate(wu)
+			default:
+				return
+			}
+		}
+	}
+
+	flushHistogram := func(startTime time.Time, rotationTime time.Time) {
+		if len(wkd.m) == 0 {
+			return
+		}
+		edm.histogramWriterCh <- &wellKnownDomainsData{
+			m:            wkd.m,
+			startTime:    startTime,
+			rotationTime: rotationTime,
+			dawgFinder:   wkd.dawgFinder,
+		}
+		wkd.m = map[int]*histogramData{}
+	}
+
 collectorLoop:
 	for {
 		select {
 		case sd := <-edm.sessionCollectorCh:
-			sessions = append(sessions, sd)
-			sessionUpdated = true
+			processSession(sd)
 
 		case wu := <-wkd.updateCh:
-			// It is possible an update sitting in the queue has
-			// been created with an outdated dawgModTime due to a
-			// call to rotateTracker(). If this is the case we need
-			// to do a new lookup against the new dawg to make sure
-			// we have the correct index number (or if it is even
-			// present in the new dawg).
-			if wu.dawgModTime != wkd.dawgModTime {
-				if !retryChannelClosed {
-					wkd.retryCh <- wu
-				} else {
-					edm.log.Info("discarding retry of wkd update because we are shutting down")
-				}
-				continue
-			}
-
-			if _, exists := wkd.m[wu.dawgIndex]; !exists {
-				wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
-			}
-
-			wkd.m[wu.dawgIndex].OKCount += wu.OKCount
-			wkd.m[wu.dawgIndex].NXCount += wu.NXCount
-			wkd.m[wu.dawgIndex].FailCount += wu.FailCount
-			wkd.m[wu.dawgIndex].ACount += wu.ACount
-			wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
-			wkd.m[wu.dawgIndex].MXCount += wu.MXCount
-			wkd.m[wu.dawgIndex].NSCount += wu.NSCount
-			wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
-			wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
-			wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
-
-			if wu.ip.IsValid() {
-				if wu.ip.Unmap().Is4() {
-					wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
-				} else {
-					wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
-				}
-			}
+			processWKDUpdate(wu)
 
 		case ts := <-ticker.C:
 			// We want to tick at the start of each minute
 			ticker.Reset(timeUntilNextMinute())
 
-			if sessionUpdated {
-				ps := &prevSessions{
-					sessions:     sessions,
-					rotationTime: ts,
-				}
+			flushSessions(sessionIntervalStart, ts)
+			sessionIntervalStart = ts
 
-				sessions = []*sessionData{}
-
-				// We have reset the sessions slice
-				sessionUpdated = false
-
-				edm.sessionWriterCh <- ps
-			}
-
-			prevWKD, err := wkd.rotateTracker(edm, dawgFile, ts)
+			prevWKD, err := wkd.rotateTracker(edm, dawgFile, histogramIntervalStart, ts)
 			if err != nil {
 				edm.log.Error("unable to rotate histogram map", "error", err)
 				continue
@@ -2992,6 +3043,7 @@ collectorLoop:
 			if len(prevWKD.m) > 0 {
 				edm.histogramWriterCh <- prevWKD
 			}
+			histogramIntervalStart = ts
 
 			// See if we need to modify anything based on a config update
 			conf = edm.getConfig()
@@ -3010,8 +3062,13 @@ collectorLoop:
 			// read from it again in this select statement now that
 			// it is closed.
 			wkd.stop = nil
+
 		case <-wkd.retryerDone:
 			edm.log.Info("dataCollector: update retryer is done")
+			drainCollectorQueues()
+			shutdownTime := time.Now().UTC()
+			flushSessions(sessionIntervalStart, shutdownTime)
+			flushHistogram(histogramIntervalStart, shutdownTime)
 			break collectorLoop
 		}
 	}
