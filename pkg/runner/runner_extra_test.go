@@ -2222,7 +2222,7 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 		if err := os.WriteFile(oldFile, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		oldTime := time.Now().Add(-13 * time.Hour)
+		oldTime := time.Now().Add(-25 * time.Hour)
 		if err := os.Chtimes(oldFile, oldTime, oldTime); err != nil {
 			t.Fatal(err)
 		}
