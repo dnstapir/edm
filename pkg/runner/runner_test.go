@@ -215,6 +215,23 @@ func TestWKD(t *testing.T) {
 	}
 }
 
+func TestTimestampsFromFilenameRejectsMalformedNames(t *testing.T) {
+	tests := []string{
+		"dns_histogram.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z.parquet",
+		"dns_histogram-bad_2026-04-30T12-01-00Z.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z_bad.parquet",
+	}
+
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := timestampsFromFilename(name); err == nil {
+				t.Fatal("timestampsFromFilename returned nil error")
+			}
+		})
+	}
+}
+
 func TestIgnoredClientIPsValid(t *testing.T) {
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
