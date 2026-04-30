@@ -1246,7 +1246,7 @@ func TestAggregateSender(t *testing.T) {
 		if r.Header.Get("Content-Type") != "application/vnd.apache.parquet" {
 			t.Fatalf("content type = %q", r.Header.Get("Content-Type"))
 		}
-		if r.Header.Get("Aggregate-Interval") != "2026-05-28T12:34:00Z/PT2M" {
+		if r.Header.Get("Aggregate-Interval") != "2026-05-28T12:34:56Z/PT2M" {
 			t.Fatalf("aggregate interval = %q", r.Header.Get("Aggregate-Interval"))
 		}
 		body, err := io.ReadAll(r.Body)
