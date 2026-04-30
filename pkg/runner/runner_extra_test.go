@@ -763,7 +763,8 @@ func TestParsePacketAddressFormattingBranches(t *testing.T) {
 // TestNewSessionBranches covers newSession arms that
 // TestSessionParquetAndSessionConstruction (basic INET/INET6 happy paths)
 // does not reach: port overflow, ipBytesToInt error from bad address
-// bytes, ip6BytesToInt error from bad address bytes, and the unknown
+// bytes, ipBytesToInt error from IPv6 bytes carried on an INET family,
+// ip6BytesToInt error from bad address bytes, and the unknown
 // SocketFamily default arm.
 func TestNewSessionBranches(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
@@ -795,6 +796,20 @@ func TestNewSessionBranches(t *testing.T) {
 		}
 		if sd.DestIPv4 != nil {
 			t.Fatalf("DestIPv4 should be nil for bad addr bytes, got %v", *sd.DestIPv4)
+		}
+	})
+
+	t.Run("mismatched IPv6 address bytes with INET family leaves IPv4 nil", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::20").AsSlice()
+		dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.SourceIPv4 != nil {
+			t.Fatalf("SourceIPv4 should be nil for IPv6 bytes with INET family, got %d", *sd.SourceIPv4)
+		}
+		if sd.DestIPv4 != nil {
+			t.Fatalf("DestIPv4 should be nil for IPv6 bytes with INET family, got %d", *sd.DestIPv4)
 		}
 	})
 
