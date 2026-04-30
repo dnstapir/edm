@@ -935,15 +935,15 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 		t.Fatal("timed out waiting for update")
 	}
 
-	prev, err := wkd.rotateTracker(edm, path, time.Unix(60, 0))
+	prev, err := wkd.rotateTracker(edm, path, time.Unix(0, 0), time.Unix(60, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !prev.rotationTime.Equal(time.Unix(60, 0)) || len(wkd.m) != 0 {
+	if !prev.startTime.Equal(time.Unix(0, 0)) || !prev.rotationTime.Equal(time.Unix(60, 0)) || len(wkd.m) != 0 {
 		t.Fatalf("unexpected rotation state: %#v", prev)
 	}
 
-	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Now()); err == nil {
+	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err == nil {
 		t.Fatal("rotateTracker with missing file succeeded")
 	}
 }
