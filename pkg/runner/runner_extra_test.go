@@ -888,10 +888,10 @@ func TestQnameSeen(t *testing.T) {
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("Example.COM.", dns.TypeA)
-	if edm.qnameSeen(msg, cache, db, defaultTC.config) {
+	if edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
 		t.Fatal("first qnameSeen call returned true")
 	}
-	if !edm.qnameSeen(msg, cache, db, defaultTC.config) {
+	if !edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
 		t.Fatal("second qnameSeen call returned false")
 	}
 
@@ -899,13 +899,13 @@ func TestQnameSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !edm.qnameSeen(msg, cache, db, defaultTC.config) {
+	if !edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
 		t.Fatal("qnameSeen did not find qname in pebble")
 	}
 
 	other := new(dns.Msg)
 	other.SetQuestion("other.example.", dns.TypeA)
-	_ = edm.qnameSeen(other, cache, db, defaultTC.config)
+	_ = edm.qnameSeen(other, cache, db, seenQnameWriteOptions(defaultTC.config))
 }
 
 func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
@@ -1151,7 +1151,7 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 
 	first := new(dns.Msg)
 	first.SetQuestion("a.example.", dns.TypeA)
-	if edm.qnameSeen(first, cache, db, defaultTC.config) {
+	if edm.qnameSeen(first, cache, db, seenQnameWriteOptions(defaultTC.config)) {
 		t.Fatal("first qname unexpectedly already-seen")
 	}
 
@@ -1159,7 +1159,7 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 	second.SetQuestion("b.example.", dns.TypeA)
 	// Adding the second distinct qname evicts the first from the LRU,
 	// exercising the evicted/promSeenQnameLRUEvicted.Inc() arm.
-	_ = edm.qnameSeen(second, cache, db, defaultTC.config)
+	_ = edm.qnameSeen(second, cache, db, seenQnameWriteOptions(defaultTC.config))
 	if cache.Len() != 1 {
 		t.Fatalf("cache len = %d, want 1 after eviction", cache.Len())
 	}
@@ -2573,6 +2573,9 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	wg.Add(1)
 	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
 	edm.inputChannel <- []byte("not protobuf")
+	// Malformed frames are skipped, not fatal, so stop the minimiser
+	// explicitly to unblock the goroutine.
+	edm.stop()
 	wg.Wait()
 
 	edm = newTestDnstapMinimiser(t, defaultTC)

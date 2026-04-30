@@ -12,6 +12,7 @@ import (
 	"github.com/dnstapir/edm/pkg/protocols"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -44,11 +45,11 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for range goroutines {
 		go func() {
 			defer wg.Done()
 			<-start
-			results <- edm.qnameSeen(msg, seenQnameLRU, pdb, defaultTC.config)
+			results <- edm.qnameSeen(msg, seenQnameLRU, pdb, seenQnameWriteOptions(defaultTC.config))
 		}()
 	}
 
@@ -72,14 +73,16 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 // is cancelled.
 //
 // sessionCollectorCh is pre-filled to capacity so the session send blocks, and
-// newQnamePublisherCh is left unbuffered so receiving the new_qname event
-// proves runMinimiser has reached the session send. With the send guarded by a
-// select on edm.ctx.Done, cancelling the context lets runMinimiser exit; an
-// unconditional send would deadlock and waitOrFail would time out.
+// newQnamePublisherCh is buffered (cap 1) so runMinimiser's non-blocking
+// publisher send lands in the buffer instead of being dropped by its default
+// case; receiving that event proves runMinimiser is past the publisher send and
+// into the (blocked) session send. With the send guarded by a select on
+// edm.ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
+// send would deadlock and waitOrFail would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
+	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 	edm.sessionCollectorCh = make(chan *sessionData, 1)
 	edm.sessionCollectorCh <- &sessionData{}
 
@@ -142,6 +145,20 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("valid frame after malformed input was not processed")
+	}
+
+	// Exactly one parse error is counted: only the missing-Message frame both
+	// unmarshals and reaches a parse-error guard. The non-protobuf frame and
+	// the missing-Type frame fail proto.Unmarshal first (dnstap is proto2, so a
+	// Message without its required Type is rejected on unmarshal) and are
+	// skipped without counting. The valid frame is processed after all three,
+	// so by the time it reaches wkdTracker the counter has settled.
+	var m dto.Metric
+	if err := edm.promDNSParseError.Write(&m); err != nil {
+		t.Fatalf("write promDNSParseError: %s", err)
+	}
+	if got := m.GetCounter().GetValue(); got != 1 {
+		t.Fatalf("promDNSParseError = %v, want 1", got)
 	}
 }
 

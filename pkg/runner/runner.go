@@ -1552,7 +1552,7 @@ type dnstapMinimiser struct {
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
-	seenQnameLocks                [seenQnameLockShards]sync.Mutex
+	seenQnameMutex                sync.Mutex
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -1918,32 +1918,17 @@ func seenQnameWriteOptions(conf config) *pebble.WriteOptions {
 	return pebble.NoSync
 }
 
-// seenQnameLockShards is the number of mutexes sharding qnameSeen by qname.
+// qnameSeen reports whether qname has been seen since startup, recording it (in
+// the in-memory LRU and in pebble) on first sight. writeOpts is the pebble write
+// option for the insert (see [seenQnameWriteOptions]); the caller derives it
+// once per config rather than passing the whole config down this hot path.
 //
-// It bounds [dnstapMinimiser.seenQnameLocks] and the modulus in
-// [seenQnameLockIndex], so both stay in sync.
-const seenQnameLockShards = 256
-
-// seenQnameLockIndex maps qname to a shard in [dnstapMinimiser.seenQnameLocks].
-//
-// It hashes qname with FNV-1a and reduces the result modulo
-// [seenQnameLockShards], so the returned index is always a valid offset into
-// the lock array.
-func seenQnameLockIndex(qname string) int {
-	var h uint32 = 2166136261
-	for i := 0; i < len(qname); i++ {
-		h ^= uint32(qname[i])
-		h *= 16777619
-	}
-	return int(h % seenQnameLockShards)
-}
-
-// Check if we have already seen this qname since we started.
-func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, conf config) bool {
+// The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
+// workers report any given qname as new at most once.
+func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, writeOpts *pebble.WriteOptions) bool {
 	qname := strings.ToLower(msg.Question[0].Name)
-	seenLock := &edm.seenQnameLocks[seenQnameLockIndex(qname)]
-	seenLock.Lock()
-	defer seenLock.Unlock()
+	edm.seenQnameMutex.Lock()
+	defer edm.seenQnameMutex.Unlock()
 
 	_, ok := seenQnameLRU.Get(qname)
 	if ok {
@@ -1968,7 +1953,7 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	// If the key does not exist in pebble we insert it
 	if errors.Is(err, pebble.ErrNotFound) {
-		if err := pdb.Set([]byte(qname), []byte{}, seenQnameWriteOptions(conf)); err != nil {
+		if err := pdb.Set([]byte(qname), []byte{}, writeOpts); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
@@ -2046,6 +2031,9 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
 	// conf is meant to be dynamically modified if the config changes at runtime
 	conf := edm.getConfig()
+	// Derived from conf once here (and re-derived on reload below) so the
+	// qnameSeen hot path takes a pointer instead of copying the whole config.
+	writeOpts := seenQnameWriteOptions(conf)
 
 minimiserLoop:
 	for {
@@ -2053,8 +2041,18 @@ minimiserLoop:
 		case frame := <-edm.inputChannel:
 			edm.promDnstapProcessed.Inc()
 			if err := proto.Unmarshal(frame, dt); err != nil {
-				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, returning", "error", err, "minimiser_id", minimiserID)
-				break minimiserLoop
+				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, skipping frame", "error", err, "minimiser_id", minimiserID)
+				continue
+			}
+			// Guard the hot-path dereferences (here and below: QueryAddress,
+			// clientIPIsIgnored) so a partially populated frame is dropped
+			// rather than panicking before parsePacket's own nil checks. A
+			// Message present but missing its required Type is already rejected
+			// by proto.Unmarshal above; the Type check here is belt-and-braces.
+			if dt.Message == nil || dt.Message.Type == nil {
+				edm.log.Error("dnstapMinimiser.runMinimiser: dnstap message or type missing, skipping frame", "minimiser_id", minimiserID)
+				edm.promDNSParseError.Inc()
+				continue
 			}
 
 			// Keep in mind that this outputs the unmodified dnstap
@@ -2069,15 +2067,6 @@ minimiserLoop:
 						edm.log.Error("unable to write to dnstap debug file", "error", err, "filename", debugDnstapFile.Name(), "minimiser_id", minimiserID)
 					}
 				}
-			}
-
-			// Guard the hot-path dereferences (here and below: QueryAddress,
-			// clientIPIsIgnored) so a partially populated frame is dropped
-			// rather than panicking before parsePacket's own nil checks.
-			if dt.Message == nil || dt.Message.Type == nil {
-				edm.log.Error("runMinimiser: dnstap message or type missing, dropping packet", "minimiser_id", minimiserID)
-				edm.promDNSParseError.Inc()
-				continue
 			}
 
 			isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
@@ -2145,7 +2134,7 @@ minimiserLoop:
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, pdb, conf) {
+			if !edm.qnameSeen(msg, seenQnameLRU, pdb, writeOpts) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
@@ -2178,6 +2167,7 @@ minimiserLoop:
 			}
 
 			conf = newConf
+			writeOpts = seenQnameWriteOptions(conf)
 		case <-edm.ctx.Done():
 			break minimiserLoop
 		}
