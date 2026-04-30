@@ -26,6 +26,7 @@ type aggregateSender struct {
 	aggrecURL         *url.URL
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
+	httpTransport     *http.Transport
 }
 
 func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) {
@@ -37,20 +38,21 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 	}
 
 	// Create HTTP handler for sending aggregate files to aggrec
-	httpClient := http.Client{
-		Transport: &http.Transport{
-			Dial: (&net.Dialer{
-				Timeout:   30 * time.Second,
-				KeepAlive: 30 * time.Second,
-			}).Dial,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: 10 * time.Second,
-			TLSClientConfig: &tls.Config{
-				RootCAs:              caCertPool,
-				GetClientCertificate: edm.httpClientCertStore.getClientCertificate,
-				MinVersion:           tls.VersionTLS13,
-			},
+	httpTransport := &http.Transport{
+		Dial: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).Dial,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			RootCAs:              caCertPool,
+			GetClientCertificate: edm.httpClientCertStore.getClientCertificate,
+			MinVersion:           tls.VersionTLS13,
 		},
+	}
+	httpClient := http.Client{
+		Transport: httpTransport,
 	}
 
 	edm.log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
@@ -70,6 +72,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 		aggrecURL:         aggrecURL,
 		caCertPool:        caCertPool,
 		signingHTTPClient: client,
+		httpTransport:     httpTransport,
 	}, nil
 }
 
