@@ -90,6 +90,7 @@ type config struct {
 	MQTTServer                    string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
 	MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
 	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
+	MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
 	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
 	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries" reload:"true"`
 	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
@@ -710,9 +711,12 @@ func (edm *dnstapMinimiser) setupMQTT() {
 		os.Exit(1)
 	}
 
-	// Connect to the broker - this will return immediately after initiating the connection process
-	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(autopahoCm, mqttJWK, mqttFileQueue != nil)
+	// Connect to the broker - this will return immediately after initiating the connection process.
+	signWorkers := conf.MQTTSignWorkers
+	if signWorkers <= 0 {
+		signWorkers = runtime.GOMAXPROCS(0)
+	}
+	edm.startMQTTPipeline(autopahoCm, mqttJWK, mqttFileQueue != nil, signWorkers)
 }
 
 func (edm *dnstapMinimiser) loadHTTPClientCert() error {
@@ -1455,6 +1459,7 @@ type dnstapMinimiser struct {
 	aggregSenderMutex             sync.RWMutex
 	aggregSender                  aggregateSender
 	mqttPubCh                     chan []byte
+	mqttSignedCh                  chan []byte
 	autopahoCtx                   context.Context
 	autopahoCancel                context.CancelFunc
 	autopahoWg                    sync.WaitGroup
@@ -1604,8 +1609,11 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	edm.httpClientCertStore = newCertStore()
 	edm.mqttClientCertStore = newCertStore()
 
-	// Setup channel for reading messages to publish
-	edm.mqttPubCh = make(chan []byte, 100)
+	// Setup channels for the MQTT publish pipeline. mqttPubCh holds
+	// unsigned events from minimisers; mqttSignedCh holds signed
+	// envelopes ready for paho to publish.
+	edm.mqttPubCh = make(chan []byte, 1024)
+	edm.mqttSignedCh = make(chan []byte, 1024)
 
 	// Setup channels for feeding writers and data senders that should do
 	// their work outside the main minimiser loop. They are buffered to
