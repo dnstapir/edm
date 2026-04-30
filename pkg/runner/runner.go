@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -99,7 +100,7 @@ type config struct {
 	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
 	MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
 	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries" reload:"true"`
+	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
 	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
 	HTTPCAFile                    string `mapstructure:"http-ca-file"`
 	HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
@@ -443,14 +444,15 @@ func getCryptopanAESKey(key string, salt string) []byte {
 }
 
 func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error {
-	var cpnCache *lru.Cache[netip.Addr, netip.Addr]
-	var err error
-
-	if cacheEntries != 0 {
-		cpnCache, err = lru.New[netip.Addr, netip.Addr](cacheEntries)
-		if err != nil {
-			return fmt.Errorf("setCryptopan: unable to create cache: %w", err)
-		}
+	// cacheEntries is the per-worker LRU size, validated here so a bad config
+	// value surfaces at load time instead of crashing a worker when it builds
+	// its LRU. The caches themselves are owned by each minimiser worker (see
+	// runMinimiser) and are sized once at worker start; setCryptopan only
+	// installs the cryptopan instance and signals workers to purge their caches
+	// on the next call. Changing cryptopan-address-entries therefore takes
+	// effect only on restart, which is why that field is not reloadable.
+	if cacheEntries < 0 {
+		return fmt.Errorf("setCryptopan: invalid cache size %d", cacheEntries)
 	}
 
 	cpn, err := createCryptopan(key, salt)
@@ -458,10 +460,8 @@ func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
 		return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
 	}
 
-	edm.cryptopanMutex.Lock()
-	edm.cryptopan = cpn
-	edm.cryptopanCache = cpnCache
-	edm.cryptopanMutex.Unlock()
+	edm.cryptopan.Store(cpn)
+	edm.cryptopanGen.Add(1)
 
 	return nil
 }
@@ -524,8 +524,7 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 		}
 
 		if oldConf.CryptopanKey != conf.CryptopanKey ||
-			oldConf.CryptopanKeySalt != conf.CryptopanKeySalt ||
-			oldConf.CryptopanAddressEntries != conf.CryptopanAddressEntries {
+			oldConf.CryptopanKeySalt != conf.CryptopanKeySalt {
 			edm.log.Info("configUpdater: updating Crypto-PAn instance")
 			err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
 			if err != nil {
@@ -822,15 +821,7 @@ func (edm *dnstapMinimiser) setIgnoredQuestionNames() error {
 	conf := edm.getConfig()
 
 	if conf.IgnoredQuestionNamesFile == "" {
-		edm.ignoredQuestionsMutex.Lock()
-		if edm.ignoredQuestions != nil {
-			err := edm.ignoredQuestions.Close()
-			if err != nil {
-				edm.log.Error("setIgnoredQuestionNames: failed closing edm.ignoredQuestions for unset filename", "error", err)
-			}
-			edm.ignoredQuestions = nil
-		}
-		edm.ignoredQuestionsMutex.Unlock()
+		edm.ignoredQuestions.Store(nil)
 		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list unset", "filename", conf.IgnoredQuestionNamesFile, "num_names", 0)
 		return nil
 	}
@@ -839,38 +830,23 @@ func (edm *dnstapMinimiser) setIgnoredQuestionNames() error {
 	if err != nil {
 		if errors.Is(err, errEmptyDawgFile) {
 			// Treat the same as unset filename
-			edm.ignoredQuestionsMutex.Lock()
-			if edm.ignoredQuestions != nil {
-				err := edm.ignoredQuestions.Close()
-				if err != nil {
-					edm.log.Error("setIgnoredQuestionNames: failed closing edm.ignoredQuestions for unset filename", "error", err)
-				}
-				edm.ignoredQuestions = nil
-			}
-			edm.ignoredQuestionsMutex.Unlock()
+			edm.ignoredQuestions.Store(nil)
 			edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty", "filename", conf.IgnoredQuestionNamesFile, "num_names", 0)
 			return nil
-
 		}
 		return fmt.Errorf("setIgnoredQuestionNames: unable to load dawg file '%s': %w", conf.IgnoredQuestionNamesFile, err)
 	}
 
-	// We only use the dawg file if there exists at least one name
-	// in it. Since the file can be empty we must also be prepared to set
-	// our edm field to nil so we do not keep using an old list.
-	edm.ignoredQuestionsMutex.Lock()
-	if edm.ignoredQuestions != nil {
-		err = edm.ignoredQuestions.Close()
-		if err != nil {
-			edm.log.Error("setIgnoredQuestionNames: failed closing edm.ignoredQuestions", "error", err)
-		}
-	}
+	// We only use the dawg file if there exists at least one name in it.
+	// Atomic-pointer swap; deliberately do NOT Close the old finder here
+	// as that would race with hot-path readers still holding it. Reloads
+	// leave the old finder for the GC to reclaim once no reader references
+	// it (see the ignoredQuestions field comment on dnstapMinimiser).
 	if dawgFinder.NumAdded() > 0 {
-		edm.ignoredQuestions = dawgFinder
+		edm.ignoredQuestions.Store(&dawgFinderHolder{finder: dawgFinder})
 	} else {
-		edm.ignoredQuestions = nil
+		edm.ignoredQuestions.Store(nil)
 	}
-	edm.ignoredQuestionsMutex.Unlock()
 
 	if dawgFinder.NumAdded() > 0 {
 		edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
@@ -885,10 +861,8 @@ func (edm *dnstapMinimiser) setIgnoredClientIPs() error {
 	conf := edm.getConfig()
 
 	if conf.IgnoredClientIPsFile == "" {
-		edm.ignoredClientsIPSetMutex.Lock()
-		edm.ignoredClientsIPSet = nil
-		edm.ignoredClientCIDRsParsed = 0
-		edm.ignoredClientsIPSetMutex.Unlock()
+		edm.ignoredClientsIPSet.Store(nil)
+		edm.ignoredClientCIDRsParsed.Store(0)
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list unset", "filename", conf.IgnoredClientIPsFile, "num_cidrs", 0)
 		return nil
 	}
@@ -934,10 +908,8 @@ func (edm *dnstapMinimiser) setIgnoredClientIPs() error {
 		}
 	}
 
-	edm.ignoredClientsIPSetMutex.Lock()
-	edm.ignoredClientsIPSet = ipset
-	edm.ignoredClientCIDRsParsed = numCIDRs
-	edm.ignoredClientsIPSetMutex.Unlock()
+	edm.ignoredClientsIPSet.Store(ipset)
+	edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
 	if ipset != nil {
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
@@ -949,10 +921,7 @@ func (edm *dnstapMinimiser) setIgnoredClientIPs() error {
 }
 
 func (edm *dnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
-	edm.ignoredClientsIPSetMutex.RLock()
-	defer edm.ignoredClientsIPSetMutex.RUnlock()
-
-	return edm.ignoredClientCIDRsParsed
+	return edm.ignoredClientCIDRsParsed.Load()
 }
 
 func (edm *dnstapMinimiser) fsEventWatcher() {
@@ -1502,48 +1471,59 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 }
 
 type dnstapMinimiser struct {
-	configer                      edmConfiger
-	conf                          config
-	confMutex                     sync.RWMutex
-	inputChannel                  chan []byte          // the channel expected to be passed to dnstap ReadInto()
-	log                           *slog.Logger         // any information logging is sent here
-	cryptopan                     *cryptopan.Cryptopan // used for pseudonymising IP addresses
-	cryptopanCache                *lru.Cache[netip.Addr, netip.Addr]
-	cryptopanMutex                sync.RWMutex // Mutex for protecting updates cryptopan at runtime
-	promReg                       *prometheus.Registry
-	promCryptopanCacheHit         prometheus.Counter
-	promCryptopanCacheEvicted     prometheus.Counter
-	promDnstapProcessed           prometheus.Counter
-	promNewQnameQueued            prometheus.Counter
-	promNewQnameDiscarded         prometheus.Counter
-	promSeenQnameLRUEvicted       prometheus.Counter
-	promNewQnameChannelLen        prometheus.Gauge
-	promClientIPIgnored           prometheus.Counter
-	promClientIPIgnoredError      prometheus.Counter
-	promQuestionNameIgnored       prometheus.Counter
-	promDNSParseError             prometheus.Counter
-	promEmptyQuestionSection      prometheus.Counter
-	promInvalidQuestionName       prometheus.Counter
-	ctx                           context.Context
-	stop                          context.CancelFunc // call this to gracefully stop runMinimiser()
-	debug                         bool               // if we should print debug messages during operation
-	sessionWriterCh               chan *prevSessions
-	histogramWriterCh             chan *wellKnownDomainsData
-	parquetRotationRequestCh      chan parquetRotationRequest
-	newQnamePublisherCh           chan *protocols.NewQnameJSON
-	sessionCollectorCh            chan *sessionData
-	aggregSenderMutex             sync.RWMutex
-	aggregSender                  aggregateSender
-	mqttPubCh                     chan []byte
-	mqttSignedCh                  chan []byte
-	autopahoCtx                   context.Context
-	autopahoCancel                context.CancelFunc
-	autopahoWg                    sync.WaitGroup
-	ignoredClientsIPSet           *netipx.IPSet
-	ignoredClientCIDRsParsed      uint64
-	ignoredClientsIPSetMutex      sync.RWMutex // Mutex for protecting updates to ignored client IPs at runtime
-	ignoredQuestions              dawg.Finder
-	ignoredQuestionsMutex         sync.RWMutex
+	configer     edmConfiger
+	conf         config
+	confMutex    sync.RWMutex
+	inputChannel chan []byte  // the channel expected to be passed to dnstap ReadInto()
+	log          *slog.Logger // any information logging is sent here
+
+	// Cryptopan instance is held in an atomic.Pointer so the hot path
+	// reads it without locking. setCryptopan swaps the pointer and
+	// bumps cryptopanGen; per-worker caches compare their last-seen
+	// generation against this and Purge when it changes.
+	cryptopan                 atomic.Pointer[cryptopan.Cryptopan]
+	cryptopanGen              atomic.Uint64
+	promReg                   *prometheus.Registry
+	promCryptopanCacheHit     prometheus.Counter
+	promCryptopanCacheEvicted prometheus.Counter
+	promDnstapProcessed       prometheus.Counter
+	promNewQnameQueued        prometheus.Counter
+	promNewQnameDiscarded     prometheus.Counter
+	promSeenQnameLRUEvicted   prometheus.Counter
+	promNewQnameChannelLen    prometheus.Gauge
+	promClientIPIgnored       prometheus.Counter
+	promClientIPIgnoredError  prometheus.Counter
+	promQuestionNameIgnored   prometheus.Counter
+	promDNSParseError         prometheus.Counter
+	promEmptyQuestionSection  prometheus.Counter
+	promInvalidQuestionName   prometheus.Counter
+	ctx                       context.Context
+	stop                      context.CancelFunc // call this to gracefully stop runMinimiser()
+	debug                     bool               // if we should print debug messages during operation
+	sessionWriterCh           chan *prevSessions
+	histogramWriterCh         chan *wellKnownDomainsData
+	parquetRotationRequestCh  chan parquetRotationRequest
+	newQnamePublisherCh       chan *protocols.NewQnameJSON
+	sessionCollectorCh        chan *sessionData
+	aggregSenderMutex         sync.RWMutex
+	aggregSender              aggregateSender
+	mqttPubCh                 chan []byte
+	mqttSignedCh              chan []byte
+	autopahoCtx               context.Context
+	autopahoCancel            context.CancelFunc
+	autopahoWg                sync.WaitGroup
+	// Hot-path lookups (clientIPIsIgnored, questionIsIgnored) read these
+	// without locking. Reload writers atomic.Store a fresh value and leave the
+	// old value for the GC to reclaim. For ignoredQuestions the dawgFinderHolder
+	// wrapper is needed because dawg.Finder is an interface and atomic.Pointer
+	// wants a concrete type; its old finder is deliberately NOT Close()d on
+	// swap, since Close() (munmap) would race with hot-path readers still
+	// holding the old pointer. Reloads are rare and the mmap is small, so that
+	// bounded leak is acceptable. ignoredClientsIPSet is plain heap memory with
+	// no Close, reclaimed by the GC like any other dropped pointer.
+	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
+	ignoredClientCIDRsParsed      atomic.Uint64
+	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
 	fsWatcher                     *fsnotify.Watcher
 	fsWatcherFuncs                map[string][]func() error
 	fsWatcherMutex                sync.RWMutex
@@ -1706,38 +1686,60 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	return edm, nil
 }
 
-type wellKnownDomainsTracker struct {
-	mutex sync.RWMutex
-	wellKnownDomainsData
-	updateCh    chan wkdUpdate
+// dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is
+// an interface) can be stored in an atomic.Pointer. Used for the
+// ignoredQuestions atomic snapshot.
+type dawgFinderHolder struct {
+	finder dawg.Finder
+}
+
+// wkdSnapshot is the read-side view that hot-path callers need: the current
+// DAWG finder plus the modtime that goes into wkdUpdate so the collector can
+// detect post-rotation refresh. Stored in wellKnownDomainsTracker.snap as
+// an atomic.Pointer so lookup() reads it without locking.
+type wkdSnapshot struct {
+	dawgFinder  dawg.Finder
 	dawgModTime time.Time
+}
+
+type wellKnownDomainsTracker struct {
+	// snap holds the current DAWG + modtime. Replaced atomically when
+	// the dawg file rotates; readers in lookup() do a single Load.
+	snap atomic.Pointer[wkdSnapshot]
+
+	// m is the per-dawgIndex histogram aggregator. It is read & written
+	// only by dataCollector (the same goroutine that calls
+	// rotateTracker), so it needs no lock.
+	m map[int]*histogramData
+
+	updateCh    chan wkdUpdate
 	retryCh     chan wkdUpdate
 	stop        chan struct{}
 	retryerDone chan struct{}
 }
 
+// wellKnownDomainsData is a per-interval histogram batch handed to the
+// histogram writer. m is the interval's bucket map and dawgFinder is the DAWG
+// used to map bucket indices back to names. It is produced by rotateTracker
+// on normal rotation and by the shutdown flush in dataCollector; in both cases
+// dawgFinder is the snapshot finder that was active for the data in m.
 type wellKnownDomainsData struct {
-	// Store a pointer to histogramData so we can assign to it without
-	// "cannot assign to struct field in map" issues
-	m             map[int]*histogramData
-	startTime     time.Time
-	rotationTime  time.Time
-	dawgFinder    dawg.Finder
-	dawgIsRotated bool
+	m            map[int]*histogramData
+	startTime    time.Time
+	rotationTime time.Time
+	dawgFinder   dawg.Finder
 }
 
 func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) {
-	return &wellKnownDomainsTracker{
-		wellKnownDomainsData: wellKnownDomainsData{
-			m:          map[int]*histogramData{},
-			dawgFinder: dawgFinder,
-		},
+	wkd := &wellKnownDomainsTracker{
+		m:           map[int]*histogramData{},
 		updateCh:    make(chan wkdUpdate, 10000),
 		retryCh:     make(chan wkdUpdate, 10000),
-		dawgModTime: dawgModTime,
 		stop:        make(chan struct{}),
 		retryerDone: make(chan struct{}),
-	}, nil
+	}
+	wkd.snap.Store(&wkdSnapshot{dawgFinder: dawgFinder, dawgModTime: dawgModTime})
+	return wkd, nil
 }
 
 // Try to find a domain name string match in DAWG data and return the index as
@@ -1779,12 +1781,9 @@ type wkdUpdate struct {
 }
 
 func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) {
-	wkd.mutex.RLock()
-	defer wkd.mutex.RUnlock()
-
-	dawgIndex, suffixMatch := getDawgIndex(wkd.dawgFinder, msg.Question[0].Name)
-
-	return dawgIndex, suffixMatch, wkd.dawgModTime
+	snap := wkd.snap.Load()
+	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
+	return dawgIndex, suffixMatch, snap.dawgModTime
 }
 
 func (wkd *wellKnownDomainsTracker) updateRetryer(edm *dnstapMinimiser, wg *sync.WaitGroup) {
@@ -1799,7 +1798,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *dnstapMinimiser, wg *sync
 
 		dawgIndex, suffixMatch, dawgModTime := wkd.lookup(wu.msg)
 		if dawgIndex == dawgNotFound {
-			edm.log.Info("ignoring wkd update because name does not exist in updated wkd tracker", "update_dawg_modtime", wkd.dawgModTime, "wkd_dawg_modtime", wkd.dawgModTime)
+			edm.log.Info("ignoring wkd update because name does not exist in updated wkd tracker", "update_dawg_modtime", wu.dawgModTime, "wkd_dawg_modtime", dawgModTime)
 			continue
 		}
 
@@ -1880,30 +1879,33 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 		return nil, fmt.Errorf("rotateTracker: unable to stat dawgFile '%s': %w", dawgFile, err)
 	}
 
-	if fileInfo.ModTime() != wkd.dawgModTime {
+	curSnap := wkd.snap.Load()
+	if fileInfo.ModTime() != curSnap.dawgModTime {
 		dawgFinder, dawgModTime, err = loadDawgFile(dawgFile)
 		if err != nil {
 			return nil, fmt.Errorf("rotateTracker: loadDawgFile(): %w", err)
 		}
 		dawgFileChanged = true
-		edm.log.Info("dawg file modification changed, will reload file", "prev_time", wkd.dawgModTime, "cur_time", fileInfo.ModTime())
+		edm.log.Info("dawg file modification changed, will reload file", "prev_time", curSnap.dawgModTime, "cur_time", fileInfo.ModTime())
 	}
 
-	prevWKD := &wellKnownDomainsData{}
-
-	// Swap the map in use so we can write parquet data outside of the write lock
-	wkd.mutex.Lock()
-	prevWKD.m = wkd.m
-	prevWKD.dawgFinder = wkd.dawgFinder
-	prevWKD.startTime = startTime
-	prevWKD.rotationTime = rotationTime
+	// rotateTracker runs in the dataCollector goroutine, which is also
+	// the only writer of wkd.m (see the case wu := <-wkd.updateCh branch).
+	// No lock needed for the map swap. The DAWG snapshot is a separate
+	// atomic Store so hot-path lookup() callers see a consistent view.
+	prevWKD := &wellKnownDomainsData{
+		m:            wkd.m,
+		dawgFinder:   curSnap.dawgFinder,
+		startTime:    startTime,
+		rotationTime: rotationTime,
+	}
 	wkd.m = map[int]*histogramData{}
 	if dawgFileChanged {
-		wkd.dawgFinder = dawgFinder
-		wkd.dawgModTime = dawgModTime
-		prevWKD.dawgIsRotated = true
+		wkd.snap.Store(&wkdSnapshot{
+			dawgFinder:  dawgFinder,
+			dawgModTime: dawgModTime,
+		})
 	}
-	wkd.mutex.Unlock()
 
 	return prevWKD, nil
 }
@@ -1956,49 +1958,44 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 }
 
 func (edm *dnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
-	// edm.ignoredClientsIPSet can be modified at runtime so wrap everything
-	// in a RO lock
-	edm.ignoredClientsIPSetMutex.RLock()
-	defer edm.ignoredClientsIPSetMutex.RUnlock()
-
-	if edm.ignoredClientsIPSet != nil {
-		clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
-		if !ok {
-			// If we have a list of clients to
-			// ignore but are not able to
-			// understand the QueryAddress lets err
-			// on the side of caution and ignore
-			// such packets as well while making
-			// noise in logs so it can be investigated
-			edm.log.Error("unable to parse QueryAddress for ignore-checking, ignoring dnstap packet to be safe, please investigate")
-			edm.promClientIPIgnoredError.Inc()
-			return true
-		}
-
-		if edm.ignoredClientsIPSet.Contains(clientIP) {
-			edm.promClientIPIgnored.Inc()
-			return true
-		}
+	// Atomic snapshot - no lock on the hot path. Reload writers
+	// atomic.Store the new IPSet; readers see either old or new value
+	// per Load.
+	ipset := edm.ignoredClientsIPSet.Load()
+	if ipset == nil {
+		return false
+	}
+	clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+	if !ok {
+		// If we have a list of clients to ignore but are not able to
+		// understand the QueryAddress let's err on the side of caution
+		// and ignore such packets as well while making noise in logs
+		// so it can be investigated.
+		edm.log.Error("unable to parse QueryAddress for ignore-checking, ignoring dnstap packet to be safe, please investigate")
+		edm.promClientIPIgnoredError.Inc()
+		return true
+	}
+	if ipset.Contains(clientIP) {
+		edm.promClientIPIgnored.Inc()
+		return true
 	}
 	return false
 }
 
 func (edm *dnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
-	// edm.ignoredQuestions can be modified at runtime so wrap everything
-	// in a RO lock
-	edm.ignoredQuestionsMutex.RLock()
-	defer edm.ignoredQuestionsMutex.RUnlock()
-
-	if edm.ignoredQuestions != nil {
-		// While uncommon, if there happens to be multiple questions in
-		// the packet we will consider the message ignored if any of them matches the
-		// ignore list.
-		for _, question := range msg.Question {
-			dawgIndex, _ := getDawgIndex(edm.ignoredQuestions, question.Name)
-			if dawgIndex != dawgNotFound {
-				edm.promQuestionNameIgnored.Inc()
-				return true
-			}
+	// Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
+	// for the rationale.
+	holder := edm.ignoredQuestions.Load()
+	if holder == nil {
+		return false
+	}
+	// While uncommon, if there happens to be multiple questions in the
+	// packet we consider the message ignored if any of them matches.
+	for _, question := range msg.Question {
+		dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+		if dawgIndex != dawgNotFound {
+			edm.promQuestionNameIgnored.Inc()
+			return true
 		}
 	}
 	return false
@@ -2019,6 +2016,23 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
 	// startConf is used for things that do not handle reconfiguration at runtime
 	startConf := edm.getConfig()
+
+	// Per-worker Crypto-PAn cache. Each worker holds its own LRU so the
+	// pseudonymise hot path takes no shared lock. cryptopanLastGen tracks
+	// the last cryptopan-instance generation we saw; when setCryptopan
+	// installs a new key it bumps edm.cryptopanGen and we Purge on the next
+	// frame, so at most one frame after a key rotation can still return a
+	// cached old-key pseudonym before the cache is cleared.
+	var cryptopanCache *lru.Cache[netip.Addr, netip.Addr]
+	if startConf.CryptopanAddressEntries != 0 {
+		var lerr error
+		cryptopanCache, lerr = lru.New[netip.Addr, netip.Addr](startConf.CryptopanAddressEntries)
+		if lerr != nil {
+			edm.log.Error("runMinimiser: unable to create per-worker cryptopan cache", "error", lerr, "minimiser_id", minimiserID)
+			return
+		}
+	}
+	cryptopanLastGen := edm.cryptopanGen.Load()
 
 	// conf is meant to be dynamically modified if the config changes at runtime
 	conf := edm.getConfig()
@@ -2082,7 +2096,15 @@ minimiserLoop:
 			}
 			copy(dangerRealClientIP, dt.Message.QueryAddress)
 
-			edm.pseudonymiseDnstap(dt)
+			// Detect cryptopan key rotation; purge our local cache so
+			// no IPs anonymised under the old key bleed through.
+			if gen := edm.cryptopanGen.Load(); gen != cryptopanLastGen {
+				if cryptopanCache != nil {
+					cryptopanCache.Purge()
+				}
+				cryptopanLastGen = gen
+			}
+			edm.pseudonymiseDnstap(dt, edm.cryptopan.Load(), cryptopanCache)
 
 			msg, timestamp := edm.parsePacket(dt, isQuery)
 
@@ -2845,16 +2867,12 @@ func parseHllStorageType(hllBytes []byte) (hllStorageType, error) {
 }
 
 func (edm *dnstapMinimiser) writeHistogramParquet(output io.Writer, startTime time.Time, prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int) error {
-	if prevWellKnownDomainsData.dawgIsRotated {
-		defer func() {
-			err := prevWellKnownDomainsData.dawgFinder.Close()
-			if err != nil {
-				edm.log.Error("writeHistogramParquet: unable to close dawgFinder", "error", err)
-			} else {
-				edm.log.Info("closed rotated dawgFinder instance")
-			}
-		}()
-	}
+	// The previous DAWG finder is intentionally NOT closed here. lookup() reads
+	// the well-known-domains finder lock-free via wkd.snap, so a minimiser
+	// worker may still hold a rotated-out finder; closing (munmapping) it would
+	// race with that reader and risk a use-after-free. The old finder is left
+	// for the GC to reclaim once no reader references it, matching the
+	// ignoredQuestions/ignoredClients atomic-reload policy.
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[histogramData](output, parquet.Compression(snappyCodec))
@@ -2946,30 +2964,31 @@ func certPoolFromFile(fileName string) (*x509.CertPool, error) {
 	return certPool, nil
 }
 
-// Pseudonymise IP address fields in a dnstap message
-func (edm *dnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Dnstap) {
+// pseudonymiseDnstap pseudonymises the IP address fields in a dnstap message.
+//
+// cache is the caller's per-worker LRU; cpn is a snapshot of the current
+// cryptopan instance taken once per frame so QueryAddress and ResponseAddress
+// see the same key. The per-worker cache and cryptopan snapshot are passed in
+// rather than read from shared state, so the hot path needs no locking.
+func (edm *dnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Dnstap, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) {
 	var err error
-
-	// Lock is used here because the cryptopan instance can get updated at runtime.
-	edm.cryptopanMutex.RLock()
-
 	if dt.Message.QueryAddress != nil {
-		dt.Message.QueryAddress, err = edm.pseudonymiseIP(dt.Message.QueryAddress)
+		dt.Message.QueryAddress, err = edm.pseudonymiseIP(dt.Message.QueryAddress, cpn, cache)
 		if err != nil {
 			edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.QueryAddress", "error", err)
 		}
 	}
 	if dt.Message.ResponseAddress != nil {
-		dt.Message.ResponseAddress, err = edm.pseudonymiseIP(dt.Message.ResponseAddress)
+		dt.Message.ResponseAddress, err = edm.pseudonymiseIP(dt.Message.ResponseAddress, cpn, cache)
 		if err != nil {
 			edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.ResponseAddress", "error", err)
 		}
 	}
-	edm.cryptopanMutex.RUnlock()
 }
 
-// Pseudonymise IP address, even on error the returned []byte is usable (zeroed address)
-func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) {
+// Pseudonymise IP address, even on error the returned []byte is usable (zeroed address).
+// Caller passes the per-worker cache and the cryptopan snapshot; nil cache disables caching.
+func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) ([]byte, error) {
 	addr, ok := netip.AddrFromSlice(ipBytes)
 	if !ok {
 		// Replace address with zeroes since we do not know if
@@ -2980,15 +2999,15 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) {
 	var pseudonymisedAddr netip.Addr
 	var cacheHit bool
 
-	if edm.cryptopanCache != nil {
-		pseudonymisedAddr, cacheHit = edm.cryptopanCache.Get(addr)
+	if cache != nil {
+		pseudonymisedAddr, cacheHit = cache.Get(addr)
 	}
 
 	if cacheHit {
 		edm.promCryptopanCacheHit.Inc()
 	} else {
 		// Not in cache or cache disabled, calculate the pseudonymised IP
-		pseudonymisedAddr, ok = netip.AddrFromSlice(edm.cryptopan.Anonymize(addr.AsSlice()))
+		pseudonymisedAddr, ok = netip.AddrFromSlice(cpn.Anonymize(addr.AsSlice()))
 		if !ok {
 			// Replace address with zeroes here as well
 			// since we do not know if the contained junk
@@ -3002,8 +3021,8 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) {
 		// IPv4 addresses in our system so call Unmap() on it.
 		pseudonymisedAddr = pseudonymisedAddr.Unmap()
 
-		if edm.cryptopanCache != nil {
-			evicted := edm.cryptopanCache.Add(addr, pseudonymisedAddr)
+		if cache != nil {
+			evicted := cache.Add(addr, pseudonymisedAddr)
 			if evicted {
 				edm.promCryptopanCacheEvicted.Inc()
 			}
@@ -3108,7 +3127,7 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 		// to do a new lookup against the new dawg to make sure
 		// we have the correct index number (or if it is even
 		// present in the new dawg).
-		if wu.dawgModTime != wkd.dawgModTime {
+		if wu.dawgModTime != wkd.snap.Load().dawgModTime {
 			if !retryChannelClosed {
 				wkd.retryCh <- wu
 			} else {
@@ -3178,7 +3197,7 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 			m:            wkd.m,
 			startTime:    startTime,
 			rotationTime: rotationTime,
-			dawgFinder:   wkd.dawgFinder,
+			dawgFinder:   wkd.snap.Load().dawgFinder,
 		}
 		wkd.m = map[int]*histogramData{}
 	}

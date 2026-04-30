@@ -141,7 +141,7 @@ func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*dnstapM
 	if err != nil {
 		t.Fatalf("newDnstapMinimiser: %s", err)
 	}
-	t.Cleanup(edm.stop)
+	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
 	dBuilder := dawg.New()
 	for _, domain := range knownDomains {
