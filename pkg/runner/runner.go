@@ -1014,8 +1014,13 @@ func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error)
 	return nil
 }
 
+var removeFSWatcherPath = func(w *fsnotify.Watcher, path string) error {
+	return w.Remove(path)
+}
+
 func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 	edm.fsWatcherMutex.RLock()
+	defer edm.fsWatcherMutex.RUnlock()
 	for _, watchPath := range edm.fsWatcher.WatchList() {
 		watchPathInUse := false
 		for fsWatcherFuncFilename := range edm.fsWatcherFuncs {
@@ -1026,13 +1031,12 @@ func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 
 		if !watchPathInUse {
 			edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
-			err := edm.fsWatcher.Remove(watchPath)
+			err := removeFSWatcherPath(edm.fsWatcher, watchPath)
 			if err != nil {
 				return fmt.Errorf("cleanupFSWatchers: unable to remove path watcher '%s': %w", watchPath, err)
 			}
 		}
 	}
-	edm.fsWatcherMutex.RUnlock()
 
 	return nil
 }
