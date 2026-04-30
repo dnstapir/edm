@@ -1805,6 +1805,74 @@ func TestSetupHistogramSenderAndCertLoaders(t *testing.T) {
 	edm.conf.MQTTSigningKeyFile = mqttKeyPath
 }
 
+// TestSetupHistogramSenderClosesOldTransport verifies that reloading the
+// histogram sender retains the previous aggregate sender's transport and
+// closes its idle connections, so reloads do not leak keep-alive connections.
+func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+
+	connStateCh := make(chan http.ConnState, 16)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/uploaded/hist.parquet")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		select {
+		case connStateCh <- state:
+		default:
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	edm.conf.HTTPURL = server.URL
+	edm.conf.HTTPSigningKeyFile = testJWKFile(t)
+
+	if err := edm.setupHistogramSender(); err != nil {
+		t.Fatal(err)
+	}
+	oldSender := edm.aggregSender
+	if oldSender.httpTransport == nil {
+		t.Fatal("httpTransport was not retained on the aggregate sender")
+	}
+
+	// Make a request through the old transport so it holds an idle keep-alive
+	// connection that the reload is expected to close.
+	fileName := writeTempFile(t, "hist.parquet", []byte("payload"))
+	if err := oldSender.send(t.Context(), fileName, time.Now(), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	waitForConnState(t, connStateCh, http.StateIdle)
+
+	// Reloading creates a new sender and must close the old transport's idle
+	// connections without touching the live one.
+	if err := edm.setupHistogramSender(); err != nil {
+		t.Fatal(err)
+	}
+	if edm.aggregSender.httpTransport == oldSender.httpTransport {
+		t.Fatal("reload did not create a new transport")
+	}
+	waitForConnState(t, connStateCh, http.StateClosed)
+}
+
+// waitForConnState blocks until want is observed on ch or the test deadline is
+// reached, failing the test if the state never arrives.
+func waitForConnState(t testing.TB, ch <-chan http.ConnState, want http.ConnState) {
+	t.Helper()
+
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case state := <-ch:
+			if state == want {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("timed out waiting for connection state %s", want)
+		}
+	}
+}
+
 func TestSetupMQTT(t *testing.T) {
 	oldNewAutoPahoConnection := newAutoPahoConnection
 	t.Cleanup(func() {

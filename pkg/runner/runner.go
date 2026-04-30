@@ -716,11 +716,21 @@ func (edm *dnstapMinimiser) setupHistogramSender() error {
 		}
 	}
 
-	edm.aggregSenderMutex.Lock()
-	edm.aggregSender, err = edm.newAggregateSender(httpURL, httpSigningJwk, httpCACertPool)
-	edm.aggregSenderMutex.Unlock()
+	// Build the new sender first so a failed rebuild leaves the existing
+	// working sender in place instead of zeroing it.
+	newAggregSender, err := edm.newAggregateSender(httpURL, httpSigningJwk, httpCACertPool)
 	if err != nil {
 		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
+	}
+
+	edm.aggregSenderMutex.Lock()
+	oldAggregSender := edm.aggregSender
+	edm.aggregSender = newAggregSender
+	edm.aggregSenderMutex.Unlock()
+
+	// Close idle connections in the old HTTP client to release resources
+	if oldAggregSender.httpTransport != nil {
+		oldAggregSender.httpTransport.CloseIdleConnections()
 	}
 
 	return nil
