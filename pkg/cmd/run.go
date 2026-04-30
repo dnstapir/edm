@@ -34,6 +34,7 @@ func init() {
 	runCmd.Flags().Bool("disable-histogram-sender", false, "do not check for histogram files to upload to core")
 	runCmd.Flags().Bool("disable-mqtt", false, "disable MQTT message sending")
 	runCmd.Flags().Bool("disable-mqtt-filequeue", false, "disable MQTT file based queue")
+	runCmd.Flags().Bool("pebble-sync", false, "fsync seen-qname pebble writes")
 
 	runCmd.Flags().String("input-unix", "", "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
 	runCmd.Flags().String("input-tcp", "", "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
