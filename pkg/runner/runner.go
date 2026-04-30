@@ -14,7 +14,6 @@ import (
 	"log"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
 	_ "net/http/pprof" // #nosec G108 -- pprofServer only listens to localhost
 	"net/netip"
@@ -1991,7 +1990,16 @@ minimiserLoop:
 				}
 			}
 
-			isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(*dt.Message.Type)], "_QUERY")
+			// Guard the hot-path dereferences (here and below: QueryAddress,
+			// clientIPIsIgnored) so a partially populated frame is dropped
+			// rather than panicking before parsePacket's own nil checks.
+			if dt.Message == nil || dt.Message.Type == nil {
+				edm.log.Error("runMinimiser: dnstap message or type missing, dropping packet", "minimiser_id", minimiserID)
+				edm.promDNSParseError.Inc()
+				continue
+			}
+
+			isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
 
 			// For now we only care about response type dnstap packets
 			if isQuery {
@@ -2148,7 +2156,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 		sd.ServerID = &sID
 	}
 
-	switch *dt.Message.SocketFamily {
+	switch dt.Message.GetSocketFamily() {
 	case dnstap.SocketFamily_INET:
 		if dt.Message.QueryAddress != nil {
 			sourceIPInt, err := ipBytesToInt(dt.Message.QueryAddress)
@@ -2193,11 +2201,17 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 				sd.DestIPv6Host = &i64dIntHost
 			}
 		}
+	case 0:
+		// SocketFamily not set: tolerate partial metadata and leave the IP
+		// fields nil rather than logging an error for every such packet.
 	default:
 		edm.log.Error("packet is neither INET or INET6")
 	}
 
-	sd.DNSProtocol = (*int32)(dt.Message.SocketProtocol)
+	if dt.Message.SocketProtocol != nil {
+		dnsProtocol := int32(dt.Message.GetSocketProtocol())
+		sd.DNSProtocol = &dnsProtocol
+	}
 
 	return sd
 }
@@ -2550,34 +2564,16 @@ func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) {
 }
 
 func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) {
-	var t time.Time
 	var err error
-	var queryAddress, responseAddress string
 
-	qa := net.IP(dt.Message.QueryAddress)
-	ra := net.IP(dt.Message.ResponseAddress)
-
-	// Query address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
-	if qa != nil && dt.Message.QueryPort != nil {
-		queryAddress = qa.String() + ":" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
-	} else if qa != nil {
-		queryAddress = qa.String() + ":?"
-	} else if dt.Message.ResponsePort != nil {
-		queryAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
-	} else {
-		queryAddress = "?"
+	if dt.Message == nil {
+		edm.log.Error("parsePacket: dnstap message is missing")
+		return nil, time.Unix(0, 0).UTC()
 	}
 
-	// Response address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
-	if ra != nil && dt.Message.ResponsePort != nil {
-		responseAddress = ra.String() + ":" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
-	} else if ra != nil {
-		responseAddress = ra.String() + ":?"
-	} else if dt.Message.ResponsePort != nil {
-		responseAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
-	} else {
-		responseAddress = "?"
-	}
+	queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
+	responseAddress := formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort)
+
 	msg := new(dns.Msg)
 	if isQuery {
 		err = msg.Unpack(dt.Message.QueryMessage)
@@ -2585,27 +2581,49 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 			edm.log.Error("unable to unpack query message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
 			msg = nil
 		}
-		if *dt.Message.QueryTimeSec > math.MaxInt64 {
-			edm.log.Error("dt.Message.QueryTimeSec is too large for int64, setting time to 0", "value", *dt.Message.QueryTimeSec)
-			*dt.Message.QueryTimeSec = 0
-			*dt.Message.QueryTimeNsec = 0
-		}
-		t = time.Unix(int64(*dt.Message.QueryTimeSec), int64(*dt.Message.QueryTimeNsec)).UTC() // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
-	} else {
-		err = msg.Unpack(dt.Message.ResponseMessage)
-		if err != nil {
-			edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
-			msg = nil
-		}
-		if *dt.Message.ResponseTimeSec > math.MaxInt64 {
-			edm.log.Error("dt.Message.ResponseTimeSec is too large for int64, setting time to 0", "value", *dt.Message.ResponseTimeSec)
-			*dt.Message.ResponseTimeSec = 0
-			*dt.Message.ResponseTimeNsec = 0
-		}
-		t = time.Unix(int64(*dt.Message.ResponseTimeSec), int64(*dt.Message.ResponseTimeNsec)).UTC() // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+		t := edm.dnstapTimestamp(dt.Message.QueryTimeSec, dt.Message.QueryTimeNsec, "dt.Message.QueryTimeSec")
+		return msg, t
 	}
 
+	err = msg.Unpack(dt.Message.ResponseMessage)
+	if err != nil {
+		edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
+		msg = nil
+	}
+	t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
 	return msg, t
+}
+
+func formatDnstapEndpoint(ipBytes []byte, port *uint32) string {
+	ip, ok := netip.AddrFromSlice(ipBytes)
+	if ok && port != nil {
+		return ip.String() + ":" + strconv.FormatUint(uint64(*port), 10)
+	}
+	if ok {
+		return ip.String() + ":?"
+	}
+	if port != nil {
+		return "?:" + strconv.FormatUint(uint64(*port), 10)
+	}
+	return "?"
+}
+
+func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time {
+	if sec == nil {
+		edm.log.Error(fieldName + " is missing, setting time to 0")
+		return time.Unix(0, 0).UTC()
+	}
+	if *sec > math.MaxInt64 {
+		edm.log.Error(fieldName+" is too large for int64, setting time to 0", "value", *sec)
+		return time.Unix(0, 0).UTC()
+	}
+
+	var nsecValue uint32
+	if nsec != nil {
+		nsecValue = *nsec
+	}
+
+	return time.Unix(int64(*sec), int64(nsecValue)).UTC() // #nosec G115 -- sec is checked above and nsec is uint32.
 }
 
 func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
