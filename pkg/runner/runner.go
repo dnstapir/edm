@@ -1936,8 +1936,16 @@ minimiserLoop:
 		case frame := <-edm.inputChannel:
 			edm.promDnstapProcessed.Inc()
 			if err := proto.Unmarshal(frame, dt); err != nil {
-				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, returning", "error", err, "minimiser_id", minimiserID)
-				break minimiserLoop
+				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, skipping frame", "error", err, "minimiser_id", minimiserID)
+				continue
+			}
+			if dt.Message == nil {
+				edm.log.Error("dnstapMinimiser.runMinimiser: dnstap message is missing, skipping frame", "minimiser_id", minimiserID)
+				continue
+			}
+			if dt.Message.Type == nil {
+				edm.log.Error("dnstapMinimiser.runMinimiser: dnstap message type is missing, skipping frame", "minimiser_id", minimiserID)
+				continue
 			}
 
 			// Keep in mind that this outputs the unmodified dnstap
