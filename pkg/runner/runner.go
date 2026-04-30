@@ -83,7 +83,7 @@ type config struct {
 	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
 	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
 	DataDir                       string `mapstructure:"data-dir" validate:"required"`
-	MinimiserWorkers              int    `mapstructure:"minimiser-workers" validate:"required"`
+	MinimiserWorkers              int    `mapstructure:"minimiser-workers"`
 	MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
 	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT" reload:"true"`
 	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT" reload:"true"`
@@ -1585,7 +1585,10 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	edm.promReg = promReg
 	// Size 32 matches unexported "const outputChannelSize = 32" in
 	// https://github.com/dnstap/golang-dnstap/blob/master/dnstap.go
-	edm.inputChannel = make(chan []byte, 32)
+	// Buffer enough frames to absorb scheduling jitter under high QPS.
+	// A 1024-frame buffer keeps producers from stalling without growing
+	// memory meaningfully for typical dnstap frame sizes.
+	edm.inputChannel = make(chan []byte, 1024)
 	edm.log = logger
 	edm.debug = conf.Debug
 
@@ -1924,6 +1927,11 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
 	dt := &dnstap.Dnstap{}
 
+	// Per-worker scratch buffer for the unpseudonymised client IP we pass
+	// to wkdTracker.sendUpdate for HLL hashing. Sized to fit IPv6 and
+	// resliced to len(QueryAddress) per frame.
+	var dangerScratch [16]byte
+
 	// startConf is used for things that do not handle reconfiguration at runtime
 	startConf := edm.getConfig()
 
@@ -1967,8 +1975,16 @@ minimiserLoop:
 
 			// Keep around the unpseudonymised client IP for HLL
 			// data, be careful with logging or otherwise handling
-			// this IP as it is sensitive.
-			dangerRealClientIP := make([]byte, len(dt.Message.QueryAddress))
+			// this IP as it is sensitive. Borrow the per-worker
+			// scratch buffer and fall back to allocation for any
+			// unexpected non-IPv4/non-IPv6 address length.
+			n := len(dt.Message.QueryAddress)
+			var dangerRealClientIP []byte
+			if n <= len(dangerScratch) {
+				dangerRealClientIP = dangerScratch[:n]
+			} else {
+				dangerRealClientIP = make([]byte, n)
+			}
 			copy(dangerRealClientIP, dt.Message.QueryAddress)
 
 			edm.pseudonymiseDnstap(dt)
