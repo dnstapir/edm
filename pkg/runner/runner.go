@@ -1871,6 +1871,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, rotationTime time.Time) (*wellKnownDomainsData, error) {
 	dawgFileChanged := false
 	var dawgFinder dawg.Finder
+	var dawgModTime time.Time
 
 	fileInfo, err := os.Stat(dawgFile)
 	if err != nil {
@@ -1878,9 +1879,9 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	}
 
 	if fileInfo.ModTime() != wkd.dawgModTime {
-		dawgFinder, err = dawg.Load(dawgFile)
+		dawgFinder, dawgModTime, err = loadDawgFile(dawgFile)
 		if err != nil {
-			return nil, fmt.Errorf("rotateTracker: dawg.Load(): %w", err)
+			return nil, fmt.Errorf("rotateTracker: loadDawgFile(): %w", err)
 		}
 		dawgFileChanged = true
 		edm.log.Info("dawg file modification changed, will reload file", "prev_time", wkd.dawgModTime, "cur_time", fileInfo.ModTime())
@@ -1895,7 +1896,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	wkd.m = map[int]*histogramData{}
 	if dawgFileChanged {
 		wkd.dawgFinder = dawgFinder
-		wkd.dawgModTime = fileInfo.ModTime()
+		wkd.dawgModTime = dawgModTime
 		prevWKD.dawgIsRotated = true
 	}
 	wkd.mutex.Unlock()
