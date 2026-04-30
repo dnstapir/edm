@@ -70,6 +70,7 @@ type config struct {
 	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
+	PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
 	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
 	InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
@@ -1048,6 +1049,7 @@ type testConfiger struct {
 	Debug                   bool
 	DisableHistogramSender  bool
 	DisableMQTT             bool
+	PebbleSync              bool
 }
 
 func (tc testConfiger) getConfig() (config, error) {
@@ -1058,6 +1060,7 @@ func (tc testConfiger) getConfig() (config, error) {
 		Debug:                   tc.Debug,
 		DisableHistogramSender:  tc.DisableHistogramSender,
 		DisableMQTT:             tc.DisableMQTT,
+		PebbleSync:              tc.PebbleSync,
 	}, nil
 }
 
@@ -1820,8 +1823,15 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	return prevWKD, nil
 }
 
+func seenQnameWriteOptions(conf config) *pebble.WriteOptions {
+	if conf.PebbleSync {
+		return pebble.Sync
+	}
+	return pebble.NoSync
+}
+
 // Check if we have already seen this qname since we started.
-func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB) bool {
+func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, conf config) bool {
 	// NOTE: This looks like it might be a race (calling
 	// Get() followed by separate Add()) but since we want
 	// to keep often looked-up names in the cache we need to
@@ -1856,7 +1866,7 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	// If the key does not exist in pebble we insert it
 	if errors.Is(err, pebble.ErrNotFound) {
-		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
+		if err := pdb.Set([]byte(qname), []byte{}, seenQnameWriteOptions(conf)); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
@@ -2010,7 +2020,7 @@ minimiserLoop:
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, pdb) {
+			if !edm.qnameSeen(msg, seenQnameLRU, pdb, conf) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
