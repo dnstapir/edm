@@ -95,20 +95,28 @@ func bitsFromMsg(dns *dns.Msg) uint16 {
 	return bits
 }
 
+// NewQnameEvent constructs a NewQnameJSON event from a DNS message and a
+// timestamp. If the Question section is empty the returned event will have
+// an empty Qname, nil Qtype and nil Qclass, but other header-derived fields
+// will still be populated.
 func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 	bits := bitsFromMsg(msg)
 	flags := int(bits)
 
-	qType := int(msg.Question[0].Qtype)
-	qClass := int(msg.Question[0].Qclass)
-
-	return NewQnameJSON{
+	event := NewQnameJSON{
 		Type:      NewQnameJSONType,
-		Qname:     msg.Question[0].Name,
-		Qtype:     &qType,
-		Qclass:    &qClass,
 		Timestamp: &ts,
 		Flags:     &flags,
 		Version:   NewQnameJSONVersion,
 	}
+
+	if len(msg.Question) > 0 {
+		qType := int(msg.Question[0].Qtype)
+		qClass := int(msg.Question[0].Qclass)
+		event.Qname = msg.Question[0].Name
+		event.Qtype = &qType
+		event.Qclass = &qClass
+	}
+
+	return event
 }
