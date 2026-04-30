@@ -138,15 +138,11 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
 	}
+	defer res.Body.Close()
 
 	bodyData, err := io.ReadAll(res.Body)
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to read response body: %w", err)
-	}
-
-	err = res.Body.Close()
-	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to close HTTP body: %w", err)
 	}
 
 	if res.StatusCode != http.StatusCreated {
