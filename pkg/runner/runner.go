@@ -2461,21 +2461,30 @@ timerLoop:
 	edm.log.Info("histogramSender: exiting loop")
 }
 
-func timestampsFromFilename(name string) (time.Time, time.Time, error) {
+func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) {
 	// expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
 	trimmedName := strings.TrimSuffix(name, ".parquet")
 	nameParts := strings.SplitN(trimmedName, "-", 2)
+	if len(nameParts) != 2 {
+		err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
+		return
+	}
 	times := strings.Split(nameParts[1], "_")
-	startTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[0])
-	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
+	if len(times) != 2 {
+		err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
+		return
 	}
-	stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+	startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
 	if err != nil {
-		return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
+		err = fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
+		return
 	}
-
-	return startTime, stopTime, nil
+	stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+	if err != nil {
+		err = fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
+		return
+	}
+	return
 }
 
 func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) {
