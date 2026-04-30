@@ -3,6 +3,7 @@ package cmd
 import (
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -13,6 +14,8 @@ var (
 	edmLogger      *slog.Logger
 	edmLoggerLevel *slog.LevelVar
 )
+
+const envPrefix = "DNSTAPIR_EDM"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -67,7 +70,7 @@ func initConfig() {
 		viper.SetConfigName(".dnstapir-edm")
 	}
 
-	viper.AutomaticEnv() // read in environment variables that match
+	configureEnv()
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
@@ -76,4 +79,10 @@ func initConfig() {
 
 	// Make it so we can detect changes to the cryptopan secret in the config
 	viper.WatchConfig()
+}
+
+func configureEnv() {
+	viper.SetEnvPrefix(envPrefix)
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	viper.AutomaticEnv() // read in environment variables that match
 }
