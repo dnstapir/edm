@@ -4,6 +4,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -28,6 +31,8 @@ func restoreCmdGlobals(t *testing.T) {
 	oldAddConfigPath := viperAddConfigPath
 	oldSetConfigType := viperSetConfigType
 	oldSetConfigName := viperSetConfigName
+	oldSetEnvPrefix := viperSetEnvPrefix
+	oldSetEnvKeyReplacer := viperSetEnvKeyReplacer
 	oldAutomaticEnv := viperAutomaticEnv
 	oldReadInConfig := viperReadInConfig
 	oldConfigFileUsed := viperConfigFileUsed
@@ -44,6 +49,8 @@ func restoreCmdGlobals(t *testing.T) {
 		viperAddConfigPath = oldAddConfigPath
 		viperSetConfigType = oldSetConfigType
 		viperSetConfigName = oldSetConfigName
+		viperSetEnvPrefix = oldSetEnvPrefix
+		viperSetEnvKeyReplacer = oldSetEnvKeyReplacer
 		viperAutomaticEnv = oldAutomaticEnv
 		viperReadInConfig = oldReadInConfig
 		viperConfigFileUsed = oldConfigFileUsed
@@ -65,6 +72,8 @@ func TestInitConfigExplicitFile(t *testing.T) {
 	var automaticEnvCalled bool
 	var watchCalled bool
 	viperSetConfigFile = func(file string) { setFile = file }
+	viperSetEnvPrefix = func(string) {}
+	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() { automaticEnvCalled = true }
 	viperReadInConfig = func() error { return nil }
 	viperConfigFileUsed = func() string { return cfgFile }
@@ -95,6 +104,8 @@ func TestInitConfigDefaultHomeNoConfig(t *testing.T) {
 	viperAddConfigPath = func(path string) { addPath = path }
 	viperSetConfigType = func(value string) { configType = value }
 	viperSetConfigName = func(value string) { configName = value }
+	viperSetEnvPrefix = func(string) {}
+	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() {}
 	viperReadInConfig = func() error { return errors.New("not found") }
 	viperWatchConfig = func() {}
@@ -116,6 +127,8 @@ func TestExecuteSuccessAndError(t *testing.T) {
 	restoreCmdGlobals(t)
 	logger, level := testLogger()
 
+	viperSetEnvPrefix = func(string) {}
+	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() {}
 	viperReadInConfig = func() error { return errors.New("not found") }
 	viperWatchConfig = func() {}
@@ -185,4 +198,84 @@ func TestRunFlagsBoundToViper(t *testing.T) {
 	if !viper.GetBool("debug") {
 		t.Fatal("viper debug binding did not observe flag value")
 	}
+}
+
+func TestInitConfigIgnoresUnprefixedEnv(t *testing.T) {
+	initConfigForTest(t, "debug = false\n")
+	t.Setenv("DEBUG", "release")
+
+	initConfig()
+
+	var conf struct {
+		Debug bool `mapstructure:"debug"`
+	}
+	if err := viper.UnmarshalExact(&conf); err != nil {
+		t.Fatalf("unprefixed DEBUG should not affect config unmarshalling: %s", err)
+	}
+	if conf.Debug {
+		t.Fatal("unprefixed DEBUG unexpectedly overrode config debug=false")
+	}
+}
+
+func TestInitConfigUsesPrefixedEnv(t *testing.T) {
+	initConfigForTest(t, "debug = false\n")
+	t.Setenv("DEBUG", "release")
+	debugEnv := envPrefix + "_DEBUG"
+	t.Setenv(debugEnv, "true")
+
+	initConfig()
+
+	var conf struct {
+		Debug bool `mapstructure:"debug"`
+	}
+	if err := viper.UnmarshalExact(&conf); err != nil {
+		t.Fatalf("prefixed debug env should unmarshal cleanly: %s", err)
+	}
+	if !conf.Debug {
+		t.Fatalf("%s=true did not override config debug=false", debugEnv)
+	}
+}
+
+func TestInitConfigUsesPrefixedEnvForHyphenatedKey(t *testing.T) {
+	initConfigForTest(t, "well-known-domains-file = \"from-file.dawg\"\n")
+	hyphenEnv := envPrefix + "_WELL_KNOWN_DOMAINS_FILE"
+	t.Setenv(hyphenEnv, "from-env.dawg")
+
+	initConfig()
+
+	var conf struct {
+		WellKnownDomainsFile string `mapstructure:"well-known-domains-file"`
+	}
+	if err := viper.UnmarshalExact(&conf); err != nil {
+		t.Fatalf("prefixed hyphenated env should unmarshal cleanly: %s", err)
+	}
+	if conf.WellKnownDomainsFile != "from-env.dawg" {
+		t.Fatalf("%s did not override well-known-domains-file (hyphen-to-underscore mapping broken)", hyphenEnv)
+	}
+}
+
+func initConfigForTest(t *testing.T, configData string) {
+	t.Helper()
+
+	viper.Reset()
+	oldCfgFile := cfgFile
+	oldLogger := edmLogger
+	oldWatchConfig := viperWatchConfig
+	t.Cleanup(func() {
+		cfgFile = oldCfgFile
+		edmLogger = oldLogger
+		viperWatchConfig = oldWatchConfig
+		viper.Reset()
+	})
+
+	// Stub the watcher so the real fsnotify-backed viper.WatchConfig does not
+	// leak a goroutine and inotify watch on the temporary config directory.
+	viperWatchConfig = func() {}
+
+	configFile := filepath.Join(t.TempDir(), "dnstapir-edm.toml")
+	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
+		t.Fatalf("unable to write test config: %s", err)
+	}
+	cfgFile = configFile
+	edmLogger = slog.New(slog.NewTextHandler(io.Discard, nil))
 }
