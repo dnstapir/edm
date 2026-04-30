@@ -1552,6 +1552,7 @@ type dnstapMinimiser struct {
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
+	seenQnameLocks                [seenQnameLockShards]sync.Mutex
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -1917,18 +1918,32 @@ func seenQnameWriteOptions(conf config) *pebble.WriteOptions {
 	return pebble.NoSync
 }
 
+// seenQnameLockShards is the number of mutexes sharding qnameSeen by qname.
+//
+// It bounds [dnstapMinimiser.seenQnameLocks] and the modulus in
+// [seenQnameLockIndex], so both stay in sync.
+const seenQnameLockShards = 256
+
+// seenQnameLockIndex maps qname to a shard in [dnstapMinimiser.seenQnameLocks].
+//
+// It hashes qname with FNV-1a and reduces the result modulo
+// [seenQnameLockShards], so the returned index is always a valid offset into
+// the lock array.
+func seenQnameLockIndex(qname string) int {
+	var h uint32 = 2166136261
+	for i := 0; i < len(qname); i++ {
+		h ^= uint32(qname[i])
+		h *= 16777619
+	}
+	return int(h % seenQnameLockShards)
+}
+
 // Check if we have already seen this qname since we started.
 func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, conf config) bool {
-	// NOTE: This looks like it might be a race (calling
-	// Get() followed by separate Add()) but since we want
-	// to keep often looked-up names in the cache we need to
-	// use Get() for updating recent-ness, and there is no
-	// GetOrAdd() method available. However, it should be
-	// safe for multiple threads to call Add() as this will
-	// only move an already added entry to the front of the
-	// eviction list which should be OK.
-
 	qname := strings.ToLower(msg.Question[0].Name)
+	seenLock := &edm.seenQnameLocks[seenQnameLockIndex(qname)]
+	seenLock.Lock()
+	defer seenLock.Unlock()
 
 	_, ok := seenQnameLRU.Get(qname)
 	if ok {
