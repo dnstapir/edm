@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2136,12 +2137,18 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 func TestDiskCleanerRetentionThreshold(t *testing.T) {
 	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
 
-	if !sentHistogramExpired(now.Add(-25*time.Hour), now) {
-		t.Fatal("histogram older than 24 hours should expire")
+	if !sentHistogramExpired(now.Add(-sentHistogramRetention-time.Hour), now) {
+		t.Fatal("histogram older than the retention window should expire")
 	}
 
-	if sentHistogramExpired(now.Add(-23*time.Hour), now) {
-		t.Fatal("histogram newer than 24 hours should not expire")
+	if sentHistogramExpired(now.Add(-sentHistogramRetention+time.Hour), now) {
+		t.Fatal("histogram within the retention window should not expire")
+	}
+
+	// Exactly at the retention boundary: sentHistogramExpired uses a strict
+	// greater-than, so a histogram aged exactly 24 hours is not yet expired.
+	if sentHistogramExpired(now.Add(-sentHistogramRetention), now) {
+		t.Fatal("histogram exactly at the 24 hour retention boundary should not expire")
 	}
 }
 
@@ -2174,4 +2181,60 @@ func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
 		t.Fatal("fsWatcherMutex.TryLock() failed - mutex is still locked after cleanupFSWatchers")
 	}
 	edm.fsWatcherMutex.Unlock()
+}
+
+func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+
+	viperNotifyCh := make(chan fsnotify.Event, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		configUpdater(viperNotifyCh, edm)
+	}()
+
+	// Cancelling the context is sticky, so configUpdater observes it via its
+	// select regardless of whether the goroutine has reached the select yet.
+	edm.stop()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("configUpdater did not exit after context cancel")
+	}
+}
+
+func TestConfigUpdaterExitsOnChannelClose(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+
+	viperNotifyCh := make(chan fsnotify.Event, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		configUpdater(viperNotifyCh, edm)
+	}()
+
+	// Closing viperNotifyCh makes the receive return ok=false, which
+	// configUpdater treats as a shutdown signal and returns.
+	close(viperNotifyCh)
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("configUpdater did not exit after viperNotifyCh close")
+	}
 }
