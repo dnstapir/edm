@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
@@ -48,9 +49,9 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 }
 
 func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
-	u, err := url.Parse(server)
+	u, err := parseMQTTServerURL(server)
 	if err != nil {
-		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse URL: %w", err)
+		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
 	}
 
 	cliCfg := autopaho.ClientConfig{
@@ -86,6 +87,28 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 	}
 
 	return cliCfg, nil
+}
+
+func parseMQTTServerURL(server string) (*url.URL, error) {
+	if !strings.Contains(server, "://") {
+		server = "tls://" + server
+	}
+
+	u, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("missing host in %q", server)
+	}
+
+	switch strings.ToLower(u.Scheme) {
+	case "mqtt", "tcp", "ssl", "tls", "mqtts", "mqtt+ssl", "tcps", "ws", "wss":
+	default:
+		return nil, fmt.Errorf("unsupported scheme %q", u.Scheme)
+	}
+
+	return u, nil
 }
 
 func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, mqttJWK jwk.Key, usingFileQueue bool) {
