@@ -75,7 +75,7 @@ type config struct {
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
 	InputTLSCertFile              string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
 	InputTLSKeyFile               string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
-	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
+	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file"`
 	CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required" reload:"true"`
 	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required" reload:"true"`
 	WellKnownDomainsFile          string `mapstructure:"well-known-domains-file" validate:"required"`
