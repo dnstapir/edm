@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -126,10 +125,8 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	req.ContentLength = fileSize
 
 	// Expected by aggrec, e.g:
-	// Aggregate-Interval: 2023-11-16T09:24:13.487591+01:00/PT1M
-	minutesFloat := duration.Minutes()
-	minutes := int(math.Round(minutesFloat))
-	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/PT%dM", ts.Truncate(time.Minute).Format(time.RFC3339), minutes))
+	// Aggregate-Interval: 2023-11-16T09:24:13+01:00/PT45S
+	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
 
 	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
 	startTime := time.Now()
@@ -170,4 +167,37 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 
 	return nil
+}
+
+func iso8601Duration(duration time.Duration) string {
+	if duration <= 0 {
+		return "PT0S"
+	}
+
+	total := int64(duration / time.Second)
+	nanoseconds := duration % time.Second
+
+	hours := total / 3600
+	total %= 3600
+	minutes := total / 60
+	seconds := total % 60
+
+	res := "PT"
+	if hours > 0 {
+		res += strconv.FormatInt(hours, 10) + "H"
+	}
+	if minutes > 0 {
+		res += strconv.FormatInt(minutes, 10) + "M"
+	}
+	if seconds > 0 || nanoseconds > 0 || res == "PT" {
+		if nanoseconds == 0 {
+			res += strconv.FormatInt(seconds, 10)
+		} else {
+			secondsFloat := float64(seconds) + float64(nanoseconds)/float64(time.Second)
+			res += strconv.FormatFloat(secondsFloat, 'f', -1, 64)
+		}
+		res += "S"
+	}
+
+	return res
 }
