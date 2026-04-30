@@ -296,6 +296,41 @@ func TestWKD(t *testing.T) {
 	}
 }
 
+func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
+	dBuilder := dawg.New()
+	dBuilder.Add("example.com.")
+	dFinder := dBuilder.Finish()
+
+	dawgFile := filepath.Join(t.TempDir(), "well-known-domains.dawg")
+	if _, err := dFinder.Save(dawgFile); err != nil {
+		t.Fatalf("Save: %s", err)
+	}
+	fileInfo, err := os.Stat(dawgFile)
+	if err != nil {
+		t.Fatalf("Stat: %s", err)
+	}
+
+	wkd, err := newWellKnownDomainsTracker(dFinder, fileInfo.ModTime())
+	if err != nil {
+		t.Fatalf("newWellKnownDomainsTracker: %s", err)
+	}
+	edm := &dnstapMinimiser{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+	nextModTime := fileInfo.ModTime().Add(time.Second)
+	if err := os.Chtimes(dawgFile, nextModTime, nextModTime); err != nil {
+		t.Fatalf("Chtimes: %s", err)
+	}
+
+	if _, err := wkd.rotateTracker(edm, dawgFile, time.Now()); !errors.Is(err, errEmptyDawgFile) {
+		t.Fatalf("rotateTracker error have: %v, want: %v", err, errEmptyDawgFile)
+	}
+}
+
 func TestIgnoredClientIPsValid(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 
