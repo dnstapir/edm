@@ -2144,3 +2144,34 @@ func TestDiskCleanerRetentionThreshold(t *testing.T) {
 		t.Fatal("histogram newer than 24 hours should not expire")
 	}
 }
+
+func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+
+	// Watch a directory that is not referenced by any callback so
+	// cleanupFSWatchers tries to remove it.
+	if err := edm.fsWatcher.Add(t.TempDir()); err != nil {
+		t.Fatalf("Add watch path: %s", err)
+	}
+	edm.fsWatcherFuncs = make(map[string][]func() error)
+
+	removeErr := errors.New("remove failed")
+	oldRemoveFSWatcherPath := removeFSWatcherPath
+	removeFSWatcherPath = func(_ *fsnotify.Watcher, _ string) error {
+		return removeErr
+	}
+	t.Cleanup(func() {
+		removeFSWatcherPath = oldRemoveFSWatcherPath
+	})
+
+	err := edm.cleanupFSWatchers()
+	if !errors.Is(err, removeErr) {
+		t.Fatalf("cleanupFSWatchers error have: %v, want: %v", err, removeErr)
+	}
+
+	// The RLock must have been released even though removal failed.
+	if !edm.fsWatcherMutex.TryLock() {
+		t.Fatal("fsWatcherMutex.TryLock() failed - mutex is still locked after cleanupFSWatchers")
+	}
+	edm.fsWatcherMutex.Unlock()
+}

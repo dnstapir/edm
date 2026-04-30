@@ -42,6 +42,12 @@ var (
 	osReadDir  = os.ReadDir
 	osStat     = os.Stat
 
+	// removeFSWatcherPath wraps (*fsnotify.Watcher).Remove so tests can
+	// inject removal failures into cleanupFSWatchers.
+	removeFSWatcherPath = func(w *fsnotify.Watcher, path string) error {
+		return w.Remove(path)
+	}
+
 	now                     = time.Now
 	configUpdateDebounce    = 100 * time.Millisecond
 	fsEventDebounce         = 100 * time.Millisecond
