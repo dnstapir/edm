@@ -1322,19 +1322,52 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 		return fmt.Errorf("unable to create seen-qname LRU: %w", err)
 	}
 
+	var wg sync.WaitGroup
+
+	// The HTTP servers are tracked in their own WaitGroup so the deferred
+	// cleanup below can stop them and wait for their goroutines on every
+	// return path, including the early error returns during setup.
+	var serverWg sync.WaitGroup
+
 	pprofServer := newPprofServer(pprofListenAddr)
+	serverWg.Add(1)
 	go func() {
+		defer serverWg.Done()
 		err := listenAndServeHTTP(pprofServer)
-		logger.Error("pprofServer failed", "error", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprofServer error", "error", err)
+		}
 	}()
 
 	metricsServer := edm.newMetricsServer(metricsListenAddr, startConf.EnableManualParquetRotation)
+	serverWg.Add(1)
 	go func() {
+		defer serverWg.Done()
 		err := listenAndServeHTTP(metricsServer)
-		logger.Error("metricsServer failed", "error", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metricsServer error", "error", err)
+		}
 	}()
 
-	var wg sync.WaitGroup
+	// Gracefully shut down both HTTP servers whenever run() returns (early
+	// error paths included), giving each its own deadline so the second
+	// shutdown never inherits an exhausted context, then wait for the
+	// listener goroutines to exit.
+	defer func() {
+		pprofCtx, pprofCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := pprofServer.Shutdown(pprofCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			edm.log.Error("pprofServer shutdown error", "error", err)
+		}
+		pprofCancel()
+
+		metricsCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := metricsServer.Shutdown(metricsCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			edm.log.Error("metricsServer shutdown error", "error", err)
+		}
+		metricsCancel()
+
+		serverWg.Wait()
+	}()
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
@@ -1422,7 +1455,11 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
-	// Start dnstap.Input
+	// Start dnstap.Input. The golang-dnstap library does not provide a
+	// stop/close mechanism for ReadInto, so we cannot track this goroutine
+	// in the WaitGroup without blocking shutdown indefinitely. The
+	// inputChannel is intentionally left unclosed because ReadInto sends
+	// to it and would panic; the OS reclaims the goroutine on process exit.
 	go dti.ReadInto(edm.inputChannel)
 
 	// Wait here until all instances of runMinimiser() is done
@@ -1440,7 +1477,8 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 		edm.autopahoCancel()
 	}
 
-	// Wait for all workers to exit
+	// Wait for all workers to exit. The HTTP servers are shut down by the
+	// deferred cleanup registered when they were started.
 	edm.log.Info("Run: waiting for other workers to exit")
 	wg.Wait()
 
