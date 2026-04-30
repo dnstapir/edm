@@ -2381,6 +2381,9 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	wg.Add(1)
 	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
 	edm.inputChannel <- []byte("not protobuf")
+	// Malformed frames are skipped, not fatal, so stop the minimiser
+	// explicitly to unblock the goroutine.
+	edm.stop()
 	wg.Wait()
 
 	edm = newTestDnstapMinimiser(t, defaultTC)
