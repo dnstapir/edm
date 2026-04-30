@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/fsnotify/fsnotify"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -2144,4 +2146,45 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 			}
 		}
 	}
+}
+func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(edm.stop)
+
+	tempDir := t.TempDir()
+
+	edm.fsWatcher, err = fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatalf("NewWatcher: %s", err)
+	}
+	defer edm.fsWatcher.Close()
+
+	if err := edm.fsWatcher.Add(tempDir); err != nil {
+		t.Fatalf("Add watch path: %s", err)
+	}
+
+	edm.fsWatcherFuncs = make(map[string][]func() error)
+
+	removeErr := errors.New("remove failed")
+	oldRemoveFSWatcherPath := removeFSWatcherPath
+	removeFSWatcherPath = func(_ *fsnotify.Watcher, _ string) error {
+		return removeErr
+	}
+	t.Cleanup(func() {
+		removeFSWatcherPath = oldRemoveFSWatcherPath
+	})
+
+	err = edm.cleanupFSWatchers()
+	if !errors.Is(err, removeErr) {
+		t.Fatalf("cleanupFSWatchers error have: %v, want: %v", err, removeErr)
+	}
+
+	if !edm.fsWatcherMutex.TryLock() {
+		t.Fatal("fsWatcherMutex.TryLock() failed - mutex is still locked after cleanupFSWatchers")
+	}
+	edm.fsWatcherMutex.Unlock()
 }
