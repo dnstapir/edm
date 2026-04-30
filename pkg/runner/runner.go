@@ -1280,9 +1280,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		WriteTimeout: 31 * time.Second,
 	}
 
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := pprofServer.ListenAndServe()
-		logger.Error("pprofServer failed", "error", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprofServer error", "error", err)
+		}
 	}()
 
 	metricsMux := http.NewServeMux()
@@ -1296,12 +1302,14 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	// Setup custom promHandler since we want to use our per-edm registry
 	metricsMux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		err := metricsServer.ListenAndServe()
-		logger.Error("metricsServer failed", "error", err)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("metricsServer error", "error", err)
+		}
 	}()
-
-	var wg sync.WaitGroup
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
@@ -1393,7 +1401,11 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
-	// Start dnstap.Input
+	// Start dnstap.Input. The golang-dnstap library does not provide a
+	// stop/close mechanism for ReadInto, so we cannot track this goroutine
+	// in the WaitGroup without blocking shutdown indefinitely. The
+	// inputChannel is intentionally left unclosed because ReadInto sends
+	// to it and would panic; the OS reclaims the goroutine on process exit.
 	go dti.ReadInto(edm.inputChannel)
 
 	// Wait here until all instances of runMinimiser() is done
@@ -1409,6 +1421,16 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	if !startConf.DisableMQTT {
 		edm.log.Info("Run: stopping MQTT publisher")
 		edm.autopahoCancel()
+	}
+
+	// Gracefully shutdown HTTP servers before waiting for workers.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := pprofServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		edm.log.Error("pprofServer shutdown error", "error", err)
+	}
+	if err := metricsServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		edm.log.Error("metricsServer shutdown error", "error", err)
 	}
 
 	// Wait for all workers to exit
