@@ -1189,10 +1189,7 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		edm.fsEventWatcher()
-	}()
+	go edm.fsEventWatcher(&wg)
 	edm.fsWatcher.Events <- fsnotifyEvent(watched)
 	select {
 	case <-callbackDone:

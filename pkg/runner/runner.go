@@ -954,7 +954,8 @@ func (edm *dnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
 	return edm.ignoredClientCIDRsParsed
 }
 
-func (edm *dnstapMinimiser) fsEventWatcher() {
+func (edm *dnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) {
+	defer wg.Done()
 	// Like in
 	// https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
 	// we keep a timer per registered filename
@@ -1227,7 +1228,15 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		return
 	}
 	defer edm.stop()
-	defer edm.fsWatcher.Close()
+	defer func() {
+		// Safety net for early-return paths in run() that exit before the
+		// explicit fsWatcher.Close() preceding wg.Wait(). fsnotify's Close
+		// is idempotent, so calling it again after the normal shutdown is a
+		// harmless no-op.
+		if err := edm.fsWatcher.Close(); err != nil {
+			edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
+		}
+	}()
 
 	if err := run(edm, logger, loggerLevel); err != nil {
 		logger.Error("edm: run failed", "error", err)
@@ -1315,8 +1324,6 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 		return fmt.Errorf("unable to configure fsWatchers: %w", err)
 	}
 
-	go edm.fsEventWatcher()
-
 	dti, err := setupDnstapInput(logger, startConf)
 	if err != nil {
 		return fmt.Errorf("unable to setup dnstap input: %w", err)
@@ -1377,6 +1384,12 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 
 		serverWg.Wait()
 	}()
+
+	// Track the fsEventWatcher goroutine so shutdown can wait for it. It
+	// exits once fsWatcher.Close() closes the Events and Errors channels,
+	// which happens before wg.Wait() below.
+	wg.Add(1)
+	go edm.fsEventWatcher(&wg)
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
@@ -1484,6 +1497,12 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 	if !startConf.DisableMQTT {
 		edm.log.Info("Run: stopping MQTT publisher")
 		edm.autopahoCancel()
+	}
+
+	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
+	// wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
+	if err := edm.fsWatcher.Close(); err != nil {
+		edm.log.Error("Run: fsWatcher.Close error", "error", err)
 	}
 
 	// Wait for all workers to exit. The HTTP servers are shut down by the
