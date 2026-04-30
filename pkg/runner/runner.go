@@ -2432,7 +2432,11 @@ timerLoop:
 					err = as.send(absPath, startTS, duration)
 					if err != nil {
 						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
-						time.Sleep(backoffDuration)
+						select {
+						case <-time.After(backoffDuration):
+						case <-edm.ctx.Done():
+							return
+						}
 						continue
 					}
 					err = edm.renameFile(absPath, absPathSent)
