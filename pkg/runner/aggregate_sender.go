@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bufio"
+	"context"
 	"crypto/ed25519"
 	"crypto/tls"
 	"crypto/x509"
@@ -39,10 +40,10 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 	// Create HTTP handler for sending aggregate files to aggrec
 	httpClient := http.Client{
 		Transport: &http.Transport{
-			Dial: (&net.Dialer{
+			DialContext: (&net.Dialer{
 				Timeout:   30 * time.Second,
 				KeepAlive: 30 * time.Second,
-			}).Dial,
+			}).DialContext,
 			TLSHandshakeTimeout:   10 * time.Second,
 			ResponseHeaderTimeout: 10 * time.Second,
 			TLSClientConfig: &tls.Config{
@@ -74,7 +75,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error {
+func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
 	fileName = filepath.Clean(fileName)
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -99,7 +100,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	}
 
 	// Send signed HTTP POST message
-	req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
+	req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
 	}

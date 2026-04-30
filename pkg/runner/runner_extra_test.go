@@ -1269,14 +1269,14 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.send(fileName, time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
+	if err := as.send(t.Context(), fileName, time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if !sawRequest {
 		t.Fatal("server did not receive request")
 	}
 
-	if err := as.send(filepath.Join(t.TempDir(), "missing.parquet"), time.Now(), time.Minute); err == nil {
+	if err := as.send(t.Context(), filepath.Join(t.TempDir(), "missing.parquet"), time.Now(), time.Minute); err == nil {
 		t.Fatal("sending missing file succeeded")
 	}
 
@@ -1309,7 +1309,7 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.send(fileName, time.Now(), time.Minute); err == nil {
+	if err := as.send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
 		t.Fatal("unexpected status succeeded")
 	}
 
@@ -1323,7 +1323,7 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	as.aggrecURL = locationURL
-	if err := as.send(fileName, time.Now(), time.Minute); err == nil {
+	if err := as.send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
 		t.Fatal("bad Location succeeded")
 	}
 }
