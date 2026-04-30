@@ -1453,16 +1453,13 @@ func TestHistogramSenderBranches(t *testing.T) {
 	t.Run("send error triggers backoff log", func(t *testing.T) {
 		oldInterval := histogramSenderInterval
 		oldBackoff := histogramSenderBackoff
-		oldSleep := sleep
 		t.Cleanup(func() {
 			histogramSenderInterval = oldInterval
 			histogramSenderBackoff = oldBackoff
-			sleep = oldSleep
 		})
 		histogramSenderInterval = time.Millisecond
+		// Keep the backoff short so the test does not wait the real backoff.
 		histogramSenderBackoff = time.Millisecond
-		// Replace sleep so the test does not wait the real backoff.
-		sleep = func(time.Duration) {}
 
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
@@ -1503,6 +1500,64 @@ func TestHistogramSenderBranches(t *testing.T) {
 		if !strings.Contains(buf.String(), "unable to send histogram file") {
 			t.Fatalf("expected send-error log, got: %q", buf.String())
 		}
+	})
+
+	t.Run("backoff interrupted by stop", func(t *testing.T) {
+		oldInterval := histogramSenderInterval
+		oldBackoff := histogramSenderBackoff
+		t.Cleanup(func() {
+			histogramSenderInterval = oldInterval
+			histogramSenderBackoff = oldBackoff
+		})
+		histogramSenderInterval = time.Millisecond
+		// A long backoff: a non-interruptible wait would block shutdown for the
+		// full minute, so exiting promptly proves stop() interrupts the backoff.
+		histogramSenderBackoff = time.Minute
+
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+		outboxDir := t.TempDir()
+		sentDir := t.TempDir()
+		name := "dns_histogram-2026-05-28T12-00-00Z_2026-05-28T12-01-00Z.parquet"
+		if err := os.WriteFile(filepath.Join(outboxDir, name), []byte("payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		// Aggregate sender points at an unreachable URL so the send fails and
+		// the sender enters its backoff.
+		u, err := url.Parse("http://127.0.0.1:1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		as, err := edm.newAggregateSender(u, testJWK(t), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edm.aggregSender = as
+
+		buf := &syncBuf{}
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.histogramSender(outboxDir, sentDir, &wg)
+
+		// Wait until the send has failed and the sender is in its backoff.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), "unable to send histogram file") {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !strings.Contains(buf.String(), "unable to send histogram file") {
+			t.Fatalf("sender did not reach backoff: %q", buf.String())
+		}
+
+		// Cancel during the in-flight one-minute backoff; histogramSender must
+		// exit promptly instead of waiting it out.
+		edm.stop()
+		waitOrFail(t, &wg, 2*time.Second, "histogramSender did not exit when cancelled during backoff")
 	})
 
 	t.Run("reload toggles enabled state", func(t *testing.T) {
