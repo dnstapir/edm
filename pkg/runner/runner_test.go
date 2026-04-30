@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2130,5 +2131,38 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 				t.Fatal("IPv6 HLL data is 0 when it should have content")
 			}
 		}
+	}
+}
+
+func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(edm.stop)
+
+	viperNotifyCh := make(chan fsnotify.Event, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		configUpdater(viperNotifyCh, edm)
+	}()
+
+	// Cancelling the context is sticky, so configUpdater observes it via its
+	// select regardless of whether the goroutine has reached the select yet.
+	edm.stop()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("configUpdater did not exit after context cancel")
 	}
 }
