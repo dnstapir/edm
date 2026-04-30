@@ -2145,3 +2145,15 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskCleanerRetentionThreshold(t *testing.T) {
+	now := time.Date(2026, 4, 30, 12, 0, 0, 0, time.UTC)
+
+	if !sentHistogramExpired(now.Add(-25*time.Hour), now) {
+		t.Fatal("histogram older than 24 hours should expire")
+	}
+
+	if sentHistogramExpired(now.Add(-23*time.Hour), now) {
+		t.Fatal("histogram newer than 24 hours should not expire")
+	}
+}

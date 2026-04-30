@@ -364,14 +364,18 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
+const sentHistogramRetention = 24 * time.Hour
+
+func sentHistogramExpired(modTime, now time.Time) bool {
+	return now.Sub(modTime) > sentHistogramRetention
+}
+
 func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) {
 	// We will scan the directory each tick for sent files to remove.
 	defer wg.Done()
 
 	ticker := time.NewTicker(time.Second * 60)
 	defer ticker.Stop()
-
-	oneDay := time.Hour * 12
 
 timerLoop:
 	for {
@@ -397,7 +401,7 @@ timerLoop:
 						continue
 					}
 
-					if time.Since(fileInfo.ModTime()) > oneDay {
+					if sentHistogramExpired(fileInfo.ModTime(), time.Now()) {
 						absPath := filepath.Join(sentDir, dirEntry.Name())
 						edm.log.Info("diskCleaner: removing file", "filename", absPath)
 						err = os.Remove(absPath)
