@@ -6,7 +6,7 @@ require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/dnstap/golang-dnstap v0.4.0
 	github.com/eclipse/paho.golang v0.23.0
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-playground/validator/v10 v10.30.1
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.9
 	github.com/hashicorp/golang-lru/v2 v2.0.7
