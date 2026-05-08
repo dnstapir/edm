@@ -70,6 +70,7 @@ type config struct {
 	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
+	EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
 	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
 	InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
@@ -252,6 +253,11 @@ type sessionData struct {
 type prevSessions struct {
 	sessions     []*sessionData
 	rotationTime time.Time
+}
+
+type parquetRotationRequest struct {
+	rotationTime time.Time
+	done         chan error
 }
 
 type certStore struct {
@@ -1296,6 +1302,9 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	// Setup custom promHandler since we want to use our per-edm registry
 	metricsMux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
+	if startConf.EnableManualParquetRotation {
+		metricsMux.HandleFunc("/debug/rotate-parquet", edm.manualParquetRotationHandler)
+	}
 	go func() {
 		err := metricsServer.ListenAndServe()
 		logger.Error("metricsServer failed", "error", err)
@@ -1450,6 +1459,7 @@ type dnstapMinimiser struct {
 	debug                         bool               // if we should print debug messages during operation
 	sessionWriterCh               chan *prevSessions
 	histogramWriterCh             chan *wellKnownDomainsData
+	parquetRotationRequestCh      chan parquetRotationRequest
 	newQnamePublisherCh           chan *protocols.NewQnameJSON
 	sessionCollectorCh            chan *sessionData
 	aggregSenderMutex             sync.RWMutex
@@ -1614,6 +1624,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	// minimiser loop, otherwise the program can hang on shutdown.
 	edm.sessionWriterCh = make(chan *prevSessions, 100)
 	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
+	edm.parquetRotationRequestCh = make(chan parquetRotationRequest, 1)
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, conf.NewQnameBuffer)
 	edm.sessionCollectorCh = make(chan *sessionData, 100)
 
@@ -2314,6 +2325,42 @@ func (edm *dnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg
 	edm.log.Info("histogramWriter: exiting loop")
 }
 
+func (edm *dnstapMinimiser) manualParquetRotationHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	req := parquetRotationRequest{
+		rotationTime: time.Now().UTC(),
+		done:         make(chan error, 1),
+	}
+
+	select {
+	case edm.parquetRotationRequestCh <- req:
+	case <-edm.ctx.Done():
+		http.Error(w, "edm is shutting down", http.StatusServiceUnavailable)
+		return
+	case <-r.Context().Done():
+		return
+	}
+
+	select {
+	case err := <-req.done:
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte("rotation requested\n"))
+	case <-time.After(10 * time.Second):
+		http.Error(w, "timed out waiting for parquet rotation", http.StatusGatewayTimeout)
+	case <-r.Context().Done():
+		return
+	}
+}
+
 func (edm *dnstapMinimiser) renameFile(src string, dst string) error {
 	dstDir := filepath.Dir(dst)
 
@@ -2918,79 +2965,112 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 
 	hllSettings := getHllDefaults(conf.HistogramHLLExplicitThreshold)
 
+	processSession := func(sd *sessionData) {
+		if sd == nil {
+			return
+		}
+		sessions = append(sessions, sd)
+		sessionUpdated = true
+	}
+
+	flushSessions := func(rotationTime time.Time) {
+		if !sessionUpdated {
+			return
+		}
+		ps := &prevSessions{
+			sessions:     sessions,
+			rotationTime: rotationTime,
+		}
+		sessions = []*sessionData{}
+		sessionUpdated = false
+		edm.sessionWriterCh <- ps
+	}
+
+	processWKDUpdate := func(wu wkdUpdate) {
+		// It is possible an update sitting in the queue has
+		// been created with an outdated dawgModTime due to a
+		// call to rotateTracker(). If this is the case we need
+		// to do a new lookup against the new dawg to make sure
+		// we have the correct index number (or if it is even
+		// present in the new dawg).
+		if wu.dawgModTime != wkd.dawgModTime {
+			if !retryChannelClosed {
+				wkd.retryCh <- wu
+			} else {
+				edm.log.Info("discarding retry of wkd update because we are shutting down")
+			}
+			return
+		}
+
+		if _, exists := wkd.m[wu.dawgIndex]; !exists {
+			wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
+		}
+
+		wkd.m[wu.dawgIndex].OKCount += wu.OKCount
+		wkd.m[wu.dawgIndex].NXCount += wu.NXCount
+		wkd.m[wu.dawgIndex].FailCount += wu.FailCount
+		wkd.m[wu.dawgIndex].ACount += wu.ACount
+		wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
+		wkd.m[wu.dawgIndex].MXCount += wu.MXCount
+		wkd.m[wu.dawgIndex].NSCount += wu.NSCount
+		wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
+		wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
+		wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
+
+		if wu.ip.IsValid() {
+			if wu.ip.Unmap().Is4() {
+				wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
+			} else {
+				wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
+			}
+		}
+	}
+
+	drainCollectorQueues := func() {
+		for {
+			select {
+			case sd := <-edm.sessionCollectorCh:
+				processSession(sd)
+			case wu := <-wkd.updateCh:
+				processWKDUpdate(wu)
+			default:
+				return
+			}
+		}
+	}
+
+	rotateCollectedData := func(rotationTime time.Time) error {
+		flushSessions(rotationTime)
+
+		prevWKD, err := wkd.rotateTracker(edm, dawgFile, rotationTime)
+		if err != nil {
+			return fmt.Errorf("unable to rotate histogram map: %w", err)
+		}
+
+		// Only write out parquet file if there is something to write.
+		if len(prevWKD.m) > 0 {
+			edm.histogramWriterCh <- prevWKD
+		}
+
+		return nil
+	}
+
 collectorLoop:
 	for {
 		select {
 		case sd := <-edm.sessionCollectorCh:
-			sessions = append(sessions, sd)
-			sessionUpdated = true
+			processSession(sd)
 
 		case wu := <-wkd.updateCh:
-			// It is possible an update sitting in the queue has
-			// been created with an outdated dawgModTime due to a
-			// call to rotateTracker(). If this is the case we need
-			// to do a new lookup against the new dawg to make sure
-			// we have the correct index number (or if it is even
-			// present in the new dawg).
-			if wu.dawgModTime != wkd.dawgModTime {
-				if !retryChannelClosed {
-					wkd.retryCh <- wu
-				} else {
-					edm.log.Info("discarding retry of wkd update because we are shutting down")
-				}
-				continue
-			}
-
-			if _, exists := wkd.m[wu.dawgIndex]; !exists {
-				wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
-			}
-
-			wkd.m[wu.dawgIndex].OKCount += wu.OKCount
-			wkd.m[wu.dawgIndex].NXCount += wu.NXCount
-			wkd.m[wu.dawgIndex].FailCount += wu.FailCount
-			wkd.m[wu.dawgIndex].ACount += wu.ACount
-			wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
-			wkd.m[wu.dawgIndex].MXCount += wu.MXCount
-			wkd.m[wu.dawgIndex].NSCount += wu.NSCount
-			wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
-			wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
-			wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
-
-			if wu.ip.IsValid() {
-				if wu.ip.Unmap().Is4() {
-					wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
-				} else {
-					wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
-				}
-			}
+			processWKDUpdate(wu)
 
 		case ts := <-ticker.C:
 			// We want to tick at the start of each minute
 			ticker.Reset(timeUntilNextMinute())
 
-			if sessionUpdated {
-				ps := &prevSessions{
-					sessions:     sessions,
-					rotationTime: ts,
-				}
-
-				sessions = []*sessionData{}
-
-				// We have reset the sessions slice
-				sessionUpdated = false
-
-				edm.sessionWriterCh <- ps
-			}
-
-			prevWKD, err := wkd.rotateTracker(edm, dawgFile, ts)
-			if err != nil {
-				edm.log.Error("unable to rotate histogram map", "error", err)
+			if err := rotateCollectedData(ts); err != nil {
+				edm.log.Error("unable to rotate parquet data", "error", err)
 				continue
-			}
-
-			// Only write out parquet file if there is something to write
-			if len(prevWKD.m) > 0 {
-				edm.histogramWriterCh <- prevWKD
 			}
 
 			// See if we need to modify anything based on a config update
@@ -2999,6 +3079,15 @@ collectorLoop:
 			if conf.HistogramHLLExplicitThreshold != hllSettings.ExplicitThreshold {
 				edm.log.Info("updating HLL explicit threshold based on config change", "from", hllSettings.ExplicitThreshold, "to", conf.HistogramHLLExplicitThreshold)
 				hllSettings.ExplicitThreshold = conf.HistogramHLLExplicitThreshold
+			}
+
+		case req := <-edm.parquetRotationRequestCh:
+			edm.log.Info("dataCollector: manual parquet rotation requested", "rotation_time", req.rotationTime)
+			drainCollectorQueues()
+			err := rotateCollectedData(req.rotationTime)
+			req.done <- err
+			if err != nil {
+				edm.log.Error("unable to rotate parquet data", "error", err)
 			}
 
 		case <-wkd.stop:
