@@ -97,10 +97,8 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 }
 
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
-// previous design ran sign + publish in a single goroutine, which made
-// jws.Sign a serialization bottleneck. Splitting them lets sign work
-// parallelize across cores while the paho ConnectionManager's
-// single-connection requirement is preserved by the lone publisher.
+// sign workers parallelize CPU-bound JWS signing across cores while the lone
+// publisher preserves paho ConnectionManager's single-connection behavior.
 func (edm *dnstapMinimiser) startMQTTPipeline(cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
 	if signWorkers <= 0 {
 		signWorkers = 1
@@ -159,7 +157,10 @@ func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) 
 func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic string, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
-	var signedMsg []byte
+	var (
+		signedMsg []byte
+		ok        bool
+	)
 	for {
 		// We only need to wait for a server connection if we have no
 		// local queue. Otherwise we can just start appending messages
@@ -172,7 +173,6 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 			}
 		}
 
-		var ok bool
 		select {
 		case signedMsg, ok = <-edm.mqttSignedCh:
 			if !ok {
