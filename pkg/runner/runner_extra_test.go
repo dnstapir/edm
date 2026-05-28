@@ -696,10 +696,15 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 	dir := t.TempDir()
 	watched := filepath.Join(dir, "watched.txt")
 	var calls atomic.Int32
+	callbackDone := make(chan struct{}, 1)
 	edm.fsWatcherFuncs = map[string][]func() error{
 		watched: {
 			func() error {
 				calls.Add(1)
+				select {
+				case callbackDone <- struct{}{}:
+				default:
+				}
 				return errors.New("logged")
 			},
 		},
@@ -712,7 +717,11 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 		edm.fsEventWatcher()
 	}()
 	edm.fsWatcher.Events <- fsnotifyEvent(watched)
-	time.Sleep(150 * time.Millisecond)
+	select {
+	case <-callbackDone:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for watcher callback")
+	}
 	if calls.Load() != 1 {
 		t.Fatalf("watcher callbacks = %d, want 1", calls.Load())
 	}
@@ -958,15 +967,18 @@ func TestRunAutoPahoPublishPath(t *testing.T) {
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
 	t.Cleanup(edm.autopahoCancel)
 	jwk := testJWK(t)
-	conn := &fakeAutoPahoConnection{}
+	conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
 	edm.autopahoWg.Add(1)
 	go edm.runAutoPaho(conn, jwk, false)
 	edm.mqttPubCh <- []byte(`{"publish":"now"}`)
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-conn.publishedCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for publish")
+	}
 	close(edm.mqttPubCh)
 	edm.autopahoWg.Wait()
-	time.Sleep(20 * time.Millisecond)
 
 	conn.mu.Lock()
 	published := len(conn.published)
@@ -988,10 +1000,11 @@ func TestRunAutoPahoAwaitError(t *testing.T) {
 }
 
 type fakeAutoPahoConnection struct {
-	mu        sync.Mutex
-	queued    []*autopaho.QueuePublish
-	published []*paho.Publish
-	awaitErr  error
+	mu          sync.Mutex
+	queued      []*autopaho.QueuePublish
+	published   []*paho.Publish
+	awaitErr    error
+	publishedCh chan struct{}
 }
 
 func (f *fakeAutoPahoConnection) AwaitConnection(context.Context) error {
@@ -1000,8 +1013,14 @@ func (f *fakeAutoPahoConnection) AwaitConnection(context.Context) error {
 
 func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*paho.PublishResponse, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.published = append(f.published, p)
+	f.mu.Unlock()
+	if f.publishedCh != nil {
+		select {
+		case f.publishedCh <- struct{}{}:
+		default:
+		}
+	}
 	return &paho.PublishResponse{}, nil
 }
 
