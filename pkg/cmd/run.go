@@ -1,19 +1,19 @@
 package cmd
 
 import (
-	"log"
-
 	"github.com/dnstapir/edm/pkg/runner"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var runRunner = runner.Run
 
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run dnstapir-edm in dnstap capture mode",
 	Run: func(_ *cobra.Command, _ []string) {
-		runner.Run(edmLogger, edmLoggerLevel)
+		runRunner(edmLogger, edmLoggerLevel)
 	},
 }
 
@@ -77,8 +77,5 @@ func init() {
 	runCmd.Flags().Bool("debug-enable-blockprofiling", false, "Enable profiling of goroutine blocking events")
 	runCmd.Flags().Bool("debug-enable-mutexprofiling", false, "Enable profiling of mutex contention events")
 
-	err := viper.BindPFlags(runCmd.Flags())
-	if err != nil {
-		log.Fatal(err)
-	}
+	cobra.CheckErr(viper.BindPFlags(runCmd.Flags()))
 }

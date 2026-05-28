@@ -3,17 +3,20 @@ package runner
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"io"
 	"log/slog"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/fsnotify/fsnotify"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -24,7 +27,7 @@ import (
 
 var (
 	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
-	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in testdata directory")
+	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in a temporary directory")
 	defaultTC    = testConfiger{
 		CryptopanKey:            "key1",
 		CryptopanKeySalt:        "aabbccddeeffgghh",
@@ -34,6 +37,33 @@ var (
 		DisableMQTT:             false,
 	}
 )
+
+func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *dnstapMinimiser {
+	t.Helper()
+
+	discardLogger := slog.NewTextHandler(io.Discard, nil)
+	logger := slog.New(discardLogger)
+
+	edm, err := newDnstapMinimiser(logger, tc)
+	if err != nil {
+		t.Fatalf("unable to setup edm: %s", err)
+	}
+
+	t.Cleanup(func() {
+		if edm.stop != nil {
+			edm.stop()
+		}
+		if edm.fsWatcher != nil {
+			if err := edm.fsWatcher.Close(); err != nil {
+				if !errors.Is(err, fsnotify.ErrClosed) {
+					t.Fatalf("unable to close fsWatcher: %s", err)
+				}
+			}
+		}
+	})
+
+	return edm
+}
 
 func BenchmarkWKDTLookup(b *testing.B) {
 	if !*testDawg {
@@ -216,19 +246,13 @@ func TestWKD(t *testing.T) {
 }
 
 func TestIgnoredClientIPsValid(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	testdataFile1 := "testdata/ignored-client-ips.valid1"
 	testdataFile2 := "testdata/ignored-client-ips.valid2"
 
 	edm.conf.IgnoredClientIPsFile = testdataFile1
-	err = edm.setIgnoredClientIPs()
+	err := edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -400,18 +424,12 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 }
 
 func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	testdataFile := "testdata/ignored-client-ips.empty-lines-and-comments"
 
 	edm.conf.IgnoredClientIPsFile = testdataFile
-	err = edm.setIgnoredClientIPs()
+	err := edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -466,18 +484,12 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 }
 
 func TestIgnoredClientIPsEmpty(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	testdataFile := "testdata/ignored-client-ips.valid1"
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
 	edm.conf.IgnoredClientIPsFile = testdataFile
-	err = edm.setIgnoredClientIPs()
+	err := edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -553,18 +565,12 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 }
 
 func TestIgnoredClientIPsUnset(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// To make sure unsetting the filename used for ignored client IPs
 	// resets stuff as expected first read in a file with content
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
-	err = edm.setIgnoredClientIPs()
+	err := edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -626,19 +632,13 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 }
 
 func TestIgnoredClientIPsInvalidClient(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Even if we are testing invalid data we still need to have loaded a
 	// IP file with at least one valid entry in it to even inspect the
 	// value.
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
-	err = edm.setIgnoredClientIPs()
+	err := edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -673,13 +673,7 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 }
 
 func TestIgnoredQuestionNamesValid(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	testdataFile1 := "testdata/ignored-question-names.valid1.dawg"
 	testdataFile2 := "testdata/ignored-question-names.valid2.dawg"
@@ -688,7 +682,7 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	expectedNumNames := 2
 
 	edm.conf.IgnoredQuestionNamesFile = testdataFile1
-	err = edm.setIgnoredQuestionNames()
+	err := edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -824,18 +818,12 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 }
 
 func TestIgnoredQuestionNamesEmpty(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// To make sure reading an empty file resets stuff as expected first read in a file with content
 	testdataFile := "testdata/ignored-question-names.valid1.dawg"
 	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
-	err = edm.setIgnoredQuestionNames()
+	err := edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -904,19 +892,13 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 }
 
 func TestIgnoredQuestionNamesUnset(t *testing.T) {
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// To make sure unsetting the filename used for ignored question names
 	// resets stuff as expected first read in a file with content
 	testdataFile := "testdata/ignored-question-names.valid1.dawg"
 	edm.conf.IgnoredQuestionNamesFile = testdataFile
-	err = edm.setIgnoredQuestionNames()
+	err := edm.setIgnoredQuestionNames()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
@@ -1225,11 +1207,6 @@ func TestEDMIP6BytesToInt(t *testing.T) {
 }
 
 func TestPseudonymiseDnstap(t *testing.T) {
-	// Dont output logging
-	// https://github.com/golang/go/issues/62005
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
@@ -1260,10 +1237,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		},
 	}
 
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	if edm.cryptopanCache != nil {
 		if edm.cryptopanCache.Len() != 0 {
@@ -1383,7 +1357,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	}
 
 	// Replace the cryptopan instance and verify we now get different pseudonymised results
-	err = edm.setCryptopan("key2", defaultTC.CryptopanKeySalt, defaultTC.CryptopanAddressEntries)
+	err := edm.setCryptopan("key2", defaultTC.CryptopanKeySalt, defaultTC.CryptopanAddressEntries)
 	if err != nil {
 		t.Fatalf("unable to call edm.SetCryptopan: %s", err)
 	}
@@ -1546,19 +1520,11 @@ func TestPseudonymiseDnstap(t *testing.T) {
 func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 	b.ReportAllocs()
 
-	// Dont output logging
-	// https://github.com/golang/go/issues/62005
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
 
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		b.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(b, defaultTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1575,11 +1541,6 @@ func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 	b.ReportAllocs()
 
-	// Dont output logging
-	// https://github.com/golang/go/issues/62005
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
@@ -1587,10 +1548,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 	uncachedTC := defaultTC
 	uncachedTC.CryptopanAddressEntries = 0
 
-	edm, err := newDnstapMinimiser(logger, uncachedTC)
-	if err != nil {
-		b.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(b, uncachedTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1607,19 +1565,11 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 	b.ReportAllocs()
 
-	// Dont output logging
-	// https://github.com/golang/go/issues/62005
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 	origRespAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:ddee")
 
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		b.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(b, defaultTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1636,11 +1586,6 @@ func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 	b.ReportAllocs()
 
-	// Dont output logging
-	// https://github.com/golang/go/issues/62005
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
 	// The original addresses we want to pseudonymise
 	origQueryAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 	origRespAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:ddee")
@@ -1648,10 +1593,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 	uncachedTC := defaultTC
 	uncachedTC.CryptopanAddressEntries = 0
 
-	edm, err := newDnstapMinimiser(logger, uncachedTC)
-	if err != nil {
-		b.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(b, uncachedTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -1819,7 +1761,7 @@ func TestSessionWriter(t *testing.T) {
 	}
 
 	if *writeParquet {
-		f, err := os.Create("testdata/generated-session.parquet")
+		f, err := os.Create(filepath.Join(t.TempDir(), "generated-session.parquet"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1894,7 +1836,7 @@ func TestHistogramWriter(t *testing.T) {
 	}
 
 	if *writeParquet {
-		f, err := os.Create("testdata/generated-histogram.parquet")
+		f, err := os.Create(filepath.Join(t.TempDir(), "generated-histogram.parquet"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2037,13 +1979,7 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 	// Make sure we only include HLL data once the number of unique IPv4 or
 	// IPv6 client IPs exceed the configured explicit threshold where we
 	// start using probabilistic HLL data.
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	tests := []struct {
 		description       string

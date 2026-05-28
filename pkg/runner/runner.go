@@ -20,7 +20,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -33,7 +32,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/dnstapir/edm/pkg/protocols"
-	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/fsnotify/fsnotify"
 	"github.com/go-playground/validator/v10"
@@ -368,7 +366,7 @@ func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) {
 	// We will scan the directory each tick for sent files to remove.
 	defer wg.Done()
 
-	ticker := time.NewTicker(time.Second * 60)
+	ticker := time.NewTicker(diskCleanerInterval)
 	defer ticker.Stop()
 
 	oneDay := time.Hour * 12
@@ -607,7 +605,7 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 		// if more events occur we will reset it again. This allows us
 		// to wait until events on the file settles down before
 		// actually calling the update function.
-		t.Reset(100 * time.Millisecond)
+		t.Reset(configUpdateDebounce)
 	}
 }
 
@@ -660,7 +658,7 @@ func (edm *dnstapMinimiser) setupMQTT() {
 	mqttJWK, err := edDsaJWKFromFile(conf.MQTTSigningKeyFile)
 	if err != nil {
 		edm.log.Error("unable to parse jwk from 'mqtt-signing-key-file'", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	// Leaving these nil will use the OS default CA certs
@@ -671,7 +669,7 @@ func (edm *dnstapMinimiser) setupMQTT() {
 		mqttCACertPool, err = certPoolFromFile(conf.MQTTCAFile)
 		if err != nil {
 			edm.log.Error("failed to create CA cert pool for '--mqtt-ca-file'", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 	}
 
@@ -682,13 +680,13 @@ func (edm *dnstapMinimiser) setupMQTT() {
 		err = os.MkdirAll(mqttQueueDir, 0o750)
 		if err != nil {
 			edm.log.Error("unable to create MQTT queue dir", "error", err, "queue_dir", mqttQueueDir)
-			os.Exit(1)
+			exitProcess(1)
 		}
 
-		mqttFileQueue, err = file.New(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
+		mqttFileQueue, err = newFileQueue(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
 		if err != nil {
 			edm.log.Error("unable to init MQTT queue file based queue", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 	}
 
@@ -699,15 +697,15 @@ func (edm *dnstapMinimiser) setupMQTT() {
 	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
 	if err != nil {
 		edm.log.Error("unable to create autopaho config", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(context.Background())
 
-	autopahoCm, err := autopaho.NewConnection(edm.autopahoCtx, autopahoConfig)
+	autopahoCm, err := newAutoPahoConnection(edm.autopahoCtx, autopahoConfig)
 	if err != nil {
 		edm.log.Error("unable to create autopaho connection manager", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	// Connect to the broker - this will return immediately after initiating the connection process
@@ -926,7 +924,7 @@ func (edm *dnstapMinimiser) fsEventWatcher() {
 				timersMutex.Unlock()
 			}
 
-			t.Reset(100 * time.Millisecond)
+			t.Reset(fsEventDebounce)
 		case err, ok := <-edm.fsWatcher.Errors:
 			if !ok {
 				// watcher is closed
@@ -1123,7 +1121,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	edm, err := newDnstapMinimiser(logger, vc)
 	if err != nil {
 		logger.Error("unable to init", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 	defer edm.stop()
 	defer edm.fsWatcher.Close()
@@ -1149,13 +1147,13 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		logger.Error("unable to configure ignored client IPs", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	err = edm.setIgnoredQuestionNames()
 	if err != nil {
 		logger.Error("unable to configure ignored question names", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	viperNotifyCh := make(chan fsnotify.Event)
@@ -1167,10 +1165,10 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	})
 
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
-	pdb, err := pebble.Open(pdbDir, &pebble.Options{})
+	pdb, err := openPebble(pdbDir, &pebble.Options{})
 	if err != nil {
 		logger.Error("unable to open pebble database", "dir", pdbDir, "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 	defer func() {
 		err = pdb.Close()
@@ -1183,13 +1181,13 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		err := edm.loadHTTPClientCert()
 		if err != nil {
 			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 
 		err = edm.setupHistogramSender()
 		if err != nil {
 			edm.log.Error("unable to setup histogram sender", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 	}
 
@@ -1197,7 +1195,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		err := edm.loadMQTTClientCert()
 		if err != nil {
 			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 
 		edm.setupMQTT()
@@ -1206,7 +1204,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	err = edm.configureFSWatchers(startConf)
 	if err != nil {
 		logger.Error("unable to configure fsWatchers", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	go edm.fsEventWatcher()
@@ -1215,25 +1213,25 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	var dti *dnstap.FrameStreamSockInput
 	if startConf.InputUnix != "" {
 		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)
-		dti, err = dnstap.NewFrameStreamSockInputFromPath(startConf.InputUnix)
+		dti, err = newFrameStreamSockInputFromPath(startConf.InputUnix)
 		if err != nil {
 			logger.Error("unable to create dnstap unix socket", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 	} else if startConf.InputTCP != "" {
 		logger.Info("creating plaintext dnstap TCP socket", "socket", startConf.InputTCP)
-		l, err := net.Listen("tcp", startConf.InputTCP)
+		l, err := listenNet("tcp", startConf.InputTCP)
 		if err != nil {
 			logger.Error("unable to create plaintext dnstap TCP socket", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
-		dti = dnstap.NewFrameStreamSockInput(l)
+		dti = newFrameStreamSockInput(l)
 	} else if startConf.InputTLS != "" {
 		logger.Info("creating encrypted dnstap TLS socket", "socket", startConf.InputTLS)
 		dnstapInputCert, err := tls.LoadX509KeyPair(startConf.InputTLSCertFile, startConf.InputTLSKeyFile)
 		if err != nil {
 			logger.Error("unable to load x509 dnstap listener cert", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
 		dnstapTLSConfig := &tls.Config{
 			Certificates: []tls.Certificate{dnstapInputCert},
@@ -1246,19 +1244,19 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 			inputTLSClientCACertPool, err := certPoolFromFile(startConf.InputTLSClientCAFile)
 			if err != nil {
 				logger.Error("failed to create CA cert pool for '-input-tls-client-ca-file': %s", "error", err)
-				os.Exit(1)
+				exitProcess(1)
 			}
 
 			dnstapTLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
 			dnstapTLSConfig.ClientCAs = inputTLSClientCACertPool
 		}
 
-		l, err := tls.Listen("tcp", startConf.InputTLS, dnstapTLSConfig)
+		l, err := listenTLS("tcp", startConf.InputTLS, dnstapTLSConfig)
 		if err != nil {
 			logger.Error("unable to create TCP listener", "error", err)
-			os.Exit(1)
+			exitProcess(1)
 		}
-		dti = dnstap.NewFrameStreamSockInput(l)
+		dti = newFrameStreamSockInput(l)
 	}
 	dti.SetTimeout(time.Second * 5)
 	dti.SetLogger(log.Default())
@@ -1270,7 +1268,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	seenQnameLRU, err := lru.New[string, struct{}](startConf.QnameSeenEntries)
 	if err != nil {
 		logger.Error("unable to create seen-qname LRU", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	// Uses the default mux which is modified by importing net/http/pprof
@@ -1281,7 +1279,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	}
 
 	go func() {
-		err := pprofServer.ListenAndServe()
+		err := listenAndServeHTTP(pprofServer)
 		logger.Error("pprofServer failed", "error", err)
 	}()
 
@@ -1297,7 +1295,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	// Setup custom promHandler since we want to use our per-edm registry
 	metricsMux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
 	go func() {
-		err := metricsServer.ListenAndServe()
+		err := listenAndServeHTTP(metricsServer)
 		logger.Error("metricsServer failed", "error", err)
 	}()
 
@@ -1332,13 +1330,13 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	dawgFinder, dawgModTime, err := loadDawgFile(dawgFile)
 	if err != nil {
 		edm.log.Error("Run: loadDawgFile failed", "error", err)
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	wkdTracker, err := newWellKnownDomainsTracker(dawgFinder, dawgModTime)
 	if err != nil {
 		edm.log.Error(err.Error())
-		os.Exit(1)
+		exitProcess(1)
 	}
 
 	debugDnstapFilename := startConf.DebugDnstapFilename
@@ -1356,7 +1354,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		debugDnstapFile, err = os.OpenFile(debugDnstapFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			edm.log.Error("unable to open debug dnstap file", "error", err.Error(), "filename", debugDnstapFilename)
-			os.Exit(1)
+			exitProcess(1)
 		}
 		defer func() {
 			err := debugDnstapFile.Close()
@@ -1502,7 +1500,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	}
 
 	// Exit gracefully on SIGINT or SIGTERM
-	edm.ctx, edm.stop = signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	edm.ctx, edm.stop = notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	// Use separate prometheus registry for each edm instance, otherwise
 	// trying to run tests where each test do their own call to
@@ -1593,7 +1591,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
 	// the histogram sender is currently busy.
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-	edm.fsWatcher, err = fsnotify.NewWatcher()
+	edm.fsWatcher, err = newFSWatcher()
 	if err != nil {
 		return nil, fmt.Errorf("newDnstapMinimiser: unable to create fsWatcher: %w", err)
 	}
@@ -2050,7 +2048,7 @@ minimiserLoop:
 func (edm *dnstapMinimiser) monitorChannelLen(wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(monitorChannelInterval)
 	defer ticker.Stop()
 
 	edm.log.Info("monitorChannelLen: starting")
@@ -2327,6 +2325,11 @@ func (edm *dnstapMinimiser) renameFile(src string, dst string) error {
 		}
 
 		if errors.Is(err, fs.ErrNotExist) {
+			if _, statErr := os.Stat(dstDir); statErr == nil {
+				return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
+			} else if !errors.Is(statErr, fs.ErrNotExist) {
+				return fmt.Errorf("renameFile: unable to stat destination dir: %s: %w", dstDir, statErr)
+			}
 			// If the destination directory does not exist we will
 			// need to create it and then retry the Rename() in the
 			// next iteration of the loop.
@@ -2376,11 +2379,11 @@ func (edm *dnstapMinimiser) createFile(dst string) (*os.File, error) {
 func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	backoffDuration := time.Second * 15
+	backoffDuration := histogramSenderBackoff
 
 	// We will scan the outbox directory each tick for histogram parquet
 	// files to send
-	ticker := time.NewTicker(time.Second * 10)
+	ticker := time.NewTicker(histogramSenderInterval)
 	defer ticker.Stop()
 
 	conf := edm.getConfig()
@@ -2432,7 +2435,7 @@ timerLoop:
 					err = as.send(absPath, startTS, duration)
 					if err != nil {
 						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
-						time.Sleep(backoffDuration)
+						sleep(backoffDuration)
 						continue
 					}
 					err = edm.renameFile(absPath, absPathSent)
