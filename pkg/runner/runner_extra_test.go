@@ -944,8 +944,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 
 	jwk := testJWK(t)
 	conn := &fakeAutoPahoConnection{}
-	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(conn, jwk, true)
+	edm.startMQTTPipeline(conn, jwk, true, 1)
 	edm.mqttPubCh <- []byte(`{"hello":"world"}`)
 	close(edm.mqttPubCh)
 	edm.autopahoWg.Wait()
@@ -966,15 +965,14 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 	}
 }
 
-func TestRunAutoPahoPublishPath(t *testing.T) {
+func TestMQTTPipelinePublishPath(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
 	t.Cleanup(edm.autopahoCancel)
 	jwk := testJWK(t)
 	conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(conn, jwk, false)
+	edm.startMQTTPipeline(conn, jwk, false, 1)
 	edm.mqttPubCh <- []byte(`{"publish":"now"}`)
 	select {
 	case <-conn.publishedCh:
@@ -992,15 +990,15 @@ func TestRunAutoPahoPublishPath(t *testing.T) {
 	}
 }
 
-func TestRunAutoPahoAwaitError(t *testing.T) {
+func TestMQTTPublishWorkerAwaitError(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
 	t.Cleanup(edm.autopahoCancel)
 	conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
 	edm.autopahoWg.Add(1)
-	go edm.runAutoPaho(conn, testJWK(t), false)
-	edm.autopahoWg.Wait()
+	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+	waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
 }
 
 type fakeAutoPahoConnection struct {
