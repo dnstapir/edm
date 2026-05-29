@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
@@ -13,6 +14,12 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jws"
 )
+
+type autoPahoConnection interface {
+	AwaitConnection(context.Context) error
+	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
+	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
+}
 
 const (
 	pahoLogTypeDebug      = "debug"
@@ -88,7 +95,7 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 	return cliCfg, nil
 }
 
-func (edm *dnstapMinimiser) runAutoPaho(cm *autopaho.ConnectionManager, mqttJWK jwk.Key, usingFileQueue bool) {
+func (edm *dnstapMinimiser) runAutoPaho(cm autoPahoConnection, mqttJWK jwk.Key, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
 	topic := "events/up/" + mqttJWK.KeyID() + "/new_qname"

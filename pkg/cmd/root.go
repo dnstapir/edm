@@ -12,6 +12,17 @@ var (
 	cfgFile        string
 	edmLogger      *slog.Logger
 	edmLoggerLevel *slog.LevelVar
+	exitProcess    = os.Exit
+	userHomeDir    = os.UserHomeDir
+
+	viperSetConfigFile  = viper.SetConfigFile
+	viperAddConfigPath  = viper.AddConfigPath
+	viperSetConfigType  = viper.SetConfigType
+	viperSetConfigName  = viper.SetConfigName
+	viperAutomaticEnv   = viper.AutomaticEnv
+	viperReadInConfig   = viper.ReadInConfig
+	viperConfigFileUsed = viper.ConfigFileUsed
+	viperWatchConfig    = viper.WatchConfig
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -33,7 +44,7 @@ func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	edmLoggerLevel = loggerLevel
 	err := rootCmd.Execute()
 	if err != nil {
-		os.Exit(1)
+		exitProcess(1)
 	}
 }
 
@@ -55,25 +66,25 @@ func init() {
 func initConfig() {
 	if cfgFile != "" {
 		// Use config file from the flag.
-		viper.SetConfigFile(cfgFile)
+		viperSetConfigFile(cfgFile)
 	} else {
 		// Find home directory.
-		home, err := os.UserHomeDir()
+		home, err := userHomeDir()
 		cobra.CheckErr(err)
 
 		// Search config in home directory with name ".edm" (without extension).
-		viper.AddConfigPath(home)
-		viper.SetConfigType("toml")
-		viper.SetConfigName(".dnstapir-edm")
+		viperAddConfigPath(home)
+		viperSetConfigType("toml")
+		viperSetConfigName(".dnstapir-edm")
 	}
 
-	viper.AutomaticEnv() // read in environment variables that match
+	viperAutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
-	if err := viper.ReadInConfig(); err == nil {
-		edmLogger.Info("using config file", "filename", viper.ConfigFileUsed())
+	if err := viperReadInConfig(); err == nil {
+		edmLogger.Info("using config file", "filename", viperConfigFileUsed())
 	}
 
 	// Make it so we can detect changes to the cryptopan secret in the config
-	viper.WatchConfig()
+	viperWatchConfig()
 }

@@ -132,7 +132,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
 	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/PT%dM", ts.Truncate(time.Minute).Format(time.RFC3339), minutes))
 
 	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
-	startTime := time.Now()
+	startTime := now()
 	res, err := as.signingHTTPClient.Do(req)
 	elapsedTime := time.Since(startTime)
 	if err != nil {
