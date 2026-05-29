@@ -1,19 +1,19 @@
 package cmd
 
 import (
-	"log"
-
 	"github.com/dnstapir/edm/pkg/runner"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var runRunner = runner.Run
 
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run dnstapir-edm in dnstap capture mode",
 	Run: func(_ *cobra.Command, _ []string) {
-		runner.Run(edmLogger, edmLoggerLevel)
+		runRunner(edmLogger, edmLoggerLevel)
 	},
 }
 
@@ -34,6 +34,7 @@ func init() {
 	runCmd.Flags().Bool("disable-histogram-sender", false, "do not check for histogram files to upload to core")
 	runCmd.Flags().Bool("disable-mqtt", false, "disable MQTT message sending")
 	runCmd.Flags().Bool("disable-mqtt-filequeue", false, "disable MQTT file based queue")
+	runCmd.Flags().Bool("enable-manual-parquet-rotation", false, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
 
 	runCmd.Flags().String("input-unix", "", "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
 	runCmd.Flags().String("input-tcp", "", "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
@@ -77,8 +78,5 @@ func init() {
 	runCmd.Flags().Bool("debug-enable-blockprofiling", false, "Enable profiling of goroutine blocking events")
 	runCmd.Flags().Bool("debug-enable-mutexprofiling", false, "Enable profiling of mutex contention events")
 
-	err := viper.BindPFlags(runCmd.Flags())
-	if err != nil {
-		log.Fatal(err)
-	}
+	cobra.CheckErr(viper.BindPFlags(runCmd.Flags()))
 }
