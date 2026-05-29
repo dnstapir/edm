@@ -158,8 +158,12 @@ func TestRunCommandUsesRunnerSeam(t *testing.T) {
 
 func TestRunFlagsBoundToViper(t *testing.T) {
 	t.Cleanup(func() {
-		_ = runCmd.Flags().Set("http-url", "https://127.0.0.1:8443")
-		_ = runCmd.Flags().Set("debug", "false")
+		if err := runCmd.Flags().Set("http-url", "https://127.0.0.1:8443"); err != nil {
+			t.Fatalf("reset http-url flag: %s", err)
+		}
+		if err := runCmd.Flags().Set("debug", "false"); err != nil {
+			t.Fatalf("reset debug flag: %s", err)
+		}
 	})
 
 	for _, name := range []string{"http-url", "debug"} {

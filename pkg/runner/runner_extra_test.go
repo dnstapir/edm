@@ -298,8 +298,8 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pool.Subjects()) == 0 {
-		t.Fatal("cert pool has no subjects")
+	if pool.Equal(x509.NewCertPool()) {
+		t.Fatal("cert pool has no certificates")
 	}
 
 	if _, err := certPoolFromFile(writeTempFile(t, "bad-ca.pem", []byte("not pem"))); err == nil {
@@ -332,14 +332,18 @@ func TestLoadDawgFileErrors(t *testing.T) {
 	if _, _, err := loadDawgFile(writeTempFile(t, "empty.dawg", nil)); !errors.Is(err, errEmptyDawgFile) {
 		t.Fatalf("empty DAWG error = %v", err)
 	}
-	func() {
+	recovered := func() (recovered any) {
 		defer func() {
-			if recover() == nil {
-				t.Fatal("invalid DAWG did not panic")
-			}
+			recovered = recover()
 		}()
-		_, _, _ = loadDawgFile(writeTempFile(t, "invalid.dawg", []byte("bad")))
+		if _, _, err := loadDawgFile(writeTempFile(t, "invalid.dawg", []byte("bad"))); err != nil {
+			t.Fatalf("invalid DAWG returned error instead of panic: %s", err)
+		}
+		return nil
 	}()
+	if recovered == nil {
+		t.Fatal("invalid DAWG did not panic")
+	}
 
 	finder, _, err := loadDawgFile(testDawgFile(t, "example.com."))
 	if err != nil {
@@ -926,14 +930,14 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ClientConfig.ClientID != "client-id" || cfg.KeepAlive != 30 || cfg.TlsCfg.MinVersion != tls.VersionTLS13 {
+	if cfg.ClientID != "client-id" || cfg.KeepAlive != 30 || cfg.TlsCfg.MinVersion != tls.VersionTLS13 {
 		t.Fatalf("unexpected MQTT config: %#v", cfg)
 	}
 	cfg.OnConnectionUp(nil, nil)
 	cfg.OnConnectError(errors.New("connect"))
-	cfg.ClientConfig.OnClientError(errors.New("client"))
-	cfg.ClientConfig.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
-	cfg.ClientConfig.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
+	cfg.OnClientError(errors.New("client"))
+	cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
+	cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
 	if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30, nil); err == nil {
 		t.Fatal("bad MQTT URL succeeded")
 	}

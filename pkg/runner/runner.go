@@ -2356,7 +2356,9 @@ func (edm *dnstapMinimiser) manualParquetRotationHandler(w http.ResponseWriter, 
 			return
 		}
 		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte("rotation requested\n"))
+		if _, err := w.Write([]byte("rotation requested\n")); err != nil {
+			edm.log.Error("manualParquetRotationHandler: failed to write response", "error", err)
+		}
 	case <-time.After(manualParquetRotationWaitTimeout):
 		http.Error(w, "timed out waiting for parquet rotation", http.StatusGatewayTimeout)
 	case <-r.Context().Done():
