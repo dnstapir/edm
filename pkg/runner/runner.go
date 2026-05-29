@@ -64,6 +64,11 @@ var validate = validator.New(validator.WithRequiredStructEnabled())
 // Labels 0-9
 const defaultLabelLimit = 10
 
+const (
+	metricsServerWriteTimeout        = 10 * time.Second
+	manualParquetRotationWaitTimeout = metricsServerWriteTimeout - time.Second
+)
+
 type config struct {
 	ConfigFile                    string `mapstructure:"config-file" validate:"required"`
 	DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
@@ -1296,7 +1301,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		Addr:           "127.0.0.1:2112",
 		Handler:        metricsMux,
 		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
+		WriteTimeout:   metricsServerWriteTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 
@@ -2354,7 +2359,7 @@ func (edm *dnstapMinimiser) manualParquetRotationHandler(w http.ResponseWriter, 
 		}
 		w.WriteHeader(http.StatusAccepted)
 		_, _ = w.Write([]byte("rotation requested\n"))
-	case <-time.After(10 * time.Second):
+	case <-time.After(manualParquetRotationWaitTimeout):
 		http.Error(w, "timed out waiting for parquet rotation", http.StatusGatewayTimeout)
 	case <-r.Context().Done():
 		return
