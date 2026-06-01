@@ -14,8 +14,14 @@ import (
 	"time"
 )
 
-// discardEDM returns a minimal minimiser with a no-op logger, enough for
-// exercising the file-operation helpers that only touch edm.log.
+// errInjected is the sentinel failure injected through the file-op seams so
+// the error-path assertions can confirm (via errors.Is) that the injected
+// failure is the one surfaced, rather than some unrelated error.
+var errInjected = errors.New("injected failure")
+
+// discardEDM returns a minimal minimiser with a no-op logger. It intentionally
+// only sets the logger, which is all the file-operation helpers under test
+// touch; it deliberately does not go through newTestDnstapMinimiser.
 func discardEDM() *dnstapMinimiser {
 	return &dnstapMinimiser{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
@@ -47,22 +53,20 @@ func TestCreateFile(t *testing.T) {
 
 	t.Run("mkdir failure is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error {
-			return errors.New("mkdir boom")
-		})
+		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error { return errInjected })
 		dst := filepath.Join(t.TempDir(), "missing", "out.parquet")
-		if _, err := edm.createFile(dst); err == nil {
-			t.Fatal("createFile succeeded despite mkdir failure")
+		_, err := edm.createFile(dst)
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("createFile error = %v, want %v", err, errInjected)
 		}
 	})
 
 	t.Run("non-ENOENT create error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osCreate, func(string) (*os.File, error) {
-			return nil, errors.New("permission boom")
-		})
-		if _, err := edm.createFile(filepath.Join(t.TempDir(), "out.parquet")); err == nil {
-			t.Fatal("createFile succeeded despite create error")
+		swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+		_, err := edm.createFile(filepath.Join(t.TempDir(), "out.parquet"))
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("createFile error = %v, want %v", err, errInjected)
 		}
 	})
 }
@@ -83,21 +87,28 @@ func TestRenameFile(t *testing.T) {
 
 	t.Run("dest dir exists but rename fails", func(t *testing.T) {
 		edm := discardEDM()
+		// A real FileInfo (not (nil,nil)) so the stub matches os.Stat's
+		// contract; osStat returning a nil error breaks the retry loop and
+		// makes renameFile surface the rename error (here fs.ErrNotExist).
+		info, statErr := os.Stat(t.TempDir())
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
 		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
-		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return nil, nil })
-		if err := edm.renameFile("src", "dst"); err == nil {
-			t.Fatal("renameFile succeeded despite persistent rename failure")
+		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return info, nil })
+		err := edm.renameFile("src", "dst")
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("renameFile error = %v, want fs.ErrNotExist", err)
 		}
 	})
 
 	t.Run("stat error is reported", func(t *testing.T) {
 		edm := discardEDM()
 		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
-		swapSeam(t, &osStat, func(string) (os.FileInfo, error) {
-			return nil, errors.New("stat boom")
-		})
-		if err := edm.renameFile("src", "dst"); err == nil {
-			t.Fatal("renameFile succeeded despite stat error")
+		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return nil, errInjected })
+		err := edm.renameFile("src", "dst")
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
 		}
 	})
 
@@ -105,21 +116,19 @@ func TestRenameFile(t *testing.T) {
 		edm := discardEDM()
 		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
 		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist })
-		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error {
-			return errors.New("mkdir boom")
-		})
-		if err := edm.renameFile("src", "dst"); err == nil {
-			t.Fatal("renameFile succeeded despite mkdir failure")
+		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error { return errInjected })
+		err := edm.renameFile("src", "dst")
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
 		}
 	})
 
 	t.Run("non-ENOENT rename error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osRename, func(string, string) error {
-			return errors.New("rename boom")
-		})
-		if err := edm.renameFile("src", "dst"); err == nil {
-			t.Fatal("renameFile succeeded despite rename error")
+		swapSeam(t, &osRename, func(string, string) error { return errInjected })
+		err := edm.renameFile("src", "dst")
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
 		}
 	})
 }
@@ -132,9 +141,7 @@ func TestSessionWriterLogsCreateError(t *testing.T) {
 	var buf bytes.Buffer
 	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
 
-	swapSeam(t, &osCreate, func(string) (*os.File, error) {
-		return nil, errors.New("create boom")
-	})
+	swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
 
 	edm.sessionWriterCh <- &prevSessions{rotationTime: time.Now()}
 	close(edm.sessionWriterCh)
@@ -142,6 +149,8 @@ func TestSessionWriterLogsCreateError(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go edm.sessionWriter(t.TempDir(), &wg)
+	// waitForWaitGroup blocks until wg.Done(), establishing happens-before for
+	// the buffer read below (the worker's last write precedes its Done()).
 	waitForWaitGroup(t, &wg, 5*time.Second, "sessionWriter did not exit")
 
 	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "sessionWriter") {
@@ -156,9 +165,7 @@ func TestHistogramWriterLogsCreateError(t *testing.T) {
 	var buf bytes.Buffer
 	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
 
-	swapSeam(t, &osCreate, func(string) (*os.File, error) {
-		return nil, errors.New("create boom")
-	})
+	swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
 
 	edm.histogramWriterCh <- &wellKnownDomainsData{
 		rotationTime: time.Now(),
