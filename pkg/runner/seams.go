@@ -27,7 +27,9 @@ var (
 	newFrameStreamSockInput         = dnstap.NewFrameStreamSockInput
 	listenAndServeHTTP              = func(s *http.Server) error { return s.ListenAndServe() }
 	newFileQueue                    = file.New
-	newAutoPahoConnection           = autopaho.NewConnection
+	newAutoPahoConnection           = func(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
+		return autopaho.NewConnection(ctx, cfg)
+	}
 
 	// Filesystem operation seams. These wrap the matching os package
 	// functions so tests can inject failures into the file writers,
