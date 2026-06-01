@@ -34,12 +34,12 @@ func resolveHostname(warnW io.Writer) string {
 // level controlled by loggerLevel and tags every record with the service
 // name, hostname, Go version and build version. It is factored out of main so
 // the logger wiring can be tested without invoking cmd.Execute.
-func buildLogger(w io.Writer, loggerLevel *slog.LevelVar, version, hostname string) *slog.Logger {
+func buildLogger(w io.Writer, loggerLevel *slog.LevelVar, buildVersion, hostname string) *slog.Logger {
 	logger := slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{Level: loggerLevel}))
 	logger = logger.With("service", "dnstapir-edm")
 	logger = logger.With("hostname", hostname)
 	logger = logger.With("go_version", runtime.Version())
-	logger = logger.With("version", version)
+	logger = logger.With("version", buildVersion)
 	return logger
 }
 
