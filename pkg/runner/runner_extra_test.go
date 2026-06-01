@@ -1338,6 +1338,13 @@ func TestRunMinimiserFlows(t *testing.T) {
 	}
 
 	edm.conf.DisableSessionFiles = true
+	// Signal a config reload, then send it a second time. The reload channel
+	// has capacity 1, so the second send blocks until runMinimiser has
+	// received (and therefore applied) the first, guaranteeing the
+	// disabled-session config is in effect before we feed the next frame.
+	// Without this, runMinimiser's select could pick the buffered input frame
+	// before the buffered reload and emit a session with the stale config.
+	edm.reloadMinimiserConfigCh[0] <- struct{}{}
 	edm.reloadMinimiserConfigCh[0] <- struct{}{}
 	edm.inputChannel <- newFrame
 	time.Sleep(20 * time.Millisecond)
