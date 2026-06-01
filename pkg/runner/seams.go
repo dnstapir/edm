@@ -40,9 +40,6 @@ var (
 	osReadDir  = os.ReadDir
 	osStat     = os.Stat
 
-	newAutoPahoConnection           = func(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
-		return autopaho.NewConnection(ctx, cfg)
-	}
 	now                     = time.Now
 	sleep                   = time.Sleep
 	configUpdateDebounce    = 100 * time.Millisecond
