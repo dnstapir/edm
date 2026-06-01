@@ -24,7 +24,7 @@ var osHostname = os.Hostname
 func resolveHostname(warnW io.Writer) string {
 	hostname, err := osHostname()
 	if err != nil {
-		fmt.Fprintf(warnW, "unable to get hostname, using '%s'", defaultHostname)
+		fmt.Fprintf(warnW, "unable to get hostname (%v), using '%s'\n", err, defaultHostname)
 		return defaultHostname
 	}
 	return hostname
@@ -43,6 +43,8 @@ func buildLogger(w io.Writer, loggerLevel *slog.LevelVar, version, hostname stri
 	return logger
 }
 
+// main wires the hostname and logger helpers together, installs the logger as
+// the slog/log default, and hands control to the cobra command tree.
 func main() {
 	// loggerLevel controls the global logging level for the application
 	loggerLevel := new(slog.LevelVar) // Info by default
