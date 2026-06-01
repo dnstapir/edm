@@ -387,7 +387,7 @@ timerLoop:
 	for {
 		select {
 		case <-ticker.C:
-			dirEntries, err := os.ReadDir(sentDir)
+			dirEntries, err := osReadDir(sentDir)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					// The directory has not been created yet, this is OK
@@ -410,7 +410,7 @@ timerLoop:
 					if time.Since(fileInfo.ModTime()) > oneDay {
 						absPath := filepath.Join(sentDir, dirEntry.Name())
 						edm.log.Info("diskCleaner: removing file", "filename", absPath)
-						err = os.Remove(absPath)
+						err = osRemove(absPath)
 						if err != nil {
 							edm.log.Error("diskCleaner: unable to remove sent histogram file", "error", err)
 						}
@@ -2221,7 +2221,7 @@ func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 		}
 		if writeFailed {
 			edm.log.Info("createSessionFile: cleaning up file because write failed", "filename", outFile.Name())
-			err = os.Remove(outFile.Name())
+			err = osRemove(outFile.Name())
 			if err != nil {
 				edm.log.Error("createSessionFile: unable to remove session outFile", "error", err, "filename", outFile.Name())
 			}
@@ -2246,7 +2246,7 @@ func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 
 	// Atomically rename the file to its real name so it can be picked up by the histogram sender
 	edm.log.Info("renaming session file", "from", absoluteTmpFileName, "to", absoluteFileName)
-	err = os.Rename(absoluteTmpFileName, absoluteFileName)
+	err = osRename(absoluteTmpFileName, absoluteFileName)
 	if err != nil {
 		return "", fmt.Errorf("createSessionFile: unable to rename output file: %w", err)
 	}
@@ -2294,7 +2294,7 @@ func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKn
 		}
 		if writeFailed {
 			edm.log.Info("createHistogramFile: cleaning up file because write failed", "filename", outFile.Name())
-			err = os.Remove(outFile.Name())
+			err = osRemove(outFile.Name())
 			if err != nil {
 				edm.log.Error("createHistogramFile: unable to remove histogram outFile", "error", err, "filename", outFile.Name())
 			}
@@ -2319,7 +2319,7 @@ func (edm *dnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKn
 
 	// Atomically rename the file to its real name so it can be picked up by the histogram sender
 	edm.log.Info("renaming histogram file", "from", absoluteTmpFileName, "to", absoluteFileName)
-	err = os.Rename(absoluteTmpFileName, absoluteFileName)
+	err = osRename(absoluteTmpFileName, absoluteFileName)
 	if err != nil {
 		return "", fmt.Errorf("createHistogramFile: unable to rename output file: %w", err)
 	}
@@ -2386,14 +2386,14 @@ func (edm *dnstapMinimiser) renameFile(src string, dst string) error {
 	// We are prepared for the destination directory not existing and will
 	// create it if needed and retry the rename in this case.
 	for {
-		err := os.Rename(src, dst)
+		err := osRename(src, dst)
 		if err == nil {
 			// Rename went well, we are done
 			return nil
 		}
 
 		if errors.Is(err, fs.ErrNotExist) {
-			if _, statErr := os.Stat(dstDir); statErr == nil {
+			if _, statErr := osStat(dstDir); statErr == nil {
 				return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
 			} else if !errors.Is(statErr, fs.ErrNotExist) {
 				return fmt.Errorf("renameFile: unable to stat destination dir: %s: %w", dstDir, statErr)
@@ -2401,7 +2401,7 @@ func (edm *dnstapMinimiser) renameFile(src string, dst string) error {
 			// If the destination directory does not exist we will
 			// need to create it and then retry the Rename() in the
 			// next iteration of the loop.
-			err = os.MkdirAll(dstDir, 0o750)
+			err = osMkdirAll(dstDir, 0o750)
 			if err != nil {
 				return fmt.Errorf("renameFile: unable to create destination dir: %s: %w", dstDir, err)
 			}
@@ -2422,7 +2422,7 @@ func (edm *dnstapMinimiser) createFile(dst string) (*os.File, error) {
 	// We are prepared for the destination directory not existing and will
 	// create it if needed and retry the creation in this case.
 	for {
-		outFile, err := os.Create(dst)
+		outFile, err := osCreate(dst)
 		if err == nil {
 			// Creation went well, we are done
 			return outFile, nil
@@ -2432,7 +2432,7 @@ func (edm *dnstapMinimiser) createFile(dst string) (*os.File, error) {
 			// If the destination directory does not exist we will
 			// need to create it and then retry the file Create()
 			// the next iteration of the loop.
-			err = os.MkdirAll(dstDir, 0o750)
+			err = osMkdirAll(dstDir, 0o750)
 			if err != nil {
 				return nil, fmt.Errorf("createFile: unable to create destination dir: %s: %w", dstDir, err)
 			}
@@ -2469,7 +2469,7 @@ timerLoop:
 			if conf.DisableHistogramSender {
 				continue
 			}
-			dirEntries, err := os.ReadDir(outboxDir)
+			dirEntries, err := osReadDir(outboxDir)
 			if err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
 					// The directory has not been created yet, this is OK

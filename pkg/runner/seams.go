@@ -30,6 +30,18 @@ var (
 	newAutoPahoConnection           = func(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
 		return autopaho.NewConnection(ctx, cfg)
 	}
+
+	// Filesystem operation seams. These wrap the matching os package
+	// functions so tests can inject failures into the file writers,
+	// renamers and directory scanners without contorting the real
+	// filesystem.
+	osCreate   = os.Create
+	osRename   = os.Rename
+	osRemove   = os.Remove
+	osMkdirAll = os.MkdirAll
+	osReadDir  = os.ReadDir
+	osStat     = os.Stat
+
 	now                     = time.Now
 	sleep                   = time.Sleep
 	configUpdateDebounce    = 100 * time.Millisecond
