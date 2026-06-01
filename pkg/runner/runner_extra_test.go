@@ -1028,8 +1028,14 @@ func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*p
 
 func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.QueuePublish) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.queued = append(f.queued, p)
+	f.mu.Unlock()
+	if f.publishedCh != nil {
+		select {
+		case f.publishedCh <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 
@@ -1097,39 +1103,99 @@ func TestSetupHistogramSenderAndCertLoaders(t *testing.T) {
 
 func TestSetupMQTT(t *testing.T) {
 	oldNewAutoPahoConnection := newAutoPahoConnection
-	oldExitProcess := exitProcess
 	t.Cleanup(func() {
 		newAutoPahoConnection = oldNewAutoPahoConnection
-		exitProcess = oldExitProcess
 	})
 
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.conf.DataDir = t.TempDir()
-	edm.conf.MQTTSigningKeyFile = testJWKFile(t)
-	edm.conf.MQTTServer = "mqtts://example.test:8883"
-	edm.conf.MQTTKeepalive = 30
-	edm.conf.DisableMQTTFilequeue = false
-	newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (*autopaho.ConnectionManager, error) {
-		return nil, nil
-	}
+	t.Run("success", func(t *testing.T) {
+		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
+			return conn, nil
+		}
 
-	edm.setupMQTT()
-	close(edm.mqttPubCh)
-	edm.autopahoWg.Wait()
-	if edm.autopahoCancel == nil {
-		t.Fatal("autopaho cancel was not set")
-	}
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTServer = "mqtts://example.test:8883"
+		edm.conf.MQTTKeepalive = 30
+		edm.conf.DisableMQTTFilequeue = false
+		edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
 
-	exitProcess = func(int) { panic("exit") }
-	edm.conf.MQTTSigningKeyFile = filepath.Join(t.TempDir(), "missing.jwk")
-	func() {
-		defer func() {
-			if recover() == nil {
-				t.Fatal("setupMQTT did not exit on missing key")
-			}
-		}()
-		edm.setupMQTT()
-	}()
+		if err := edm.setupMQTT(); err != nil {
+			t.Fatalf("setupMQTT: %v", err)
+		}
+		// Drive the publish path so the fake connection manager is actually
+		// exercised; otherwise the worker would exit before touching cm.
+		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for publish")
+		}
+		close(edm.mqttPubCh)
+		edm.autopahoWg.Wait()
+		if edm.autopahoCancel == nil {
+			t.Fatal("autopaho cancel was not set")
+		}
+		conn.mu.Lock()
+		queued := len(conn.queued)
+		conn.mu.Unlock()
+		if queued != 1 {
+			t.Fatalf("queued messages = %d, want 1", queued)
+		}
+	})
+
+	t.Run("missing signing key", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = filepath.Join(t.TempDir(), "missing.jwk")
+		err := edm.setupMQTT()
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("setupMQTT error = %v, want os.ErrNotExist", err)
+		}
+	})
+
+	t.Run("bad CA file", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTCAFile = writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
+		err := edm.setupMQTT()
+		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
+			t.Fatalf("setupMQTT error = %v, want CA cert pool failure", err)
+		}
+	})
+
+	t.Run("queue dir creation failure", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Point DataDir below a regular file so MkdirAll fails with ENOTDIR
+		// regardless of the uid the tests run as.
+		blocker := writeTempFile(t, "blocker", []byte("x"))
+		edm.conf.DataDir = filepath.Join(blocker, "datadir")
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.DisableMQTTFilequeue = false
+		err := edm.setupMQTT()
+		if err == nil || !strings.Contains(err.Error(), "queue dir") {
+			t.Fatalf("setupMQTT error = %v, want queue dir failure", err)
+		}
+	})
+
+	t.Run("connection manager failure", func(t *testing.T) {
+		oldConn := newAutoPahoConnection
+		t.Cleanup(func() { newAutoPahoConnection = oldConn })
+		errConnect := errors.New("connect boom")
+		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
+			return nil, errConnect
+		}
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.DisableMQTTFilequeue = true
+		err := edm.setupMQTT()
+		if !errors.Is(err, errConnect) {
+			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)
+		}
+	})
 }
 
 type sequenceConfiger struct {
