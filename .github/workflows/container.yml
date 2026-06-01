@@ -1,22 +1,12 @@
 name: Build container
 
 on:
-  workflow_run:
-    workflows:
-      - "Build"
-    branches:
-      - "main"
-    types:
-      - completed
   release:
     types:
       - published
 
 jobs:
   tagged-container:
-    if: >-
-      ${{ (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
-          (github.event_name == 'release'      && github.event.action == 'published') }}
     name: Build and push container
     runs-on: ubuntu-latest
     permissions:

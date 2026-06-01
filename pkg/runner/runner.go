@@ -664,13 +664,16 @@ func (edm *dnstapMinimiser) setupHistogramSender() error {
 	return nil
 }
 
-func (edm *dnstapMinimiser) setupMQTT() {
+// setupMQTT prepares the MQTT signing/publish pipeline from the current
+// config and starts it. It returns an error for any setup failure; callers
+// decide how to react (Run terminates the process). This mirrors the
+// error-returning style of setupHistogramSender.
+func (edm *dnstapMinimiser) setupMQTT() error {
 	conf := edm.getConfig()
 
 	mqttJWK, err := edDsaJWKFromFile(conf.MQTTSigningKeyFile)
 	if err != nil {
-		edm.log.Error("unable to parse jwk from 'mqtt-signing-key-file'", "error", err)
-		exitProcess(1)
+		return fmt.Errorf("setupMQTT: unable to parse jwk from 'mqtt-signing-key-file': %w", err)
 	}
 
 	// Leaving these nil will use the OS default CA certs
@@ -680,8 +683,7 @@ func (edm *dnstapMinimiser) setupMQTT() {
 		// Setup CA cert for validating the MQTT connection
 		mqttCACertPool, err = certPoolFromFile(conf.MQTTCAFile)
 		if err != nil {
-			edm.log.Error("failed to create CA cert pool for '--mqtt-ca-file'", "error", err)
-			exitProcess(1)
+			return fmt.Errorf("setupMQTT: failed to create CA cert pool for '--mqtt-ca-file': %w", err)
 		}
 	}
 
@@ -691,14 +693,12 @@ func (edm *dnstapMinimiser) setupMQTT() {
 
 		err = os.MkdirAll(mqttQueueDir, 0o750)
 		if err != nil {
-			edm.log.Error("unable to create MQTT queue dir", "error", err, "queue_dir", mqttQueueDir)
-			exitProcess(1)
+			return fmt.Errorf("setupMQTT: unable to create MQTT queue dir %q: %w", mqttQueueDir, err)
 		}
 
 		mqttFileQueue, err = newFileQueue(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
 		if err != nil {
-			edm.log.Error("unable to init MQTT queue file based queue", "error", err)
-			exitProcess(1)
+			return fmt.Errorf("setupMQTT: unable to init MQTT queue file based queue: %w", err)
 		}
 	}
 
@@ -708,16 +708,17 @@ func (edm *dnstapMinimiser) setupMQTT() {
 
 	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
 	if err != nil {
-		edm.log.Error("unable to create autopaho config", "error", err)
-		exitProcess(1)
+		return fmt.Errorf("setupMQTT: unable to create autopaho config: %w", err)
 	}
 
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(context.Background())
 
 	autopahoCm, err := newAutoPahoConnection(edm.autopahoCtx, autopahoConfig)
 	if err != nil {
-		edm.log.Error("unable to create autopaho connection manager", "error", err)
-		exitProcess(1)
+		// Release the context created just above; on this error path the
+		// normal shutdown that would cancel it is never reached.
+		edm.autopahoCancel()
+		return fmt.Errorf("setupMQTT: unable to create autopaho connection manager: %w", err)
 	}
 
 	// Connect to the broker - this will return immediately after initiating the connection process.
@@ -726,6 +727,8 @@ func (edm *dnstapMinimiser) setupMQTT() {
 		signWorkers = runtime.GOMAXPROCS(0)
 	}
 	edm.startMQTTPipeline(autopahoCm, mqttJWK, mqttFileQueue != nil, signWorkers)
+
+	return nil
 }
 
 func (edm *dnstapMinimiser) loadHTTPClientCert() error {
@@ -1213,7 +1216,10 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 			exitProcess(1)
 		}
 
-		edm.setupMQTT()
+		if err := edm.setupMQTT(); err != nil {
+			edm.log.Error("unable to setup mqtt", "error", err)
+			exitProcess(1)
+		}
 	}
 
 	err = edm.configureFSWatchers(startConf)
