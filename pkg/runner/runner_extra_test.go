@@ -1127,8 +1127,9 @@ func TestSetupMQTT(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = filepath.Join(t.TempDir(), "missing.jwk")
-		if err := edm.setupMQTT(); err == nil {
-			t.Fatal("setupMQTT succeeded with missing signing key")
+		err := edm.setupMQTT()
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("setupMQTT error = %v, want os.ErrNotExist", err)
 		}
 	})
 
@@ -1137,8 +1138,9 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.MQTTCAFile = writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
-		if err := edm.setupMQTT(); err == nil {
-			t.Fatal("setupMQTT succeeded with bad CA file")
+		err := edm.setupMQTT()
+		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
+			t.Fatalf("setupMQTT error = %v, want CA cert pool failure", err)
 		}
 	})
 
@@ -1150,23 +1152,26 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DataDir = filepath.Join(blocker, "datadir")
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.DisableMQTTFilequeue = false
-		if err := edm.setupMQTT(); err == nil {
-			t.Fatal("setupMQTT succeeded with un-creatable queue dir")
+		err := edm.setupMQTT()
+		if err == nil || !strings.Contains(err.Error(), "queue dir") {
+			t.Fatalf("setupMQTT error = %v, want queue dir failure", err)
 		}
 	})
 
 	t.Run("connection manager failure", func(t *testing.T) {
 		oldConn := newAutoPahoConnection
 		t.Cleanup(func() { newAutoPahoConnection = oldConn })
+		errConnect := errors.New("connect boom")
 		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (*autopaho.ConnectionManager, error) {
-			return nil, errors.New("connect boom")
+			return nil, errConnect
 		}
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.DisableMQTTFilequeue = true
-		if err := edm.setupMQTT(); err == nil {
-			t.Fatal("setupMQTT succeeded despite connection manager error")
+		err := edm.setupMQTT()
+		if !errors.Is(err, errConnect) {
+			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)
 		}
 	})
 }

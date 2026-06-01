@@ -715,6 +715,9 @@ func (edm *dnstapMinimiser) setupMQTT() error {
 
 	autopahoCm, err := newAutoPahoConnection(edm.autopahoCtx, autopahoConfig)
 	if err != nil {
+		// Release the context created just above; on this error path the
+		// normal shutdown that would cancel it is never reached.
+		edm.autopahoCancel()
 		return fmt.Errorf("setupMQTT: unable to create autopaho connection manager: %w", err)
 	}
 
