@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"crypto/tls"
 	"net"
 	"net/http"
@@ -26,13 +27,15 @@ var (
 	newFrameStreamSockInput         = dnstap.NewFrameStreamSockInput
 	listenAndServeHTTP              = func(s *http.Server) error { return s.ListenAndServe() }
 	newFileQueue                    = file.New
-	newAutoPahoConnection           = autopaho.NewConnection
-	now                             = time.Now
-	sleep                           = time.Sleep
-	configUpdateDebounce            = 100 * time.Millisecond
-	fsEventDebounce                 = 100 * time.Millisecond
-	diskCleanerInterval             = time.Minute
-	monitorChannelInterval          = time.Second
-	histogramSenderInterval         = 10 * time.Second
-	histogramSenderBackoff          = 15 * time.Second
+	newAutoPahoConnection           = func(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
+		return autopaho.NewConnection(ctx, cfg)
+	}
+	now                     = time.Now
+	sleep                   = time.Sleep
+	configUpdateDebounce    = 100 * time.Millisecond
+	fsEventDebounce         = 100 * time.Millisecond
+	diskCleanerInterval     = time.Minute
+	monitorChannelInterval  = time.Second
+	histogramSenderInterval = 10 * time.Second
+	histogramSenderBackoff  = 15 * time.Second
 )

@@ -1028,8 +1028,14 @@ func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*p
 
 func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.QueuePublish) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.queued = append(f.queued, p)
+	f.mu.Unlock()
+	if f.publishedCh != nil {
+		select {
+		case f.publishedCh <- struct{}{}:
+		default:
+		}
+	}
 	return nil
 }
 
@@ -1100,11 +1106,13 @@ func TestSetupMQTT(t *testing.T) {
 	t.Cleanup(func() {
 		newAutoPahoConnection = oldNewAutoPahoConnection
 	})
-	newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (*autopaho.ConnectionManager, error) {
-		return nil, nil
-	}
 
 	t.Run("success", func(t *testing.T) {
+		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
+			return conn, nil
+		}
+
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
@@ -1116,10 +1124,24 @@ func TestSetupMQTT(t *testing.T) {
 		if err := edm.setupMQTT(); err != nil {
 			t.Fatalf("setupMQTT: %v", err)
 		}
+		// Drive the publish path so the fake connection manager is actually
+		// exercised; otherwise the worker would exit before touching cm.
+		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for publish")
+		}
 		close(edm.mqttPubCh)
 		edm.autopahoWg.Wait()
 		if edm.autopahoCancel == nil {
 			t.Fatal("autopaho cancel was not set")
+		}
+		conn.mu.Lock()
+		queued := len(conn.queued)
+		conn.mu.Unlock()
+		if queued != 1 {
+			t.Fatalf("queued messages = %d, want 1", queued)
 		}
 	})
 
@@ -1162,7 +1184,7 @@ func TestSetupMQTT(t *testing.T) {
 		oldConn := newAutoPahoConnection
 		t.Cleanup(func() { newAutoPahoConnection = oldConn })
 		errConnect := errors.New("connect boom")
-		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (*autopaho.ConnectionManager, error) {
+		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
 			return nil, errConnect
 		}
 		edm := newTestDnstapMinimiser(t, defaultTC)
