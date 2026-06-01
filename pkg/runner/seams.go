@@ -27,12 +27,24 @@ var (
 	listenAndServeHTTP              = func(s *http.Server) error { return s.ListenAndServe() }
 	newFileQueue                    = file.New
 	newAutoPahoConnection           = autopaho.NewConnection
-	now                             = time.Now
-	sleep                           = time.Sleep
-	configUpdateDebounce            = 100 * time.Millisecond
-	fsEventDebounce                 = 100 * time.Millisecond
-	diskCleanerInterval             = time.Minute
-	monitorChannelInterval          = time.Second
-	histogramSenderInterval         = 10 * time.Second
-	histogramSenderBackoff          = 15 * time.Second
+
+	// Filesystem operation seams. These wrap the matching os package
+	// functions so tests can inject failures into the file writers,
+	// renamers and directory scanners without contorting the real
+	// filesystem.
+	osCreate   = os.Create
+	osRename   = os.Rename
+	osRemove   = os.Remove
+	osMkdirAll = os.MkdirAll
+	osReadDir  = os.ReadDir
+	osStat     = os.Stat
+
+	now                     = time.Now
+	sleep                   = time.Sleep
+	configUpdateDebounce    = 100 * time.Millisecond
+	fsEventDebounce         = 100 * time.Millisecond
+	diskCleanerInterval     = time.Minute
+	monitorChannelInterval  = time.Second
+	histogramSenderInterval = 10 * time.Second
+	histogramSenderBackoff  = 15 * time.Second
 )
