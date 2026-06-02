@@ -379,6 +379,78 @@ func TestIgnoredFileErrors(t *testing.T) {
 	}
 }
 
+// TestSetIgnoredQuestionNamesBranches drives the three code paths in
+// setIgnoredQuestionNames that the basic missing-file test in
+// TestIgnoredFileErrors does not reach.
+func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
+	t.Run("empty filename closes existing list", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Pre-load a finder so the empty-filename branch has something
+		// to close on replace.
+		edm.conf.IgnoredQuestionNamesFile = testDawgFile(t, "ignore.example.")
+		if err := edm.setIgnoredQuestionNames(); err != nil {
+			t.Fatalf("initial load: %v", err)
+		}
+		edm.ignoredQuestionsMutex.RLock()
+		if edm.ignoredQuestions == nil {
+			edm.ignoredQuestionsMutex.RUnlock()
+			t.Fatal("expected finder loaded; got nil")
+		}
+		edm.ignoredQuestionsMutex.RUnlock()
+
+		// Unset the filename and reload — the close-on-replace branch
+		// fires and ignoredQuestions returns to nil.
+		edm.conf.IgnoredQuestionNamesFile = ""
+		if err := edm.setIgnoredQuestionNames(); err != nil {
+			t.Fatalf("unset reload: %v", err)
+		}
+		edm.ignoredQuestionsMutex.RLock()
+		defer edm.ignoredQuestionsMutex.RUnlock()
+		if edm.ignoredQuestions != nil {
+			t.Fatal("expected finder cleared after unset; got non-nil")
+		}
+	})
+
+	t.Run("empty-byte dawg file treated as unset", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Pre-load to verify the close-on-replace branch inside the
+		// errEmptyDawgFile arm fires.
+		edm.conf.IgnoredQuestionNamesFile = testDawgFile(t, "ignore.example.")
+		if err := edm.setIgnoredQuestionNames(); err != nil {
+			t.Fatalf("initial load: %v", err)
+		}
+
+		// loadDawgFile returns errEmptyDawgFile for a zero-byte file
+		// (dawg.Load would panic), which setIgnoredQuestionNames treats
+		// as "unset". Expect nil error and a cleared finder.
+		edm.conf.IgnoredQuestionNamesFile = writeTempFile(t, "empty.dawg", nil)
+		if err := edm.setIgnoredQuestionNames(); err != nil {
+			t.Fatalf("empty file: %v", err)
+		}
+		edm.ignoredQuestionsMutex.RLock()
+		defer edm.ignoredQuestionsMutex.RUnlock()
+		if edm.ignoredQuestions != nil {
+			t.Fatal("expected finder cleared for empty file; got non-nil")
+		}
+	})
+
+	t.Run("dawg with zero names clears finder", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// A dawg file that's non-empty on disk but has NumAdded()==0
+		// goes through dawg.Load successfully and then takes the
+		// "else: ignoredQuestions = nil" arm.
+		edm.conf.IgnoredQuestionNamesFile = testDawgFile(t)
+		if err := edm.setIgnoredQuestionNames(); err != nil {
+			t.Fatalf("zero-name dawg: %v", err)
+		}
+		edm.ignoredQuestionsMutex.RLock()
+		defer edm.ignoredQuestionsMutex.RUnlock()
+		if edm.ignoredQuestions != nil {
+			t.Fatal("expected nil finder for zero-name dawg; got non-nil")
+		}
+	})
+}
+
 func TestFileAndFilenameHelpers(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	base := t.TempDir()
