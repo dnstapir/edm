@@ -475,6 +475,19 @@ func TestPseudonymiseIPCacheBranches(t *testing.T) {
 		if !bytes.Equal(first, second) {
 			t.Fatalf("cache hit produced different result: %v vs %v", first, second)
 		}
+		// pseudonymiseIP is deterministic, so first==second holds even
+		// if caching were silently bypassed. Pin the assertion to the
+		// observable side-effect of the hit arm: exactly one entry in
+		// the LRU, keyed by addrA.
+		if edm.cryptopanCache == nil {
+			t.Fatal("cryptopanCache is nil")
+		}
+		if got := edm.cryptopanCache.Len(); got != 1 {
+			t.Fatalf("cache len = %d, want 1", got)
+		}
+		if !edm.cryptopanCache.Contains(netip.MustParseAddr("198.51.100.20")) {
+			t.Fatal("cache does not contain addrA")
+		}
 	})
 
 	t.Run("cache eviction at size limit", func(t *testing.T) {
