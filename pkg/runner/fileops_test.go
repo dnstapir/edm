@@ -133,6 +133,158 @@ func TestRenameFile(t *testing.T) {
 	})
 }
 
+func TestWriteRotatedParquet(t *testing.T) {
+	t.Run("happy", func(t *testing.T) {
+		edm := discardEDM()
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		name, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
+			_, err := w.Write([]byte("hello"))
+			return err
+		})
+		if err != nil {
+			t.Fatalf("writeRotatedParquet: %v", err)
+		}
+		if name != final {
+			t.Fatalf("name = %q, want %q", name, final)
+		}
+		if _, err := os.Stat(tmp); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("tmp file should be gone after rename, stat err = %v", err)
+		}
+		data, err := os.ReadFile(final)
+		if err != nil {
+			t.Fatalf("read final: %v", err)
+		}
+		if string(data) != "hello" {
+			t.Fatalf("contents = %q, want %q", string(data), "hello")
+		}
+	})
+
+	t.Run("createFile error", func(t *testing.T) {
+		edm := discardEDM()
+		swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+		_, err := edm.writeRotatedParquet("test", filepath.Join(t.TempDir(), "x"), "y", func(io.Writer) error {
+			return nil
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("error = %v, want %v", err, errInjected)
+		}
+	})
+
+	t.Run("write error removes temp file", func(t *testing.T) {
+		edm := discardEDM()
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		_, err := edm.writeRotatedParquet("test", tmp, final, func(io.Writer) error {
+			return errInjected
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("error = %v, want %v", err, errInjected)
+		}
+		if _, err := os.Stat(tmp); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("tmp file should be removed after write error, stat err = %v", err)
+		}
+		if _, err := os.Stat(final); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("final file should not exist, stat err = %v", err)
+		}
+	})
+
+	t.Run("write error and remove failure is logged", func(t *testing.T) {
+		edm := discardEDM()
+		var buf bytes.Buffer
+		edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
+
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		swapSeam(t, &osRemove, func(string) error { return errInjected })
+
+		_, err := edm.writeRotatedParquet("test", tmp, final, func(io.Writer) error {
+			return errInjected
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("error = %v, want %v", err, errInjected)
+		}
+		if !strings.Contains(buf.String(), "unable to remove test outFile") {
+			t.Fatalf("expected remove failure log, got: %q", buf.String())
+		}
+	})
+
+	t.Run("explicit Close error after successful write", func(t *testing.T) {
+		edm := discardEDM()
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		// Closing outFile inside the write closure makes the helper's
+		// explicit Close() fail with os.ErrClosed.
+		_, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
+			return w.(*os.File).Close()
+		})
+		if !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("error = %v, want os.ErrClosed", err)
+		}
+		// Close-error path sets writeFailed, so the temp file is removed.
+		if _, err := os.Stat(tmp); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("tmp file should be removed, stat err = %v", err)
+		}
+	})
+
+	t.Run("deferred Close error is logged", func(t *testing.T) {
+		edm := discardEDM()
+		var buf bytes.Buffer
+		edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
+
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		// Closing outFile inside the write closure AND returning an error
+		// causes the deferred Close() (which only runs when fileOpen=true)
+		// to fail with os.ErrClosed.
+		_, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
+			_ = w.(*os.File).Close()
+			return errInjected
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("error = %v, want %v", err, errInjected)
+		}
+		if !strings.Contains(buf.String(), "unable to do deferred close of test outFile") {
+			t.Fatalf("expected deferred close failure log, got: %q", buf.String())
+		}
+	})
+
+	t.Run("rename error leaves temp file", func(t *testing.T) {
+		edm := discardEDM()
+		dir := t.TempDir()
+		tmp := filepath.Join(dir, "data.tmp")
+		final := filepath.Join(dir, "data")
+
+		swapSeam(t, &osRename, func(string, string) error { return errInjected })
+
+		_, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
+			_, err := w.Write([]byte("hello"))
+			return err
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("error = %v, want %v", err, errInjected)
+		}
+		// Rename failure intentionally leaves the temp file in place
+		// (matches the pre-refactor behavior).
+		if _, err := os.Stat(tmp); err != nil {
+			t.Fatalf("tmp file should remain after rename error, stat err = %v", err)
+		}
+		if _, err := os.Stat(final); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("final file should not exist, stat err = %v", err)
+		}
+	})
+}
+
 // TestSessionWriterLogsCreateError verifies the sessionWriter worker logs and
 // keeps running when createSessionFile fails. The failure is injected via the
 // osCreate seam so writeSessionParquet is never reached.
