@@ -79,7 +79,7 @@ type config struct {
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
 	InputTLSCertFile              string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
 	InputTLSKeyFile               string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
-	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file" validate:"required_with=InputTLS"`
+	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file"`
 	CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required" reload:"true"`
 	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required" reload:"true"`
 	WellKnownDomainsFile          string `mapstructure:"well-known-domains-file" validate:"required"`
@@ -272,6 +272,7 @@ type certStore struct {
 var (
 	errNoClientCertificate = errors.New("no client certificate loaded")
 	errEmptyDawgFile       = errors.New("dawg file is empty")
+	errNoInputConfigured   = errors.New("no dnstap input configured")
 )
 
 // Implements tls.Config.GetClientCertificate
@@ -628,6 +629,63 @@ func getHllDefaults(explicitThreshold int) hll.Settings {
 		ExplicitThreshold: explicitThreshold,
 		SparseEnabled:     true,
 	}
+}
+
+// setupDnstapInput constructs the dnstap socket input selected by startConf.
+// Exactly one of InputUnix/InputTCP/InputTLS must be set; with none configured
+// it returns errNoInputConfigured rather than letting Run dereference a nil
+// *FrameStreamSockInput. On TLS, InputTLSClientCAFile (when set) enables
+// required-and-verify client mTLS via tls.RequireAndVerifyClientCert.
+func setupDnstapInput(logger *slog.Logger, startConf config) (*dnstap.FrameStreamSockInput, error) {
+	var dti *dnstap.FrameStreamSockInput
+	switch {
+	case startConf.InputUnix != "":
+		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)
+		d, err := newFrameStreamSockInputFromPath(startConf.InputUnix)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create dnstap unix socket: %w", err)
+		}
+		dti = d
+	case startConf.InputTCP != "":
+		logger.Info("creating plaintext dnstap TCP socket", "socket", startConf.InputTCP)
+		l, err := listenNet("tcp", startConf.InputTCP)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create plaintext dnstap TCP socket: %w", err)
+		}
+		dti = newFrameStreamSockInput(l)
+	case startConf.InputTLS != "":
+		logger.Info("creating encrypted dnstap TLS socket", "socket", startConf.InputTLS)
+		dnstapInputCert, err := tls.LoadX509KeyPair(startConf.InputTLSCertFile, startConf.InputTLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("unable to load x509 dnstap listener cert: %w", err)
+		}
+		dnstapTLSConfig := &tls.Config{
+			Certificates: []tls.Certificate{dnstapInputCert},
+			MinVersion:   tls.VersionTLS13,
+		}
+
+		// Enable client mTLS (client cert auth) if a CA file was passed.
+		if startConf.InputTLSClientCAFile != "" {
+			logger.Info("dnstap socket requiring valid client certs", "ca-file", startConf.InputTLSClientCAFile)
+			inputTLSClientCACertPool, err := certPoolFromFile(startConf.InputTLSClientCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create CA cert pool for '-input-tls-client-ca-file': %w", err)
+			}
+			dnstapTLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			dnstapTLSConfig.ClientCAs = inputTLSClientCACertPool
+		}
+
+		l, err := listenTLS("tcp", startConf.InputTLS, dnstapTLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create TCP listener: %w", err)
+		}
+		dti = newFrameStreamSockInput(l)
+	default:
+		return nil, errNoInputConfigured
+	}
+	dti.SetTimeout(time.Second * 5)
+	dti.SetLogger(log.Default())
+	return dti, nil
 }
 
 func (edm *dnstapMinimiser) setupHistogramSender() error {
@@ -1230,57 +1288,11 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	go edm.fsEventWatcher()
 
-	// Setup the dnstap.Input, only one at a time is supported.
-	var dti *dnstap.FrameStreamSockInput
-	if startConf.InputUnix != "" {
-		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)
-		dti, err = newFrameStreamSockInputFromPath(startConf.InputUnix)
-		if err != nil {
-			logger.Error("unable to create dnstap unix socket", "error", err)
-			exitProcess(1)
-		}
-	} else if startConf.InputTCP != "" {
-		logger.Info("creating plaintext dnstap TCP socket", "socket", startConf.InputTCP)
-		l, err := listenNet("tcp", startConf.InputTCP)
-		if err != nil {
-			logger.Error("unable to create plaintext dnstap TCP socket", "error", err)
-			exitProcess(1)
-		}
-		dti = newFrameStreamSockInput(l)
-	} else if startConf.InputTLS != "" {
-		logger.Info("creating encrypted dnstap TLS socket", "socket", startConf.InputTLS)
-		dnstapInputCert, err := tls.LoadX509KeyPair(startConf.InputTLSCertFile, startConf.InputTLSKeyFile)
-		if err != nil {
-			logger.Error("unable to load x509 dnstap listener cert", "error", err)
-			exitProcess(1)
-		}
-		dnstapTLSConfig := &tls.Config{
-			Certificates: []tls.Certificate{dnstapInputCert},
-			MinVersion:   tls.VersionTLS13,
-		}
-
-		// Enable client mTLS (client cert auth) if a CA file was passed:
-		if startConf.InputTLSClientCAFile != "" {
-			logger.Info("dnstap socket requiring valid client certs", "ca-file", startConf.InputTLSClientCAFile)
-			inputTLSClientCACertPool, err := certPoolFromFile(startConf.InputTLSClientCAFile)
-			if err != nil {
-				logger.Error("failed to create CA cert pool for '-input-tls-client-ca-file': %s", "error", err)
-				exitProcess(1)
-			}
-
-			dnstapTLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
-			dnstapTLSConfig.ClientCAs = inputTLSClientCACertPool
-		}
-
-		l, err := listenTLS("tcp", startConf.InputTLS, dnstapTLSConfig)
-		if err != nil {
-			logger.Error("unable to create TCP listener", "error", err)
-			exitProcess(1)
-		}
-		dti = newFrameStreamSockInput(l)
+	dti, err := setupDnstapInput(logger, startConf)
+	if err != nil {
+		logger.Error("unable to setup dnstap input", "error", err)
+		exitProcess(1)
 	}
-	dti.SetTimeout(time.Second * 5)
-	dti.SetLogger(log.Default())
 
 	// We need to keep track of domains that are not on the well-known
 	// domain list yet we have seen since we started. To limit the
