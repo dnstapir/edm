@@ -65,6 +65,10 @@ const defaultLabelLimit = 10
 const (
 	metricsServerWriteTimeout        = 10 * time.Second
 	manualParquetRotationWaitTimeout = metricsServerWriteTimeout - time.Second
+	// pprofWriteTimeout has to outlast a full pprof profile, whose default
+	// `seconds` parameter is 30 — anything shorter would truncate the
+	// default CPU profile.
+	pprofWriteTimeout = 31 * time.Second
 )
 
 type config struct {
@@ -1140,7 +1144,7 @@ func newPprofServer(addr string) *http.Server {
 	return &http.Server{
 		Addr:         addr,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 31 * time.Second,
+		WriteTimeout: pprofWriteTimeout,
 	}
 }
 
