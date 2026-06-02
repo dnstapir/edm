@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"math"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -1194,6 +1195,130 @@ func TestSetupMQTT(t *testing.T) {
 		err := edm.setupMQTT()
 		if !errors.Is(err, errConnect) {
 			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)
+		}
+	})
+}
+
+func TestSetupDnstapInput(t *testing.T) {
+	discardLog := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("no input configured", func(t *testing.T) {
+		_, err := setupDnstapInput(discardLog, config{})
+		if !errors.Is(err, errNoInputConfigured) {
+			t.Fatalf("err = %v, want errNoInputConfigured", err)
+		}
+	})
+
+	t.Run("unix happy", func(t *testing.T) {
+		dti, err := setupDnstapInput(discardLog, config{
+			InputUnix: filepath.Join(t.TempDir(), "dnstap.sock"),
+		})
+		if err != nil {
+			t.Fatalf("setupDnstapInput: %v", err)
+		}
+		if dti == nil {
+			t.Fatal("dti is nil on success")
+		}
+	})
+
+	t.Run("unix error", func(t *testing.T) {
+		swapSeam(t, &newFrameStreamSockInputFromPath, func(string) (*dnstap.FrameStreamSockInput, error) {
+			return nil, errInjected
+		})
+		_, err := setupDnstapInput(discardLog, config{InputUnix: "/tmp/x"})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("err = %v, want errInjected", err)
+		}
+	})
+
+	t.Run("tcp happy", func(t *testing.T) {
+		dti, err := setupDnstapInput(discardLog, config{InputTCP: "127.0.0.1:0"})
+		if err != nil {
+			t.Fatalf("setupDnstapInput: %v", err)
+		}
+		if dti == nil {
+			t.Fatal("dti is nil on success")
+		}
+	})
+
+	t.Run("tcp listen error", func(t *testing.T) {
+		swapSeam(t, &listenNet, func(string, string) (net.Listener, error) {
+			return nil, errInjected
+		})
+		_, err := setupDnstapInput(discardLog, config{InputTCP: "127.0.0.1:0"})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("err = %v, want errInjected", err)
+		}
+	})
+
+	t.Run("tls happy", func(t *testing.T) {
+		certPath, keyPath, _ := testCertFiles(t)
+		dti, err := setupDnstapInput(discardLog, config{
+			InputTLS:         "127.0.0.1:0",
+			InputTLSCertFile: certPath,
+			InputTLSKeyFile:  keyPath,
+		})
+		if err != nil {
+			t.Fatalf("setupDnstapInput: %v", err)
+		}
+		if dti == nil {
+			t.Fatal("dti is nil on success")
+		}
+	})
+
+	t.Run("tls happy with client CA", func(t *testing.T) {
+		certPath, keyPath, caPath := testCertFiles(t)
+		dti, err := setupDnstapInput(discardLog, config{
+			InputTLS:             "127.0.0.1:0",
+			InputTLSCertFile:     certPath,
+			InputTLSKeyFile:      keyPath,
+			InputTLSClientCAFile: caPath,
+		})
+		if err != nil {
+			t.Fatalf("setupDnstapInput: %v", err)
+		}
+		if dti == nil {
+			t.Fatal("dti is nil on success")
+		}
+	})
+
+	t.Run("tls bad cert", func(t *testing.T) {
+		_, err := setupDnstapInput(discardLog, config{
+			InputTLS:         "127.0.0.1:0",
+			InputTLSCertFile: filepath.Join(t.TempDir(), "missing.crt"),
+			InputTLSKeyFile:  filepath.Join(t.TempDir(), "missing.key"),
+		})
+		if err == nil || !strings.Contains(err.Error(), "x509 dnstap listener cert") {
+			t.Fatalf("err = %v, want x509 cert load failure", err)
+		}
+	})
+
+	t.Run("tls bad client CA file", func(t *testing.T) {
+		certPath, keyPath, _ := testCertFiles(t)
+		badCA := writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
+		_, err := setupDnstapInput(discardLog, config{
+			InputTLS:             "127.0.0.1:0",
+			InputTLSCertFile:     certPath,
+			InputTLSKeyFile:      keyPath,
+			InputTLSClientCAFile: badCA,
+		})
+		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
+			t.Fatalf("err = %v, want CA cert pool failure", err)
+		}
+	})
+
+	t.Run("tls listen error", func(t *testing.T) {
+		certPath, keyPath, _ := testCertFiles(t)
+		swapSeam(t, &listenTLS, func(string, string, *tls.Config) (net.Listener, error) {
+			return nil, errInjected
+		})
+		_, err := setupDnstapInput(discardLog, config{
+			InputTLS:         "127.0.0.1:0",
+			InputTLSCertFile: certPath,
+			InputTLSKeyFile:  keyPath,
+		})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("err = %v, want errInjected", err)
 		}
 	})
 }
