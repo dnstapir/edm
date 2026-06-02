@@ -1133,6 +1133,37 @@ func (edm *dnstapMinimiser) getConfig() config {
 	return conf
 }
 
+// newPprofServer constructs the pprof HTTP server that serves net/http/pprof
+// from the default mux (the package's init() registers the handlers on import).
+// Address is parameterised so tests can listen on an ephemeral port.
+func newPprofServer(addr string) *http.Server {
+	return &http.Server{
+		Addr:         addr,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 31 * time.Second,
+	}
+}
+
+// newMetricsServer constructs the metrics HTTP server: /metrics is wired
+// against edm.promReg, and /debug/rotate-parquet is registered only when
+// enableManualRotation is true. Address is parameterised so tests can
+// listen on an ephemeral port.
+func (edm *dnstapMinimiser) newMetricsServer(addr string, enableManualRotation bool) *http.Server {
+	mux := http.NewServeMux()
+	// Setup custom promHandler since we want to use our per-edm registry.
+	mux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
+	if enableManualRotation {
+		mux.HandleFunc("/debug/rotate-parquet", edm.manualParquetRotationHandler)
+	}
+	return &http.Server{
+		Addr:           addr,
+		Handler:        mux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   metricsServerWriteTimeout,
+		MaxHeaderBytes: 1 << 20,
+	}
+}
+
 func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	// Create an instance of the minimiser
 	vc := viperConfiger{}
@@ -1292,32 +1323,13 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		exitProcess(1)
 	}
 
-	// Uses the default mux which is modified by importing net/http/pprof
-	pprofServer := &http.Server{
-		Addr:         "127.0.0.1:6060",
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 31 * time.Second,
-	}
-
+	pprofServer := newPprofServer(pprofListenAddr)
 	go func() {
 		err := listenAndServeHTTP(pprofServer)
 		logger.Error("pprofServer failed", "error", err)
 	}()
 
-	metricsMux := http.NewServeMux()
-	metricsServer := &http.Server{
-		Addr:           "127.0.0.1:2112",
-		Handler:        metricsMux,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   metricsServerWriteTimeout,
-		MaxHeaderBytes: 1 << 20,
-	}
-
-	// Setup custom promHandler since we want to use our per-edm registry
-	metricsMux.Handle("/metrics", promhttp.InstrumentMetricHandler(edm.promReg, promhttp.HandlerFor(edm.promReg, promhttp.HandlerOpts{Registry: edm.promReg})))
-	if startConf.EnableManualParquetRotation {
-		metricsMux.HandleFunc("/debug/rotate-parquet", edm.manualParquetRotationHandler)
-	}
+	metricsServer := edm.newMetricsServer(metricsListenAddr, startConf.EnableManualParquetRotation)
 	go func() {
 		err := listenAndServeHTTP(metricsServer)
 		logger.Error("metricsServer failed", "error", err)
