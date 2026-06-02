@@ -1206,17 +1206,37 @@ func (edm *dnstapMinimiser) newMetricsServer(addr string, enableManualRotation b
 	}
 }
 
+// Run is the production entrypoint: it constructs the dnstapMinimiser via
+// viperConfiger, wires the two top-level defers, and runs the error-returning
+// core. Any returned error is logged once and surfaced as exitProcess(1).
 func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
-	// Create an instance of the minimiser
 	vc := viperConfiger{}
 	edm, err := newDnstapMinimiser(logger, vc)
 	if err != nil {
 		logger.Error("unable to init", "error", err)
 		exitProcess(1)
+		return
 	}
 	defer edm.stop()
 	defer edm.fsWatcher.Close()
 
+	if err := run(edm, logger, loggerLevel); err != nil {
+		logger.Error("edm: run failed", "error", err)
+		exitProcess(1)
+	}
+}
+
+// run holds the orchestration body that Run used to inline: it reads the
+// startup config, wires every worker, starts the dnstap pipeline, then
+// shuts down in the documented order. Every error path returns rather than
+// calling exitProcess directly so tests can drive the workflow end-to-end
+// without subprocesses. Resources opened inside run (pebble DB, debug
+// dnstap file) are released via defers that fire before run returns.
+//
+// Shutdown ordering is load-bearing and matches the pre-refactor sequence:
+// minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
+// (if MQTT) autopahoCancel → wg.Wait → (if MQTT) autopahoWg.Wait.
+func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) error {
 	// Create startConf for some initial setup. Other edm methods that need
 	// to read the config should call edm.getConfig() internally so they
 	// get the latest config.
@@ -1235,16 +1255,12 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		loggerLevel.Set(slog.LevelDebug)
 	}
 
-	err = edm.setIgnoredClientIPs()
-	if err != nil {
-		logger.Error("unable to configure ignored client IPs", "error", err)
-		exitProcess(1)
+	if err := edm.setIgnoredClientIPs(); err != nil {
+		return fmt.Errorf("unable to configure ignored client IPs: %w", err)
 	}
 
-	err = edm.setIgnoredQuestionNames()
-	if err != nil {
-		logger.Error("unable to configure ignored question names", "error", err)
-		exitProcess(1)
+	if err := edm.setIgnoredQuestionNames(); err != nil {
+		return fmt.Errorf("unable to configure ignored question names: %w", err)
 	}
 
 	viperNotifyCh := make(chan fsnotify.Event)
@@ -1258,55 +1274,43 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
 	pdb, err := openPebble(pdbDir, &pebble.Options{})
 	if err != nil {
-		logger.Error("unable to open pebble database", "dir", pdbDir, "error", err)
-		exitProcess(1)
+		return fmt.Errorf("unable to open pebble database %q: %w", pdbDir, err)
 	}
 	defer func() {
-		err = pdb.Close()
-		if err != nil {
+		if err := pdb.Close(); err != nil {
 			edm.log.Error("unable to close pebble database", "error", err)
 		}
 	}()
 
 	if !startConf.DisableHistogramSender {
-		err := edm.loadHTTPClientCert()
-		if err != nil {
-			edm.log.Error("unable to load x509 HTTP client cert", "error", err)
-			exitProcess(1)
+		if err := edm.loadHTTPClientCert(); err != nil {
+			return fmt.Errorf("unable to load x509 HTTP client cert: %w", err)
 		}
 
-		err = edm.setupHistogramSender()
-		if err != nil {
-			edm.log.Error("unable to setup histogram sender", "error", err)
-			exitProcess(1)
+		if err := edm.setupHistogramSender(); err != nil {
+			return fmt.Errorf("unable to setup histogram sender: %w", err)
 		}
 	}
 
 	if !startConf.DisableMQTT {
-		err := edm.loadMQTTClientCert()
-		if err != nil {
-			edm.log.Error("unable to load x509 mqtt client cert", "error", err)
-			exitProcess(1)
+		if err := edm.loadMQTTClientCert(); err != nil {
+			return fmt.Errorf("unable to load x509 mqtt client cert: %w", err)
 		}
 
 		if err := edm.setupMQTT(); err != nil {
-			edm.log.Error("unable to setup mqtt", "error", err)
-			exitProcess(1)
+			return fmt.Errorf("unable to setup mqtt: %w", err)
 		}
 	}
 
-	err = edm.configureFSWatchers(startConf)
-	if err != nil {
-		logger.Error("unable to configure fsWatchers", "error", err)
-		exitProcess(1)
+	if err := edm.configureFSWatchers(startConf); err != nil {
+		return fmt.Errorf("unable to configure fsWatchers: %w", err)
 	}
 
 	go edm.fsEventWatcher()
 
 	dti, err := setupDnstapInput(logger, startConf)
 	if err != nil {
-		logger.Error("unable to setup dnstap input", "error", err)
-		exitProcess(1)
+		return fmt.Errorf("unable to setup dnstap input: %w", err)
 	}
 
 	// We need to keep track of domains that are not on the well-known
@@ -1315,8 +1319,7 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 	// something simpler like a map.
 	seenQnameLRU, err := lru.New[string, struct{}](startConf.QnameSeenEntries)
 	if err != nil {
-		logger.Error("unable to create seen-qname LRU", "error", err)
-		exitProcess(1)
+		return fmt.Errorf("unable to create seen-qname LRU: %w", err)
 	}
 
 	pprofServer := newPprofServer(pprofListenAddr)
@@ -1361,14 +1364,12 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 
 	dawgFinder, dawgModTime, err := loadDawgFile(dawgFile)
 	if err != nil {
-		edm.log.Error("Run: loadDawgFile failed", "error", err)
-		exitProcess(1)
+		return fmt.Errorf("loadDawgFile failed: %w", err)
 	}
 
 	wkdTracker, err := newWellKnownDomainsTracker(dawgFinder, dawgModTime)
 	if err != nil {
-		edm.log.Error(err.Error())
-		exitProcess(1)
+		return fmt.Errorf("newWellKnownDomainsTracker failed: %w", err)
 	}
 
 	debugDnstapFilename := startConf.DebugDnstapFilename
@@ -1385,12 +1386,10 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		debugDnstapFilename := filepath.Clean(debugDnstapFilename)
 		debugDnstapFile, err = os.OpenFile(debugDnstapFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
-			edm.log.Error("unable to open debug dnstap file", "error", err.Error(), "filename", debugDnstapFilename)
-			exitProcess(1)
+			return fmt.Errorf("unable to open debug dnstap file %q: %w", debugDnstapFilename, err)
 		}
 		defer func() {
-			err := debugDnstapFile.Close()
-			if err != nil {
+			if err := debugDnstapFile.Close(); err != nil {
 				edm.log.Error("unable to close debug dnstap file", "error", err, "filename", debugDnstapFile.Name())
 			}
 		}()
@@ -1450,6 +1449,8 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) {
 		edm.log.Info("Run: waiting on MQTT disconnection")
 		edm.autopahoWg.Wait()
 	}
+
+	return nil
 }
 
 type dnstapMinimiser struct {
