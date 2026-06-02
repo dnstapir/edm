@@ -1119,26 +1119,6 @@ type edmConfiger interface {
 	getConfig() (config, error)
 }
 
-type testConfiger struct {
-	CryptopanKey            string
-	CryptopanKeySalt        string
-	CryptopanAddressEntries int
-	Debug                   bool
-	DisableHistogramSender  bool
-	DisableMQTT             bool
-}
-
-func (tc testConfiger) getConfig() (config, error) {
-	return config{
-		CryptopanKey:            tc.CryptopanKey,
-		CryptopanKeySalt:        tc.CryptopanKeySalt,
-		CryptopanAddressEntries: tc.CryptopanAddressEntries,
-		Debug:                   tc.Debug,
-		DisableHistogramSender:  tc.DisableHistogramSender,
-		DisableMQTT:             tc.DisableMQTT,
-	}, nil
-}
-
 type viperConfiger struct{}
 
 func (vc viperConfiger) getConfig() (config, error) {

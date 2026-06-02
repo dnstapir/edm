@@ -28,15 +28,66 @@ import (
 var (
 	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
 	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in a temporary directory")
-	defaultTC    = testConfiger{
-		CryptopanKey:            "key1",
-		CryptopanKeySalt:        "aabbccddeeffgghh",
-		CryptopanAddressEntries: 10,
-		Debug:                   false,
-		DisableHistogramSender:  false,
-		DisableMQTT:             false,
-	}
+	defaultTC    = newDefaultTC()
 )
+
+// testConfiger is an edmConfiger backed by a complete config value. Tests
+// build on defaultTestConfig (which mirrors pkg/cmd/run.go's flag defaults)
+// and override individual fields rather than going through the viper
+// unmarshaling pipeline. Embedding config promotes every field so a test
+// can do `tc := defaultTC; tc.MQTTServer = "..."` directly.
+//
+// testConfiger is test-only; production wires viperConfiger.
+type testConfiger struct {
+	config
+}
+
+// getConfig implements edmConfiger.
+func (tc testConfiger) getConfig() (config, error) {
+	return tc.config, nil
+}
+
+// defaultTestConfig returns a config populated with pkg/cmd/run.go's flag
+// defaults for the scalar/path fields. URL- and address-typed fields
+// (MQTTServer, HTTPURL) are deliberately left empty because run.go's
+// defaults (`127.0.0.1:8883`, etc.) are bare host:port values that fail
+// `url.Parse` for autopaho/HTTP — those defaults are only useful once a
+// scheme is added at the CLI layer, so tests must opt in by setting them.
+//
+// testConfiger does not run validate.Struct, so the missing required_*
+// tags do not block construction.
+func defaultTestConfig() config {
+	return config{
+		ConfigFile:                    "edm.toml",
+		WellKnownDomainsFile:          "well-known-domains.dawg",
+		DataDir:                       "/var/lib/dnstapir/edm",
+		MinimiserWorkers:              1,
+		CryptopanKeySalt:              "edm-kdf-salt-val",
+		QnameSeenEntries:              10_000_000,
+		CryptopanAddressEntries:       10_000_000,
+		NewQnameBuffer:                1000,
+		HistogramHLLExplicitThreshold: 20,
+		MQTTSigningKeyFile:            "edm-mqtt-signer-key.pem",
+		MQTTClientKeyFile:             "edm-mqtt-client-key.pem",
+		MQTTClientCertFile:            "edm-mqtt-client.pem",
+		MQTTKeepalive:                 30,
+		HTTPSigningKeyFile:            "edm-http-signer-key.pem",
+		HTTPClientKeyFile:             "edm-http-client-key.pem",
+		HTTPClientCertFile:            "edm-http-client.pem",
+	}
+}
+
+// newDefaultTC builds the testConfiger used by most tests. It starts from
+// defaultTestConfig and overrides the cryptopan fields with values the
+// surrounding tests assume (a short key and a tiny LRU so cache-eviction
+// branches are reachable without millions of entries).
+func newDefaultTC() testConfiger {
+	c := defaultTestConfig()
+	c.CryptopanKey = "key1"
+	c.CryptopanKeySalt = "aabbccddeeffgghh"
+	c.CryptopanAddressEntries = 10
+	return testConfiger{config: c}
+}
 
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *dnstapMinimiser {
 	t.Helper()
