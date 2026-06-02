@@ -379,7 +379,7 @@ func TestIgnoredFileErrors(t *testing.T) {
 	}
 }
 
-// TestSetIgnoredQuestionNamesBranches drives the four code paths in
+// TestSetIgnoredQuestionNamesBranches drives the three code paths in
 // setIgnoredQuestionNames that the basic missing-file test in
 // TestIgnoredFileErrors does not reach.
 func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
