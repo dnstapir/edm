@@ -50,4 +50,9 @@ var (
 	monitorChannelInterval  = time.Second
 	histogramSenderInterval = 10 * time.Second
 	histogramSenderBackoff  = 15 * time.Second
+
+	// HTTP listen addresses for the pprof and metrics servers. These are
+	// seams so tests can swap them for ephemeral ports.
+	pprofListenAddr   = "127.0.0.1:6060"
+	metricsListenAddr = "127.0.0.1:2112"
 )
