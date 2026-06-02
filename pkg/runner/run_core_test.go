@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/spf13/viper"
@@ -47,15 +48,37 @@ func discardLogger() *slog.Logger {
 }
 
 // pinHTTPServersToEphemeral overrides the pprof/metrics listen-addr seams
-// to ephemeral ports plus a listenAndServeHTTP that exits immediately, so
-// parallel tests do not collide on :6060/:2112 and the two server
+// to ephemeral ports plus a listenAndServeHTTP stub that exits immediately,
+// so parallel tests do not collide on :6060/:2112 and the two server
 // goroutines never actually bind a port.
+//
+// The stub also signals via a buffered channel each time it is called so
+// the test can wait for both spawned goroutines to finish reading
+// listenAndServeHTTP before swapSeam's restoration runs — without that
+// happens-before edge, the race detector flags the goroutine's read
+// against the cleanup's write.
 func pinHTTPServersToEphemeral(t *testing.T) {
 	t.Helper()
 	swapSeam(t, &pprofListenAddr, "127.0.0.1:0")
 	swapSeam(t, &metricsListenAddr, "127.0.0.1:0")
+	exited := make(chan struct{}, 2)
 	swapSeam(t, &listenAndServeHTTP, func(*http.Server) error {
+		exited <- struct{}{}
 		return http.ErrServerClosed
+	})
+	t.Cleanup(func() {
+		// LIFO order means this runs before swapSeam's listenAndServeHTTP
+		// restore, so the read-then-write race is closed when both goroutines
+		// have signalled. A subtest that returned before pprof/metrics spawned
+		// (e.g. an early-error case) sends nothing; the short timeout keeps
+		// the cleanup snappy in that case.
+		for range 2 {
+			select {
+			case <-exited:
+			case <-time.After(time.Second):
+				return
+			}
+		}
 	})
 }
 
@@ -95,19 +118,41 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("setupHistogramSender error", func(t *testing.T) {
+	t.Run("histogram sender enabled: loadHTTPClientCert error", func(t *testing.T) {
+		// This test exercises the histogram-sender-enabled prefix: with
+		// DisableHistogramSender=false, run() calls loadHTTPClientCert
+		// before setupHistogramSender. Missing cert/key paths trip
+		// loadHTTPClientCert, so the returned error is the
+		// "HTTP client cert" wrap — setupHistogramSender itself never
+		// runs. The test name and assertion reflect that.
 		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.DisableHistogramSender = false
-		// Missing cert/key files trip loadHTTPClientCert before
-		// setupHistogramSender; either way the error chain wraps "HTTP
-		// client cert" or "histogram sender".
 		tc.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
 		tc.HTTPClientKeyFile = filepath.Join(t.TempDir(), "missing.key")
 		edm := newTestDnstapMinimiser(t, tc)
 		err := run(edm, discardLogger(), new(slog.LevelVar))
 		if err == nil || !strings.Contains(err.Error(), "HTTP client cert") {
 			t.Fatalf("err = %v, want HTTP-client-cert failure", err)
+		}
+	})
+
+	t.Run("setupHistogramSender error", func(t *testing.T) {
+		// Real matching cert+key so loadHTTPClientCert succeeds and the
+		// failure surfaces from setupHistogramSender itself (here via an
+		// unparseable HTTPURL).
+		runCoreCleanup(t)
+		tc := runCoreTC(t)
+		tc.DisableHistogramSender = false
+		certPath, keyPath, _ := testCertFiles(t)
+		tc.HTTPClientCertFile = certPath
+		tc.HTTPClientKeyFile = keyPath
+		tc.HTTPURL = "://bad-url"
+		edm := newTestDnstapMinimiser(t, tc)
+		err := run(edm, discardLogger(), new(slog.LevelVar))
+		if err == nil ||
+			!strings.Contains(err.Error(), "histogram sender") {
+			t.Fatalf("err = %v, want histogram-sender failure", err)
 		}
 	})
 
