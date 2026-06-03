@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -101,6 +103,108 @@ func TestManualParquetRotationHandlerRejectsNonPost(t *testing.T) {
 	}
 	if allow := rec.Header().Get("Allow"); allow != http.MethodPost {
 		t.Fatalf("Allow header have: %q, want: %q", allow, http.MethodPost)
+	}
+}
+
+// TestManualParquetRotationHandlerSurfacesRotationError verifies the 500
+// arm: when the rotation worker signals an error via req.done, the handler
+// surfaces it as an HTTP 500 with the error string in the body.
+func TestManualParquetRotationHandlerSurfacesRotationError(t *testing.T) {
+	edm := newManualParquetRotationTestMinimiser(t)
+
+	rotationHandled := make(chan struct{})
+	go func() {
+		req := <-edm.parquetRotationRequestCh
+		req.done <- errInjected
+		close(rotationHandled)
+	}()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
+	edm.manualParquetRotationHandler(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if !strings.Contains(rec.Body.String(), errInjected.Error()) {
+		t.Fatalf("body %q does not contain injected error %q", rec.Body.String(), errInjected.Error())
+	}
+
+	select {
+	case <-rotationHandled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("rotation worker goroutine did not finish")
+	}
+}
+
+// TestManualParquetRotationHandlerShutsDownDuringSend verifies the 503
+// arm: when edm.ctx is canceled before anything reads from the request
+// channel, the handler aborts the send select and responds with 503.
+func TestManualParquetRotationHandlerShutsDownDuringSend(t *testing.T) {
+	edm := newManualParquetRotationTestMinimiser(t)
+
+	// Fill the rotation channel so the handler's send select cannot
+	// take the chan-send case, forcing it onto the ctx.Done branch.
+	edm.parquetRotationRequestCh <- parquetRotationRequest{
+		rotationTime: time.Now(),
+		done:         make(chan error, 1),
+	}
+	edm.stop()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
+	edm.manualParquetRotationHandler(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !strings.Contains(rec.Body.String(), "shutting down") {
+		t.Fatalf("body %q does not mention shutdown", rec.Body.String())
+	}
+}
+
+// TestManualParquetRotationHandlerCancelDuringWait verifies the
+// r.Context().Done() arm of the second select: once the request is
+// queued, cancelling the HTTP request's context (while the worker
+// withholds req.done) makes the handler return immediately without
+// writing a status, leaving the recorder at its 200 default.
+func TestManualParquetRotationHandlerCancelDuringWait(t *testing.T) {
+	edm := newManualParquetRotationTestMinimiser(t)
+
+	queued := make(chan parquetRotationRequest, 1)
+	go func() {
+		// Consume the request but deliberately do NOT signal req.done
+		// so the handler stays blocked in its second select.
+		queued <- <-edm.parquetRotationRequestCh
+	}()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil).WithContext(ctx)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		edm.manualParquetRotationHandler(rec, req)
+	}()
+
+	// Wait until the worker confirmed the handler queued the request,
+	// then cancel the request context.
+	select {
+	case <-queued:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not queue the rotation request")
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not return after request context cancel")
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want default 200 (handler should return without writing)", rec.Code)
 	}
 }
 
