@@ -1861,6 +1861,165 @@ func TestConfigUpdater(t *testing.T) {
 	<-done
 }
 
+// syncBuf is a thread-safe bytes.Buffer wrapper for slog handlers whose
+// output is consumed concurrently by both the worker under test and the
+// goroutine polling for assertions.
+type syncBuf struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// runConfigUpdaterUntil drives a single fsnotify event through configUpdater
+// and waits for the debounce timer + processing to apply nextConf, then
+// shuts the goroutine down. log is wired to a syncBuf so subtests can
+// assert on the reload paths that have no other observable side-effect
+// without racing the worker on the log write.
+func runConfigUpdaterUntil(t *testing.T, edm *dnstapMinimiser, sc *sequenceConfiger, expect func() bool) {
+	t.Helper()
+	oldDebounce := configUpdateDebounce
+	t.Cleanup(func() { configUpdateDebounce = oldDebounce })
+	configUpdateDebounce = 5 * time.Millisecond
+
+	edm.configer = sc
+	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+
+	events := make(chan fsnotify.Event)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		configUpdater(events, edm)
+	}()
+	events <- fsnotify.Event{Name: "config.toml", Op: fsnotify.Write}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if expect() {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(events)
+	<-done
+	if !expect() {
+		t.Fatal("configUpdater did not reach the expected state")
+	}
+}
+
+// TestConfigUpdaterBranches covers reload arms that TestConfigUpdater
+// (cryptopan key + disable-histogram-sender + ignored-files clear) does
+// not reach.
+func TestConfigUpdaterBranches(t *testing.T) {
+	t.Run("non-reload-tagged field warns", func(t *testing.T) {
+		buf := &syncBuf{}
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		startConf := edm.getConfig()
+		next := startConf
+		// DataDir has no reload:"true" tag, so changing it triggers the
+		// "requires restart" warning.
+		next.DataDir = "/tmp/edm-changed"
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+			return strings.Contains(buf.String(), "requires restart")
+		})
+	})
+
+	t.Run("HTTP cert path change reloads cert", func(t *testing.T) {
+		buf := &syncBuf{}
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		// Start with the histogram sender enabled and a valid cert so
+		// the late-init branch does not also fire and obscure the
+		// cert-change assertion.
+		certPath, keyPath, _ := testCertFiles(t)
+		startConf := edm.getConfig()
+		startConf.DisableHistogramSender = false
+		startConf.HTTPClientCertFile = certPath
+		startConf.HTTPClientKeyFile = keyPath
+		edm.conf = startConf
+
+		next := startConf
+		next.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+			return strings.Contains(buf.String(), "loadHTTPClientCert")
+		})
+	})
+
+	t.Run("MQTT cert path change reloads cert", func(t *testing.T) {
+		buf := &syncBuf{}
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		certPath, keyPath, _ := testCertFiles(t)
+		startConf := edm.getConfig()
+		startConf.DisableMQTT = false
+		startConf.MQTTClientCertFile = certPath
+		startConf.MQTTClientKeyFile = keyPath
+		edm.conf = startConf
+
+		next := startConf
+		next.MQTTClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+			return strings.Contains(buf.String(), "loadMQTTClientCert")
+		})
+	})
+}
+
+// TestDiskCleanerOsReadDirError covers the non-ENOENT osReadDir error
+// branch: TestMonitorAndDiskCleaner exercises the success path and the
+// ENOENT-skip arm; here we inject a generic error and assert it is
+// logged as "unable to read sent dir".
+func TestDiskCleanerOsReadDirError(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		swapSeam(t, &osReadDir, func(string) ([]os.DirEntry, error) { return nil, errInjected })
+
+		buf := &syncBuf{}
+		ctx, cancel := context.WithCancel(t.Context())
+		edm := &dnstapMinimiser{
+			ctx:  ctx,
+			stop: cancel,
+			log:  slog.New(slog.NewJSONHandler(buf, nil)),
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.diskCleaner(&wg, t.TempDir())
+		// Advance just past the diskCleanerInterval so a tick fires.
+		time.Sleep(diskCleanerInterval + time.Second)
+		cancel()
+		wg.Wait()
+
+		if !strings.Contains(buf.String(), "unable to read sent dir") {
+			t.Fatalf("expected read-dir error log, got: %q", buf.String())
+		}
+	})
+}
+
+// TestAddFSWatchersErrorOnBadPath covers the addFSWatchers error branch:
+// asking fsnotify to watch a non-existent directory fails with
+// ENOENT, which addFSWatchers wraps and returns.
+func TestAddFSWatchersErrorOnBadPath(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	bogus := filepath.Join(t.TempDir(), "missing-dir", "watched")
+	err := edm.addFSWatchers(map[string][]func() error{bogus: {func() error { return nil }}})
+	if err == nil || !strings.Contains(err.Error(), "addFSWatchers") {
+		t.Fatalf("err = %v, want addFSWatchers wrap", err)
+	}
+}
+
 func TestMonitorAndDiskCleaner(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
