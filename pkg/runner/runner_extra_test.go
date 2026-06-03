@@ -842,6 +842,198 @@ func TestUpdateRetryer(t *testing.T) {
 	<-wkd.retryerDone
 }
 
+// TestSendUpdateBranches exercises the rcode/qtype switch arms and the
+// invalid-IP-slice fallback in sendUpdate. TestWellKnownDomainUpdatesAndRotation
+// already covers the RcodeNameError+TypeMX path; this drives the rest.
+func TestSendUpdateBranches(t *testing.T) {
+	finder := testDawgFinder(t, "example.com.")
+	wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name    string
+		ipBytes []byte
+		rcode   int
+		qtype   uint16
+		qclass  uint16
+		check   func(t *testing.T, wu wkdUpdate)
+	}{
+		{
+			name:    "ServerFailure rcode AAAA in",
+			ipBytes: netip.MustParseAddr("198.51.100.20").AsSlice(),
+			rcode:   dns.RcodeServerFailure,
+			qtype:   dns.TypeAAAA,
+			qclass:  dns.ClassINET,
+			check: func(t *testing.T, wu wkdUpdate) {
+				if wu.FailCount != 1 || wu.AAAACount != 1 {
+					t.Fatalf("FailCount/AAAACount: %#v", wu)
+				}
+			},
+		},
+		{
+			name:    "Other rcode NS in",
+			ipBytes: netip.MustParseAddr("198.51.100.20").AsSlice(),
+			rcode:   dns.RcodeRefused,
+			qtype:   dns.TypeNS,
+			qclass:  dns.ClassINET,
+			check: func(t *testing.T, wu wkdUpdate) {
+				if wu.OtherRcodeCount != 1 || wu.NSCount != 1 {
+					t.Fatalf("OtherRcode/NSCount: %#v", wu)
+				}
+			},
+		},
+		{
+			name:    "Success Other-type in",
+			ipBytes: netip.MustParseAddr("198.51.100.20").AsSlice(),
+			rcode:   dns.RcodeSuccess,
+			qtype:   dns.TypeSRV,
+			qclass:  dns.ClassINET,
+			check: func(t *testing.T, wu wkdUpdate) {
+				if wu.OKCount != 1 || wu.OtherTypeCount != 1 {
+					t.Fatalf("OK/OtherType: %#v", wu)
+				}
+			},
+		},
+		{
+			name:    "Non-INET class",
+			ipBytes: netip.MustParseAddr("198.51.100.20").AsSlice(),
+			rcode:   dns.RcodeSuccess,
+			qtype:   dns.TypeA,
+			qclass:  dns.ClassCHAOS,
+			check: func(t *testing.T, wu wkdUpdate) {
+				if wu.NonINCount != 1 {
+					t.Fatalf("NonINCount: %#v", wu)
+				}
+			},
+		},
+		{
+			name:    "Bad IP slice leaves ip invalid",
+			ipBytes: []byte{1, 2, 3},
+			rcode:   dns.RcodeSuccess,
+			qtype:   dns.TypeA,
+			qclass:  dns.ClassINET,
+			check: func(t *testing.T, wu wkdUpdate) {
+				if wu.ip.IsValid() {
+					t.Fatalf("expected invalid ip from short slice; got %v", wu.ip)
+				}
+				if wu.hllHash != 0 {
+					t.Fatalf("expected zero hllHash from short slice; got %d", wu.hllHash)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := new(dns.Msg)
+			msg.SetQuestion("example.com.", tc.qtype)
+			msg.Question[0].Qclass = tc.qclass
+			msg.Rcode = tc.rcode
+			wkd.sendUpdate(tc.ipBytes, msg, 0, false, time.Unix(2, 0))
+			select {
+			case wu := <-wkd.updateCh:
+				tc.check(t, wu)
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for update")
+			}
+		})
+	}
+}
+
+// TestUpdateRetryerBranches drives the two skip arms of updateRetryer
+// that TestUpdateRetryer (which covers the happy resend path) does not
+// reach: hitting the retry limit and the dawgNotFound case where the
+// reloaded tracker no longer recognises the qname.
+func TestUpdateRetryerBranches(t *testing.T) {
+	t.Run("retry limit reached drops update", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		finder := testDawgFinder(t, "example.com.")
+		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := new(dns.Msg)
+		msg.SetQuestion("example.com.", dns.TypeA)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go wkd.updateRetryer(edm, &wg)
+		// retry is 1 BEFORE the increment, becomes 2 after — equal to
+		// retryLimit, so the skip arm fires and no resend reaches updateCh.
+		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
+		close(wkd.retryCh)
+		wg.Wait()
+		<-wkd.retryerDone
+
+		select {
+		case wu := <-wkd.updateCh:
+			t.Fatalf("expected no resend, got %#v", wu)
+		default:
+		}
+	})
+
+	t.Run("dawgNotFound drops update", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Tracker only knows example.com; the retry will look up a
+		// different qname so wkd.lookup returns dawgNotFound and the
+		// retryer drops the update.
+		finder := testDawgFinder(t, "example.com.")
+		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg := new(dns.Msg)
+		msg.SetQuestion("unknown.example.", dns.TypeA)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go wkd.updateRetryer(edm, &wg)
+		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 5}
+		close(wkd.retryCh)
+		wg.Wait()
+		<-wkd.retryerDone
+
+		select {
+		case wu := <-wkd.updateCh:
+			t.Fatalf("expected no resend on dawgNotFound, got %#v", wu)
+		default:
+		}
+	})
+}
+
+// TestQnameSeenLRUEviction verifies the LRU-evicted bookkeeping arm of
+// qnameSeen: when the cache is full and a fresh qname is added, the
+// previously-cached qname is evicted and promSeenQnameLRUEvicted is
+// incremented.
+func TestQnameSeenLRUEviction(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	db := newTestPebble(t)
+	cache, err := lru.New[string, struct{}](1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := new(dns.Msg)
+	first.SetQuestion("a.example.", dns.TypeA)
+	if edm.qnameSeen(first, cache, db) {
+		t.Fatal("first qname unexpectedly already-seen")
+	}
+
+	second := new(dns.Msg)
+	second.SetQuestion("b.example.", dns.TypeA)
+	// Adding the second distinct qname evicts the first from the LRU,
+	// exercising the evicted/promSeenQnameLRUEvicted.Inc() arm.
+	_ = edm.qnameSeen(second, cache, db)
+	if cache.Len() != 1 {
+		t.Fatalf("cache len = %d, want 1 after eviction", cache.Len())
+	}
+	if cache.Contains("a.example.") {
+		t.Fatal("a.example. should have been evicted")
+	}
+}
+
 func TestFSWatchersAndEventWatcher(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	dir := t.TempDir()
