@@ -713,6 +713,127 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 	}
 }
 
+// TestParsePacketAddressFormattingBranches drives the address-formatting
+// arms of parsePacket that the addr+port-present canary in
+// TestSessionParquetAndSessionConstruction does not reach: the
+// addr-without-port and all-nil fallbacks, plus the response-unpack-error
+// path. The qa==nil && QueryPort==nil && ResponsePort!=nil branch is
+// intentionally not exercised — it dereferences *QueryPort despite the
+// guard and is unreachable without panicking, so it is left
+// accepted-as-uncovered.
+func TestParsePacketAddressFormattingBranches(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
+
+	t.Run("addr without ports", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryPort = nil
+		dt.Message.ResponsePort = nil
+		if msg, _ := edm.parsePacket(dt, false); msg == nil {
+			t.Fatal("parsePacket returned nil msg")
+		}
+	})
+
+	t.Run("no addresses at all", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryAddress = nil
+		dt.Message.ResponseAddress = nil
+		dt.Message.QueryPort = nil
+		dt.Message.ResponsePort = nil
+		if msg, _ := edm.parsePacket(dt, false); msg == nil {
+			t.Fatal("parsePacket returned nil msg")
+		}
+	})
+
+	t.Run("response unpack error", func(t *testing.T) {
+		dt := &dnstap.Dnstap{
+			Message: &dnstap.Message{
+				ResponseMessage:  []byte{1, 2, 3},
+				ResponseTimeSec:  ptr(uint64(0)),
+				ResponseTimeNsec: ptr(uint32(0)),
+			},
+		}
+		badMsg, _ := edm.parsePacket(dt, false)
+		if badMsg != nil {
+			t.Fatal("bad response packet returned non-nil message")
+		}
+	})
+}
+
+// TestNewSessionBranches covers newSession arms that
+// TestSessionParquetAndSessionConstruction (basic INET/INET6 happy paths)
+// does not reach: port overflow, ipBytesToInt error from bad address
+// bytes, ip6BytesToInt error from bad address bytes, and the unknown
+// SocketFamily default arm.
+func TestNewSessionBranches(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
+
+	t.Run("port overflow zeroes ports", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		big := uint32(math.MaxInt32) + 1
+		dt.Message.QueryPort = &big
+		dt.Message.ResponsePort = &big
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.SourcePort == nil || *sd.SourcePort != 0 {
+			t.Fatalf("SourcePort = %v, want 0", sd.SourcePort)
+		}
+		if sd.DestPort == nil || *sd.DestPort != 0 {
+			t.Fatalf("DestPort = %v, want 0", sd.DestPort)
+		}
+	})
+
+	t.Run("bad INET address bytes logs but does not panic", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryAddress = []byte{1, 2, 3}
+		dt.Message.ResponseAddress = []byte{4, 5, 6}
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.SourceIPv4 != nil {
+			t.Fatalf("SourceIPv4 should be nil for bad addr bytes, got %v", *sd.SourceIPv4)
+		}
+		if sd.DestIPv4 != nil {
+			t.Fatalf("DestIPv4 should be nil for bad addr bytes, got %v", *sd.DestIPv4)
+		}
+	})
+
+	t.Run("bad INET6 address bytes logs but does not panic", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET6, packed)
+		dt.Message.QueryAddress = []byte{1, 2, 3}
+		dt.Message.ResponseAddress = []byte{4, 5, 6}
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.SourceIPv6Network != nil {
+			t.Fatalf("SourceIPv6Network should be nil for bad addr bytes")
+		}
+		if sd.DestIPv6Network != nil {
+			t.Fatalf("DestIPv6Network should be nil for bad addr bytes")
+		}
+	})
+
+	t.Run("unknown socket family logs and leaves IPs nil", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		unknown := dnstap.SocketFamily(99)
+		dt.Message.SocketFamily = &unknown
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.SourceIPv4 != nil || sd.SourceIPv6Network != nil {
+			t.Fatal("expected no IP fields populated for unknown family")
+		}
+	})
+
+	t.Run("empty identity leaves ServerID nil", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Identity = nil
+		msg, ts := edm.parsePacket(dt, false)
+		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		if sd.ServerID != nil {
+			t.Fatalf("ServerID should be nil for empty identity, got %q", *sd.ServerID)
+		}
+	})
+}
+
 func TestCreateSessionAndHistogramFiles(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	dataDir := t.TempDir()
