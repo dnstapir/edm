@@ -451,6 +451,80 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 	})
 }
 
+// TestPseudonymiseIPCacheBranches covers the three pseudonymiseIP cache
+// branches that TestIPConversionErrorsAndPseudonymiseInvalid (bad-slice)
+// and TestPseudonymiseDnstap (one-shot success) do not reach: cache hit,
+// cache eviction at the LRU size limit, and the cache-disabled path
+// reached via cryptopanCache == nil.
+func TestPseudonymiseIPCacheBranches(t *testing.T) {
+	addrA := netip.MustParseAddr("198.51.100.20").AsSlice()
+	addrB := netip.MustParseAddr("198.51.100.30").AsSlice()
+
+	t.Run("cache hit on repeat", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// First call populates the cache, second returns the cached
+		// value via cryptopanCache.Get — exercising the cacheHit arm.
+		first, err := edm.pseudonymiseIP(addrA)
+		if err != nil {
+			t.Fatalf("first: %v", err)
+		}
+		second, err := edm.pseudonymiseIP(addrA)
+		if err != nil {
+			t.Fatalf("second: %v", err)
+		}
+		if !bytes.Equal(first, second) {
+			t.Fatalf("cache hit produced different result: %v vs %v", first, second)
+		}
+		// pseudonymiseIP is deterministic, so first==second holds even
+		// if caching were silently bypassed. Pin the assertion to the
+		// observable side-effect of the hit arm: exactly one entry in
+		// the LRU, keyed by addrA.
+		if edm.cryptopanCache == nil {
+			t.Fatal("cryptopanCache is nil")
+		}
+		if got := edm.cryptopanCache.Len(); got != 1 {
+			t.Fatalf("cache len = %d, want 1", got)
+		}
+		if !edm.cryptopanCache.Contains(netip.MustParseAddr("198.51.100.20")) {
+			t.Fatal("cache does not contain addrA")
+		}
+	})
+
+	t.Run("cache eviction at size limit", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Shrink the LRU to a single entry so the second distinct
+		// address evicts the first — exercising the evicted arm and
+		// the promCryptopanCacheEvicted.Inc() call.
+		if err := edm.setCryptopan("key1", "aabbccddeeffgghh", 1); err != nil {
+			t.Fatalf("setCryptopan size 1: %v", err)
+		}
+		if _, err := edm.pseudonymiseIP(addrA); err != nil {
+			t.Fatalf("populate: %v", err)
+		}
+		if _, err := edm.pseudonymiseIP(addrB); err != nil {
+			t.Fatalf("evict: %v", err)
+		}
+		if edm.cryptopanCache.Len() != 1 {
+			t.Fatalf("cache len = %d, want 1 after eviction", edm.cryptopanCache.Len())
+		}
+	})
+
+	t.Run("cache disabled bypasses cache logic", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// cacheEntries=0 leaves cryptopanCache nil so the cache-Get
+		// and cache-Add branches are skipped entirely.
+		if err := edm.setCryptopan("key1", "aabbccddeeffgghh", 0); err != nil {
+			t.Fatalf("setCryptopan disabled: %v", err)
+		}
+		if edm.cryptopanCache != nil {
+			t.Fatal("cryptopanCache should be nil with cacheEntries=0")
+		}
+		if _, err := edm.pseudonymiseIP(addrA); err != nil {
+			t.Fatalf("pseudonymiseIP with disabled cache: %v", err)
+		}
+	})
+}
+
 func TestFileAndFilenameHelpers(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	base := t.TempDir()
