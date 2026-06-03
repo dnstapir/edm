@@ -1381,6 +1381,183 @@ func TestHistogramSender(t *testing.T) {
 	t.Fatal("histogramSender did not move sent file")
 }
 
+// TestHistogramSenderBranches covers the histogramSender arms that
+// TestHistogramSender (the happy send-and-rename path) does not reach:
+// disabled-at-startup, parse-error filename, send-error backoff, and
+// the reload arm that flips DisableHistogramSender at runtime.
+func TestHistogramSenderBranches(t *testing.T) {
+	t.Run("disabled at startup skips ticks", func(t *testing.T) {
+		oldInterval := histogramSenderInterval
+		t.Cleanup(func() { histogramSenderInterval = oldInterval })
+		histogramSenderInterval = time.Millisecond
+
+		tc := defaultTC
+		tc.DisableHistogramSender = true
+		edm := newTestDnstapMinimiser(t, tc)
+		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+
+		buf := &syncBuf{}
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.histogramSender(t.TempDir(), t.TempDir(), &wg)
+		// Let several ticks elapse; nothing happens because the
+		// DisableHistogramSender guard short-circuits.
+		time.Sleep(20 * time.Millisecond)
+		edm.stop()
+		wg.Wait()
+
+		if !strings.Contains(buf.String(), `"state":"disabled"`) {
+			t.Fatalf("expected disabled-state log, got: %q", buf.String())
+		}
+	})
+
+	t.Run("parse-error filename is logged and skipped", func(t *testing.T) {
+		oldInterval := histogramSenderInterval
+		t.Cleanup(func() { histogramSenderInterval = oldInterval })
+		histogramSenderInterval = time.Millisecond
+
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+		outboxDir := t.TempDir()
+		sentDir := t.TempDir()
+		// Filename has the expected prefix/suffix but a malformed
+		// timestamp section, so timestampsFromFilename errors out.
+		badName := "dns_histogram-not-a-timestamp.parquet"
+		if err := os.WriteFile(filepath.Join(outboxDir, badName), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		buf := &syncBuf{}
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.histogramSender(outboxDir, sentDir, &wg)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		edm.stop()
+		wg.Wait()
+
+		if !strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
+			t.Fatalf("expected parse-error log, got: %q", buf.String())
+		}
+	})
+
+	t.Run("send error triggers backoff log", func(t *testing.T) {
+		oldInterval := histogramSenderInterval
+		oldBackoff := histogramSenderBackoff
+		oldSleep := sleep
+		t.Cleanup(func() {
+			histogramSenderInterval = oldInterval
+			histogramSenderBackoff = oldBackoff
+			sleep = oldSleep
+		})
+		histogramSenderInterval = time.Millisecond
+		histogramSenderBackoff = time.Millisecond
+		// Replace sleep so the test does not wait the real backoff.
+		sleep = func(time.Duration) {}
+
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+		outboxDir := t.TempDir()
+		sentDir := t.TempDir()
+		name := "dns_histogram-2026-05-28T12-00-00Z_2026-05-28T12-01-00Z.parquet"
+		if err := os.WriteFile(filepath.Join(outboxDir, name), []byte("payload"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		// Aggregate sender points at an unreachable URL so send fails.
+		u, err := url.Parse("http://127.0.0.1:1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		as, err := edm.newAggregateSender(u, testJWK(t), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edm.aggregSender = as
+
+		buf := &syncBuf{}
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.histogramSender(outboxDir, sentDir, &wg)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), "unable to send histogram file") {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		edm.stop()
+		wg.Wait()
+
+		if !strings.Contains(buf.String(), "unable to send histogram file") {
+			t.Fatalf("expected send-error log, got: %q", buf.String())
+		}
+	})
+
+	t.Run("reload toggles enabled state", func(t *testing.T) {
+		oldInterval := histogramSenderInterval
+		t.Cleanup(func() { histogramSenderInterval = oldInterval })
+		histogramSenderInterval = time.Millisecond
+
+		tc := defaultTC
+		tc.DisableHistogramSender = true
+		edm := newTestDnstapMinimiser(t, tc)
+		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+
+		buf := &syncBuf{}
+		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.histogramSender(t.TempDir(), t.TempDir(), &wg)
+
+		// Wait until the worker has read its startup conf before flipping
+		// edm.conf — otherwise we race the worker's edm.getConfig() at
+		// histogramSender's entry and it may pick up the post-flip value.
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), `"state":"disabled"`) {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !strings.Contains(buf.String(), `"state":"disabled"`) {
+			t.Fatalf("worker did not log the initial disabled state: %q", buf.String())
+		}
+
+		// Flip DisableHistogramSender on edm.conf and signal a reload.
+		edm.confMutex.Lock()
+		edm.conf.DisableHistogramSender = false
+		edm.confMutex.Unlock()
+		edm.reloadHistogramSenderConfigCh <- struct{}{}
+
+		deadline = time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if strings.Contains(buf.String(), "enabling histogram sender") {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		edm.stop()
+		wg.Wait()
+
+		if !strings.Contains(buf.String(), "enabling histogram sender") {
+			t.Fatalf("expected enable log, got: %q", buf.String())
+		}
+	})
+}
+
 func TestMQTTConfigAndPublisher(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
