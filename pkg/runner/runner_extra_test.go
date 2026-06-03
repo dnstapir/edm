@@ -1346,6 +1346,12 @@ type fakeAutoPahoConnection struct {
 	published   []*paho.Publish
 	awaitErr    error
 	publishedCh chan struct{}
+	// publishErr, if non-nil, is returned from Publish so the
+	// mqttPublishWorker's error log branch can be exercised.
+	publishErr error
+	// publishResp, if non-nil, is returned from Publish; otherwise
+	// Publish returns &paho.PublishResponse{} (ReasonCode 0).
+	publishResp *paho.PublishResponse
 }
 
 func (f *fakeAutoPahoConnection) AwaitConnection(context.Context) error {
@@ -1361,6 +1367,12 @@ func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*p
 		case f.publishedCh <- struct{}{}:
 		default:
 		}
+	}
+	if f.publishErr != nil {
+		return nil, f.publishErr
+	}
+	if f.publishResp != nil {
+		return f.publishResp, nil
 	}
 	return &paho.PublishResponse{}, nil
 }

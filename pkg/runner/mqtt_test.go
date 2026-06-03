@@ -1,11 +1,13 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -343,6 +345,86 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 
 	cancel()
 	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit after context cancel")
+}
+
+// TestMqttPublishWorkerLogsPublishError feeds a signed message at a fake
+// connection manager whose Publish returns errInjected; the worker logs
+// "error publishing" and continues to the next iteration rather than
+// exiting. Closing mqttSignedCh ends the loop.
+func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	edm.autopahoCtx = ctx
+	t.Cleanup(cancel)
+
+	edm.mqttSignedCh = make(chan []byte, 1)
+	conn := &fakeAutoPahoConnection{
+		publishedCh: make(chan struct{}, 1),
+		publishErr:  errInjected,
+	}
+
+	edm.autopahoWg.Add(1)
+	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+
+	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
+	select {
+	case <-conn.publishedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Publish was never called")
+	}
+	close(edm.mqttSignedCh)
+	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
+
+	if !strings.Contains(buf.String(), "error publishing") {
+		t.Fatalf("expected error log, got: %q", buf.String())
+	}
+}
+
+// TestMqttPublishWorkerLogsNonZeroReasonCode covers the QoS-1+ "reason
+// code received" log: a non-nil PublishResponse with a ReasonCode that
+// is neither 0 (success) nor 16 (no-subscribers, which is silenced) is
+// logged at info.
+func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	edm, err := newDnstapMinimiser(logger, defaultTC)
+	if err != nil {
+		t.Fatalf("newDnstapMinimiser: %s", err)
+	}
+	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	edm.autopahoCtx = ctx
+	t.Cleanup(cancel)
+
+	edm.mqttSignedCh = make(chan []byte, 1)
+	conn := &fakeAutoPahoConnection{
+		publishedCh: make(chan struct{}, 1),
+		publishResp: &paho.PublishResponse{ReasonCode: 0x80},
+	}
+
+	edm.autopahoWg.Add(1)
+	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+
+	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
+	select {
+	case <-conn.publishedCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Publish was never called")
+	}
+	close(edm.mqttSignedCh)
+	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
+
+	if !strings.Contains(buf.String(), "reason code received") {
+		t.Fatalf("expected reason code log, got: %q", buf.String())
+	}
 }
 
 // waitOrFail waits for wg with a deadline, calling t.Fatalf with the
