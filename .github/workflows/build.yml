@@ -92,19 +92,9 @@ jobs:
         with:
           name: coverage
 
-      - name: Configure Git credentials for coverage publish
-        run: |
-          git config --local credential.helper \
-            "!f() { echo username=x-access-token; echo password=\$GITHUB_TOKEN; }; f"
-
       - name: Publish code coverage badge (and optional report)
-        uses: linkdata/gitcoverage@06c1ca0d1213b0d95bcdd40059d6b30eab34fcbf # v9
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        uses: linkdata/gitcoverage@1bf12b64aa2ccd19490823de7434cc543dcc13c8 # v10
         with:
           coverage: ${{ needs.build.outputs.coverage }}
           report:   "coveragereport.html.out"
-
-      - name: Clear Git credentials for coverage publish
-        if: ${{ always() }}
-        run: git config --local --unset-all credential.helper || true
+          token:    ${{ github.token }}
