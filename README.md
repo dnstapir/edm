@@ -1,3 +1,8 @@
+[![build](https://github.com/dnstapir/edm/actions/workflows/build.yml/badge.svg)](https://github.com/dnstapir/edm/actions/workflows/build.yml)
+[![coverage](https://github.com/dnstapir/edm/blob/gitcoverage/main/badge.svg)](https://html-preview.github.io/?url=https://github.com/dnstapir/edm/blob/gitcoverage/main/report.html)
+[![goreport](https://goreportcard.com/badge/github.com/dnstapir/edm)](https://goreportcard.com/report/github.com/dnstapir/edm)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dnstapir/edm/badge)](https://scorecard.dev/viewer/?uri=github.com/dnstapir/edm)
+
 # edm: Edge DNSTAP Minimiser
 
 ## About

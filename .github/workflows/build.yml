@@ -1,32 +1,100 @@
-name: Build
+name: build
+
 permissions:
   contents: read
 
-on: [push]
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        go-version: ['1.25.6']
+    permissions:
+      contents: read
+    outputs:
+      coverage: ${{ steps.coverage.outputs.coverage }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           persist-credentials: false
-      - name: Setup Go ${{ matrix.go-version }}
-        uses: actions/setup-go@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: ${{ matrix.go-version }}
-          cache: false
-      - name: Display Go version
-        run: go version
+          go-version: stable
+
+      - name: Generate
+        run: go generate ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Check gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@ff63afafc529279f454e02f1d060210bd4263951 # v0.7.0
+          staticcheck ./...
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
+
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@4a3bd8af174872c778439083ded7adbf3747e770 # v2.26.1
         with:
-          version: v2.4
-          args: --timeout=5m
+          args: ./...
+
       - name: Test
-        run: make test
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Calculate code coverage
+        id: coverage
+        run: |
+          echo "coverage=$(go tool cover -func=coverage.out | tail -n 1 | tr -s '\t' | cut -f 3)" >> "$GITHUB_OUTPUT"
+          go tool cover -html=coverage.out -o=coveragereport.html.out
+
+      - name: Upload code coverage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage
+          path: coveragereport.html.out
+          retention-days: 1
+
+      - name: Go report card
+        uses: creekorful/goreportcard-action@1f35ced8cdac2cba28c9a2f2288a16aacfd507f9 # v1.0
+        continue-on-error: true
+
       - name: Build
-        run: make build
+        run: go build -v ./...
+
+  coverage:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download code coverage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage
+
+      - name: Publish code coverage badge (and optional report)
+        uses: linkdata/gitcoverage@1bf12b64aa2ccd19490823de7434cc543dcc13c8 # v10
+        with:
+          coverage: ${{ needs.build.outputs.coverage }}
+          report:   "coveragereport.html.out"
+          token:    ${{ github.token }}
