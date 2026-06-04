@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.8%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.4%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
 				
@@ -476,7 +476,7 @@ type aggregateSender struct {
         signingHTTPClient *httpsign.Client
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) <span class="cov6" title="6">{
+func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) <span class="cov8" title="6">{
         var signingKey ed25519.PrivateKey
 
         err := signingJwk.Raw(&amp;signingKey)
@@ -485,7 +485,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
         }</span>
 
         // Create HTTP handler for sending aggregate files to aggrec
-        <span class="cov6" title="5">httpClient := http.Client{
+        <span class="cov7" title="5">httpClient := http.Client{
                 Transport: &amp;http.Transport{
                         Dial: (&amp;net.Dialer{
                                 Timeout:   30 * time.Second,
@@ -511,7 +511,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
                 return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
         }</span>
 
-        <span class="cov6" title="5">client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
+        <span class="cov7" title="5">client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
         return aggregateSender{
                 log:               edm.log,
@@ -522,23 +522,23 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="15">{
+func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="9">{
         fileName = filepath.Clean(fileName)
         file, err := os.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
         }</span>
-        <span class="cov9" title="14">defer func() </span><span class="cov9" title="14">{
+        <span class="cov9" title="8">defer func() </span><span class="cov9" title="8">{
                 if cerr := file.Close(); cerr != nil </span><span class="cov0" title="0">{
                         as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
                 }</span>
         }()
 
-        <span class="cov9" title="14">fileInfo, err := file.Stat()
+        <span class="cov9" title="8">fileInfo, err := file.Stat()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
         }</span>
-        <span class="cov9" title="14">fileSize := fileInfo.Size()
+        <span class="cov9" title="8">fileSize := fileInfo.Size()
 
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
@@ -547,7 +547,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov9" title="14">req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
+        <span class="cov9" title="8">req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -559,7 +559,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov9" title="14">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov9" title="8">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
@@ -583,26 +583,26 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         startTime := now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := time.Since(startTime)
-        if err != nil </span><span class="cov8" title="10">{
+        if err != nil </span><span class="cov6" title="4">{
                 return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
         }</span>
 
-        <span class="cov5" title="4">bodyData, err := io.ReadAll(res.Body)
+        <span class="cov6" title="4">bodyData, err := io.ReadAll(res.Body)
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to read response body: %w", err)
         }</span>
 
-        <span class="cov5" title="4">err = res.Body.Close()
+        <span class="cov6" title="4">err = res.Body.Close()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to close HTTP body: %w", err)
         }</span>
 
-        <span class="cov5" title="4">if res.StatusCode != http.StatusCreated </span><span class="cov1" title="1">{
+        <span class="cov6" title="4">if res.StatusCode != http.StatusCreated </span><span class="cov1" title="1">{
                 as.log.Error(string(bodyData))
                 return fmt.Errorf("sendAggregateFile: unexpected status code: %d", res.StatusCode)
         }</span>
 
-        <span class="cov4" title="3">locationURL, err := url.Parse(res.Header.Get("Location"))
+        <span class="cov5" title="3">locationURL, err := url.Parse(res.Header.Get("Location"))
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to parse Location header (file was still uploaded, took %s): %w", elapsedTime, err)
         }</span>
@@ -3287,13 +3287,13 @@ func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg
 
         <span class="cov4" title="8">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov7" title="58">{
+        for </span><span class="cov7" title="53">{
                 select </span>{
-                case &lt;-ticker.C:<span class="cov7" title="49">
+                case &lt;-ticker.C:<span class="cov7" title="44">
                         if conf.DisableHistogramSender </span><span class="cov6" title="24">{
                                 continue</span>
                         }
-                        <span class="cov6" title="25">dirEntries, err := osReadDir(outboxDir)
+                        <span class="cov5" title="20">dirEntries, err := osReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -3302,17 +3302,17 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov6" title="25">for _, dirEntry := range dirEntries </span><span class="cov5" title="16">{
+                        <span class="cov5" title="20">for _, dirEntry := range dirEntries </span><span class="cov4" title="10">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov5" title="16">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov5" title="16">{
+                                <span class="cov4" title="10">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov4" title="10">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
                                         if err != nil </span><span class="cov3" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
-                                        <span class="cov4" title="11">duration := stopTS.Sub(startTS)
+                                        <span class="cov3" title="5">duration := stopTS.Sub(startTS)
 
                                         absPath := filepath.Join(outboxDir, dirEntry.Name())
                                         absPathSent := filepath.Join(sentDir, dirEntry.Name())
@@ -3325,7 +3325,7 @@ timerLoop:
                                         as := edm.aggregSender
                                         edm.aggregSenderMutex.RUnlock()
                                         err = as.send(absPath, startTS, duration)
-                                        if err != nil </span><span class="cov4" title="10">{
+                                        if err != nil </span><span class="cov3" title="4">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 sleep(backoffDuration)
                                                 continue</span>
@@ -3356,7 +3356,7 @@ timerLoop:
         <span class="cov4" title="8">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
-func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="19">{
+func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="13">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3365,12 +3365,12 @@ func timestampsFromFilename(name string) (time.Time, time.Time, error) <span cla
         if err != nil </span><span class="cov3" title="6">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
         }</span>
-        <span class="cov5" title="13">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+        <span class="cov4" title="7">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
         if err != nil </span><span class="cov1" title="1">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
         }</span>
 
-        <span class="cov5" title="12">return startTime, stopTime, nil</span>
+        <span class="cov3" title="6">return startTime, stopTime, nil</span>
 }
 
 func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) <span class="cov1" title="1">{
@@ -3875,11 +3875,11 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov2" title="3">{
+                for </span><span class="cov1" title="1">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov1" title="1">
                                 return</span>
@@ -3904,12 +3904,12 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov4" title="10">{
+        for </span><span class="cov5" title="12">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C:<span class="cov1" title="1">
