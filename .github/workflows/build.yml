@@ -79,6 +79,10 @@ jobs:
 
   coverage:
     needs: build
+    # Publishing the coverage badge pushes to the repository, so only run this
+    # after a merge to main. On pull requests (which may originate from forks)
+    # the job has no business rewriting the badge and lacks the write access.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
