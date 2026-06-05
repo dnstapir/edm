@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.8%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.4%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
 				
@@ -3875,9 +3875,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov1" title="1">{
+                for </span><span class="cov2" title="2">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                                 processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
@@ -3904,9 +3904,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov5" title="12">{
+        for </span><span class="cov4" title="11">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                         processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
