@@ -942,7 +942,6 @@ import (
         "log"
         "log/slog"
         "math"
-        "net"
         "net/http"
         _ "net/http/pprof" // #nosec G108 -- pprofServer only listens to localhost
         "net/netip"
@@ -1235,20 +1234,20 @@ func newCertStore() *certStore <span class="cov9" title="184">{
         return &amp;certStore{}
 }</span>
 
-func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLabels) <span class="cov5" title="20">{
+func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLabels) <span class="cov6" title="21">{
         // If labels is nil (the "." zone) we can depend on the zero type of
         // the label fields being nil, so nothing to do
         if labels == nil </span><span class="cov1" title="1">{
                 return
         }</span>
 
-        <span class="cov5" title="19">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
+        <span class="cov5" title="20">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
 
-        for index := range reverseLabels </span><span class="cov7" title="69">{
+        for index := range reverseLabels </span><span class="cov8" title="71">{
                 switch index </span>{
-                case 0:<span class="cov5" title="19">
+                case 0:<span class="cov5" title="20">
                         l.Label0 = &amp;reverseLabels[index]</span>
-                case 1:<span class="cov5" title="19">
+                case 1:<span class="cov5" title="20">
                         l.Label1 = &amp;reverseLabels[index]</span>
                 case 2:<span class="cov4" title="10">
                         l.Label2 = &amp;reverseLabels[index]</span>
@@ -1270,13 +1269,13 @@ func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLab
         }
 }
 
-func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string <span class="cov6" title="21">{
+func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string <span class="cov6" title="22">{
         // If labels is nil (the "." zone) there is nothing to do
         if labels == nil </span><span class="cov1" title="1">{
                 return nil
         }</span>
 
-        <span class="cov5" title="20">boundedReverseLabels := []string{}
+        <span class="cov6" title="21">boundedReverseLabels := []string{}
 
         remainderElems := 0
         if len(labels) &gt; maxLen </span><span class="cov1" title="1">{
@@ -1284,13 +1283,13 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
         }</span>
 
         // Append all labels except the last one
-        <span class="cov5" title="20">for i := len(labels) - 1; i &gt; remainderElems; i-- </span><span class="cov7" title="52">{
+        <span class="cov6" title="21">for i := len(labels) - 1; i &gt; remainderElems; i-- </span><span class="cov7" title="53">{
                 boundedReverseLabels = append(boundedReverseLabels, labels[i])
         }</span>
 
         // If the labels fit inside maxLen then just append the last remaining
         // label as-is
-        <span class="cov5" title="20">if len(labels) &lt;= maxLen </span><span class="cov5" title="19">{
+        <span class="cov6" title="21">if len(labels) &lt;= maxLen </span><span class="cov5" title="20">{
                 boundedReverseLabels = append(boundedReverseLabels, labels[0])
         }</span> else<span class="cov1" title="1"> {
                 // If there are more labels than maxLen we need to concatenate
@@ -1304,7 +1303,7 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
                         <span class="cov1" title="1">boundedReverseLabels = append(boundedReverseLabels, strings.Join(remainderLabels, "."))</span>
                 }
         }
-        <span class="cov5" title="20">return boundedReverseLabels</span>
+        <span class="cov6" title="21">return boundedReverseLabels</span>
 }
 
 func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) <span class="cov3" title="5">{
@@ -2032,15 +2031,15 @@ func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error)
 
 func (edm *dnstapMinimiser) cleanupFSWatchers() error <span class="cov4" title="11">{
         edm.fsWatcherMutex.RLock()
-        for _, watchPath := range edm.fsWatcher.WatchList() </span><span class="cov4" title="7">{
+        for _, watchPath := range edm.fsWatcher.WatchList() </span><span class="cov4" title="8">{
                 watchPathInUse := false
-                for fsWatcherFuncFilename := range edm.fsWatcherFuncs </span><span class="cov5" title="13">{
-                        if filepath.Dir(fsWatcherFuncFilename) == watchPath </span><span class="cov4" title="9">{
+                for fsWatcherFuncFilename := range edm.fsWatcherFuncs </span><span class="cov5" title="15">{
+                        if filepath.Dir(fsWatcherFuncFilename) == watchPath </span><span class="cov4" title="11">{
                                 watchPathInUse = true
                         }</span>
                 }
 
-                <span class="cov4" title="7">if !watchPathInUse </span><span class="cov1" title="1">{
+                <span class="cov4" title="8">if !watchPathInUse </span><span class="cov1" title="1">{
                         edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
                         err := edm.fsWatcher.Remove(watchPath)
                         if err != nil </span><span class="cov0" title="0">{
@@ -2935,7 +2934,16 @@ minimiserLoop:
                                 }
                         }
 
-                        <span class="cov4" title="7">isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(*dt.Message.Type)], "_QUERY")
+                        // Guard the hot-path dereferences (here and below: QueryAddress,
+                        // clientIPIsIgnored) so a partially populated frame is dropped
+                        // rather than panicking before parsePacket's own nil checks.
+                        <span class="cov4" title="7">if dt.Message == nil || dt.Message.Type == nil </span><span class="cov0" title="0">{
+                                edm.log.Error("runMinimiser: dnstap message or type missing, dropping packet", "minimiser_id", minimiserID)
+                                edm.promDNSParseError.Inc()
+                                continue</span>
+                        }
+
+                        <span class="cov4" title="7">isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
 
                         // For now we only care about response type dnstap packets
                         if isQuery </span><span class="cov1" title="1">{
@@ -3055,7 +3063,7 @@ func (edm *dnstapMinimiser) monitorChannelLen(wg *sync.WaitGroup) <span class="c
         }
 }
 
-func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData <span class="cov4" title="8">{
+func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData <span class="cov4" title="9">{
         sd := &amp;sessionData{}
 
         if dt.Message.QueryPort != nil </span><span class="cov4" title="8">{
@@ -3069,7 +3077,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                 }</span>
         }
 
-        <span class="cov4" title="8">if dt.Message.ResponsePort != nil </span><span class="cov4" title="8">{
+        <span class="cov4" title="9">if dt.Message.ResponsePort != nil </span><span class="cov4" title="8">{
                 if *dt.Message.ResponsePort &gt; math.MaxInt32 </span><span class="cov1" title="1">{
                         edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", *dt.Message.ResponsePort)
                         var rp int32
@@ -3080,7 +3088,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                 }</span>
         }
 
-        <span class="cov4" title="8">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
+        <span class="cov4" title="9">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
 
         if isQuery </span><span class="cov1" title="1">{
                 qms := string(dt.Message.QueryMessage)
@@ -3088,7 +3096,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 
                 ms := timestamp.UnixMicro()
                 sd.QueryTime = &amp;ms
-        }</span> else<span class="cov4" title="7"> {
+        }</span> else<span class="cov4" title="8"> {
                 rms := string(dt.Message.ResponseMessage)
                 sd.ResponseMessage = &amp;rms
 
@@ -3096,13 +3104,13 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                 sd.ResponseTime = &amp;ms
         }</span>
 
-        <span class="cov4" title="8">if len(dt.Identity) != 0 </span><span class="cov4" title="7">{
+        <span class="cov4" title="9">if len(dt.Identity) != 0 </span><span class="cov4" title="7">{
                 sID := string(dt.Identity)
                 sd.ServerID = &amp;sID
         }</span>
 
-        <span class="cov4" title="8">switch *dt.Message.SocketFamily </span>{
-        case dnstap.SocketFamily_INET:<span class="cov3" title="5">
+        <span class="cov4" title="9">switch dt.Message.GetSocketFamily() </span>{
+        case dnstap.SocketFamily_INET:<span class="cov3" title="6">
                 if dt.Message.QueryAddress != nil </span><span class="cov3" title="5">{
                         sourceIPInt, err := ipBytesToInt(dt.Message.QueryAddress)
                         if err != nil </span><span class="cov1" title="1">{
@@ -3113,7 +3121,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                         }</span>
                 }
 
-                <span class="cov3" title="5">if dt.Message.ResponseAddress != nil </span><span class="cov3" title="5">{
+                <span class="cov3" title="6">if dt.Message.ResponseAddress != nil </span><span class="cov3" title="5">{
                         destIPInt, err := ipBytesToInt(dt.Message.ResponseAddress)
                         if err != nil </span><span class="cov1" title="1">{
                                 edm.log.Error("unable to create uint32 from dt.Message.ResponseAddress", "error", err)
@@ -3146,13 +3154,19 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                                 sd.DestIPv6Host = &amp;i64dIntHost
                         }</span>
                 }
+        case 0:<span class="cov0" title="0"></span>
+                // SocketFamily not set: tolerate partial metadata and leave the IP
+                // fields nil rather than logging an error for every such packet.
         default:<span class="cov1" title="1">
                 edm.log.Error("packet is neither INET or INET6")</span>
         }
 
-        <span class="cov4" title="8">sd.DNSProtocol = (*int32)(dt.Message.SocketProtocol)
+        <span class="cov4" title="9">if dt.Message.SocketProtocol != nil </span><span class="cov4" title="8">{
+                dnsProtocol := int32(dt.Message.GetSocketProtocol())
+                sd.DNSProtocol = &amp;dnsProtocol
+        }</span>
 
-        return sd</span>
+        <span class="cov4" title="9">return sd</span>
 }
 
 func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) (string, error) <span class="cov2" title="2">{
@@ -3506,63 +3520,67 @@ func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) <span class="c
         edm.log.Info("newQnamePublisher: exiting loop")</span>
 }
 
-func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) <span class="cov5" title="18">{
-        var t time.Time
+func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) <span class="cov6" title="21">{
         var err error
-        var queryAddress, responseAddress string
 
-        qa := net.IP(dt.Message.QueryAddress)
-        ra := net.IP(dt.Message.ResponseAddress)
-
-        // Query address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
-        if qa != nil &amp;&amp; dt.Message.QueryPort != nil </span><span class="cov5" title="14">{
-                queryAddress = qa.String() + ":" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
-        }</span> else<span class="cov3" title="4"> if qa != nil </span><span class="cov1" title="1">{
-                queryAddress = qa.String() + ":?"
-        }</span> else<span class="cov2" title="3"> if dt.Message.ResponsePort != nil </span><span class="cov0" title="0">{
-                queryAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.QueryPort), 10)
-        }</span> else<span class="cov2" title="3"> {
-                queryAddress = "?"
+        if dt.Message == nil </span><span class="cov1" title="1">{
+                edm.log.Error("parsePacket: dnstap message is missing")
+                return nil, time.Unix(0, 0).UTC()
         }</span>
 
-        // Response address: 10.10.10.10:31337, 10.10.10.10:?, ?:31337 or ?
-        <span class="cov5" title="18">if ra != nil &amp;&amp; dt.Message.ResponsePort != nil </span><span class="cov5" title="14">{
-                responseAddress = ra.String() + ":" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
-        }</span> else<span class="cov3" title="4"> if ra != nil </span><span class="cov1" title="1">{
-                responseAddress = ra.String() + ":?"
-        }</span> else<span class="cov2" title="3"> if dt.Message.ResponsePort != nil </span><span class="cov0" title="0">{
-                responseAddress = "?:" + strconv.FormatUint(uint64(*dt.Message.ResponsePort), 10)
-        }</span> else<span class="cov2" title="3"> {
-                responseAddress = "?"
-        }</span>
-        <span class="cov5" title="18">msg := new(dns.Msg)
-        if isQuery </span><span class="cov2" title="3">{
+        <span class="cov5" title="20">queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
+        responseAddress := formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort)
+
+        msg := new(dns.Msg)
+        if isQuery </span><span class="cov3" title="4">{
                 err = msg.Unpack(dt.Message.QueryMessage)
                 if err != nil </span><span class="cov1" title="1">{
                         edm.log.Error("unable to unpack query message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
                         msg = nil
                 }</span>
-                <span class="cov2" title="3">if *dt.Message.QueryTimeSec &gt; math.MaxInt64 </span><span class="cov1" title="1">{
-                        edm.log.Error("dt.Message.QueryTimeSec is too large for int64, setting time to 0", "value", *dt.Message.QueryTimeSec)
-                        *dt.Message.QueryTimeSec = 0
-                        *dt.Message.QueryTimeNsec = 0
-                }</span>
-                <span class="cov2" title="3">t = time.Unix(int64(*dt.Message.QueryTimeSec), int64(*dt.Message.QueryTimeNsec)).UTC()</span> // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
-        } else<span class="cov5" title="15"> {
-                err = msg.Unpack(dt.Message.ResponseMessage)
-                if err != nil </span><span class="cov1" title="1">{
-                        edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
-                        msg = nil
-                }</span>
-                <span class="cov5" title="15">if *dt.Message.ResponseTimeSec &gt; math.MaxInt64 </span><span class="cov1" title="1">{
-                        edm.log.Error("dt.Message.ResponseTimeSec is too large for int64, setting time to 0", "value", *dt.Message.ResponseTimeSec)
-                        *dt.Message.ResponseTimeSec = 0
-                        *dt.Message.ResponseTimeNsec = 0
-                }</span>
-                <span class="cov5" title="15">t = time.Unix(int64(*dt.Message.ResponseTimeSec), int64(*dt.Message.ResponseTimeNsec)).UTC()</span> // #nosec G115 -- Will be zeroed out above if too large, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+                <span class="cov3" title="4">t := edm.dnstapTimestamp(dt.Message.QueryTimeSec, dt.Message.QueryTimeNsec, "dt.Message.QueryTimeSec")
+                return msg, t</span>
         }
 
-        <span class="cov5" title="18">return msg, t</span>
+        <span class="cov5" title="16">err = msg.Unpack(dt.Message.ResponseMessage)
+        if err != nil </span><span class="cov1" title="1">{
+                edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
+                msg = nil
+        }</span>
+        <span class="cov5" title="16">t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
+        return msg, t</span>
+}
+
+func formatDnstapEndpoint(ipBytes []byte, port *uint32) string <span class="cov7" title="44">{
+        ip, ok := netip.AddrFromSlice(ipBytes)
+        if ok &amp;&amp; port != nil </span><span class="cov6" title="25">{
+                return ip.String() + ":" + strconv.FormatUint(uint64(*port), 10)
+        }</span>
+        <span class="cov5" title="19">if ok </span><span class="cov2" title="3">{
+                return ip.String() + ":?"
+        }</span>
+        <span class="cov5" title="16">if port != nil </span><span class="cov3" title="5">{
+                return "?:" + strconv.FormatUint(uint64(*port), 10)
+        }</span>
+        <span class="cov4" title="11">return "?"</span>
+}
+
+func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time <span class="cov5" title="20">{
+        if sec == nil </span><span class="cov2" title="2">{
+                edm.log.Error(fieldName + " is missing, setting time to 0")
+                return time.Unix(0, 0).UTC()
+        }</span>
+        <span class="cov5" title="18">if *sec &gt; math.MaxInt64 </span><span class="cov2" title="2">{
+                edm.log.Error(fieldName+" is too large for int64, setting time to 0", "value", *sec)
+                return time.Unix(0, 0).UTC()
+        }</span>
+
+        <span class="cov5" title="16">var nsecValue uint32
+        if nsec != nil </span><span class="cov5" title="16">{
+                nsecValue = *nsec
+        }</span>
+
+        <span class="cov5" title="16">return time.Unix(int64(*sec), int64(nsecValue)).UTC()</span> // #nosec G115 -- sec is checked above and nsec is uint32.
 }
 
 func ipBytesToInt(ip4Bytes []byte) (uint32, error) <span class="cov5" title="13">{
