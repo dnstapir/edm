@@ -2357,6 +2357,61 @@ func TestRunMinimiserFlows(t *testing.T) {
 	wg.Wait()
 }
 
+// TestRunMinimiserScratchClientIP verifies that the per-worker scratch buffer
+// used to keep the unpseudonymised client IP yields the correct raw address
+// for every frame, even when a single worker processes consecutive frames of
+// different address families. It feeds an IPv4 frame followed by an IPv6 frame
+// (which fills the scratch buffer completely) and checks that each emitted
+// wkdUpdate carries the original client IP and its matching HLL hash, proving
+// the IP is captured before pseudonymisation and that reusing the scratch
+// buffer does not corrupt earlier or later frames.
+func TestRunMinimiserScratchClientIP(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+	edm.sessionCollectorCh = make(chan *sessionData, 1)
+	cache, err := lru.New[string, struct{}](2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := newTestPebble(t)
+	wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
+
+	tests := []struct {
+		family dnstap.SocketFamily
+		ip     netip.Addr
+	}{
+		{dnstap.SocketFamily_INET, netip.MustParseAddr("198.51.100.20")},
+		{dnstap.SocketFamily_INET6, netip.MustParseAddr("2001:db8::20")},
+	}
+	for _, tc := range tests {
+		frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- frame
+		select {
+		case wu := <-wkd.updateCh:
+			if wu.ip != tc.ip {
+				t.Fatalf("client IP for %s: got %s, want %s", tc.family, wu.ip, tc.ip)
+			}
+			wantHash := murmur3.Sum64(tc.ip.AsSlice())
+			if wu.hllHash != wantHash {
+				t.Fatalf("HLL hash for %s: got %d, want %d", tc.family, wu.hllHash, wantHash)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for WKD update for %s", tc.family)
+		}
+	}
+
+	edm.stop()
+	wg.Wait()
+}
+
 func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
