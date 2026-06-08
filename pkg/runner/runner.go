@@ -2491,7 +2491,7 @@ timerLoop:
 					edm.aggregSenderMutex.RLock()
 					as := edm.aggregSender
 					edm.aggregSenderMutex.RUnlock()
-					err = as.send(absPath, startTS, duration)
+					err = as.send(edm.ctx, absPath, startTS, duration)
 					if err != nil {
 						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
 						select {
