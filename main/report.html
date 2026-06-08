@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.8%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.4%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
 				
@@ -397,53 +397,61 @@ const (
         _CD = 1 &lt;&lt; 4  // checking disabled
 )
 
-func bitsFromMsg(dns *dns.Msg) uint16 <span class="cov10" title="2">{
+func bitsFromMsg(dns *dns.Msg) uint16 <span class="cov10" title="3">{
         bits := uint16(dns.Opcode)&lt;&lt;11 | uint16(dns.Rcode&amp;0xF) // #nosec G115 -- The Opcode and Rcode fields while ints in the dns struct represents only 4 bits each
         if dns.Response </span><span class="cov1" title="1">{
                 bits |= _QR
         }</span>
-        <span class="cov10" title="2">if dns.Authoritative </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.Authoritative </span><span class="cov1" title="1">{
                 bits |= _AA
         }</span>
-        <span class="cov10" title="2">if dns.Truncated </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.Truncated </span><span class="cov1" title="1">{
                 bits |= _TC
         }</span>
-        <span class="cov10" title="2">if dns.RecursionDesired </span><span class="cov10" title="2">{
+        <span class="cov10" title="3">if dns.RecursionDesired </span><span class="cov6" title="2">{
                 bits |= _RD
         }</span>
-        <span class="cov10" title="2">if dns.RecursionAvailable </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.RecursionAvailable </span><span class="cov1" title="1">{
                 bits |= _RA
         }</span>
-        <span class="cov10" title="2">if dns.Zero </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.Zero </span><span class="cov1" title="1">{
                 bits |= _Z
         }</span>
-        <span class="cov10" title="2">if dns.AuthenticatedData </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.AuthenticatedData </span><span class="cov1" title="1">{
                 bits |= _AD
         }</span>
-        <span class="cov10" title="2">if dns.CheckingDisabled </span><span class="cov1" title="1">{
+        <span class="cov10" title="3">if dns.CheckingDisabled </span><span class="cov1" title="1">{
                 bits |= _CD
         }</span>
 
-        <span class="cov10" title="2">return bits</span>
+        <span class="cov10" title="3">return bits</span>
 }
 
-func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON <span class="cov1" title="1">{
+// NewQnameEvent constructs a NewQnameJSON event from a DNS message and a
+// timestamp. If the Question section is empty the returned event will have
+// an empty Qname, nil Qtype and nil Qclass, but other header-derived fields
+// will still be populated.
+func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON <span class="cov6" title="2">{
         bits := bitsFromMsg(msg)
         flags := int(bits)
 
-        qType := int(msg.Question[0].Qtype)
-        qClass := int(msg.Question[0].Qclass)
-
-        return NewQnameJSON{
+        event := NewQnameJSON{
                 Type:      NewQnameJSONType,
-                Qname:     msg.Question[0].Name,
-                Qtype:     &amp;qType,
-                Qclass:    &amp;qClass,
                 Timestamp: &amp;ts,
                 Flags:     &amp;flags,
                 Version:   NewQnameJSONVersion,
         }
-}</span>
+
+        if len(msg.Question) &gt; 0 </span><span class="cov1" title="1">{
+                qType := int(msg.Question[0].Qtype)
+                qClass := int(msg.Question[0].Qclass)
+                event.Qname = msg.Question[0].Name
+                event.Qtype = &amp;qType
+                event.Qclass = &amp;qClass
+        }</span>
+
+        <span class="cov6" title="2">return event</span>
+}
 </pre>
 		
 		<pre class="file" id="file4" style="display: none">package runner
@@ -522,23 +530,23 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="10">{
+func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="9">{
         fileName = filepath.Clean(fileName)
         file, err := os.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
         }</span>
-        <span class="cov9" title="9">defer func() </span><span class="cov9" title="9">{
+        <span class="cov9" title="8">defer func() </span><span class="cov9" title="8">{
                 if cerr := file.Close(); cerr != nil </span><span class="cov0" title="0">{
                         as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
                 }</span>
         }()
 
-        <span class="cov9" title="9">fileInfo, err := file.Stat()
+        <span class="cov9" title="8">fileInfo, err := file.Stat()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
         }</span>
-        <span class="cov9" title="9">fileSize := fileInfo.Size()
+        <span class="cov9" title="8">fileSize := fileInfo.Size()
 
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
@@ -547,7 +555,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov9" title="9">req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
+        <span class="cov9" title="8">req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -559,7 +567,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov9" title="9">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov9" title="8">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
@@ -583,7 +591,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         startTime := now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := time.Since(startTime)
-        if err != nil </span><span class="cov7" title="5">{
+        if err != nil </span><span class="cov6" title="4">{
                 return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
         }</span>
 
@@ -3302,17 +3310,17 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="11">{
+                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="10">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov4" title="11">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov4" title="11">{
+                                <span class="cov4" title="10">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov4" title="10">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
                                         if err != nil </span><span class="cov3" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
-                                        <span class="cov3" title="6">duration := stopTS.Sub(startTS)
+                                        <span class="cov3" title="5">duration := stopTS.Sub(startTS)
 
                                         absPath := filepath.Join(outboxDir, dirEntry.Name())
                                         absPathSent := filepath.Join(sentDir, dirEntry.Name())
@@ -3325,7 +3333,7 @@ timerLoop:
                                         as := edm.aggregSender
                                         edm.aggregSenderMutex.RUnlock()
                                         err = as.send(absPath, startTS, duration)
-                                        if err != nil </span><span class="cov3" title="5">{
+                                        if err != nil </span><span class="cov3" title="4">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 sleep(backoffDuration)
                                                 continue</span>
@@ -3356,7 +3364,7 @@ timerLoop:
         <span class="cov4" title="8">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
-func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="14">{
+func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="13">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3365,12 +3373,12 @@ func timestampsFromFilename(name string) (time.Time, time.Time, error) <span cla
         if err != nil </span><span class="cov3" title="6">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
         }</span>
-        <span class="cov4" title="8">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+        <span class="cov4" title="7">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
         if err != nil </span><span class="cov1" title="1">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
         }</span>
 
-        <span class="cov4" title="7">return startTime, stopTime, nil</span>
+        <span class="cov3" title="6">return startTime, stopTime, nil</span>
 }
 
 func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) <span class="cov1" title="1">{
@@ -3875,9 +3883,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov2" title="2">{
+                for </span><span class="cov1" title="1">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
@@ -3904,9 +3912,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov4" title="11">{
+        for </span><span class="cov5" title="12">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
                         processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
