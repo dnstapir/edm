@@ -3,6 +3,7 @@ package cmd
 import (
 	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -15,15 +16,19 @@ var (
 	exitProcess    = os.Exit
 	userHomeDir    = os.UserHomeDir
 
-	viperSetConfigFile  = viper.SetConfigFile
-	viperAddConfigPath  = viper.AddConfigPath
-	viperSetConfigType  = viper.SetConfigType
-	viperSetConfigName  = viper.SetConfigName
-	viperAutomaticEnv   = viper.AutomaticEnv
-	viperReadInConfig   = viper.ReadInConfig
-	viperConfigFileUsed = viper.ConfigFileUsed
-	viperWatchConfig    = viper.WatchConfig
+	viperSetConfigFile     = viper.SetConfigFile
+	viperAddConfigPath     = viper.AddConfigPath
+	viperSetConfigType     = viper.SetConfigType
+	viperSetConfigName     = viper.SetConfigName
+	viperSetEnvPrefix      = viper.SetEnvPrefix
+	viperSetEnvKeyReplacer = viper.SetEnvKeyReplacer
+	viperAutomaticEnv      = viper.AutomaticEnv
+	viperReadInConfig      = viper.ReadInConfig
+	viperConfigFileUsed    = viper.ConfigFileUsed
+	viperWatchConfig       = viper.WatchConfig
 )
+
+const envPrefix = "DNSTAPIR_EDM"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -78,7 +83,7 @@ func initConfig() {
 		viperSetConfigName(".dnstapir-edm")
 	}
 
-	viperAutomaticEnv() // read in environment variables that match
+	configureEnv()
 
 	// If a config file is found, read it in.
 	if err := viperReadInConfig(); err == nil {
@@ -87,4 +92,14 @@ func initConfig() {
 
 	// Make it so we can detect changes to the cryptopan secret in the config
 	viperWatchConfig()
+}
+
+// configureEnv isolates environment overrides to the [envPrefix] namespace.
+//
+// It binds Viper to environment variables prefixed with [envPrefix], mapping
+// "-" in keys to "_", then enables automatic environment lookups.
+func configureEnv() {
+	viperSetEnvPrefix(envPrefix)
+	viperSetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	viperAutomaticEnv() // read in environment variables that match
 }
