@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.7%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.4%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
 				
@@ -3785,7 +3785,11 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span
 }
 
 func timeUntilNextMinute() time.Duration <span class="cov3" title="5">{
-        return time.Second * time.Duration(60-time.Now().Second())
+        return timeUntilNextMinuteFrom(time.Now())
+}</span>
+
+func timeUntilNextMinuteFrom(now time.Time) time.Duration <span class="cov4" title="8">{
+        return now.Truncate(time.Minute).Add(time.Minute).Sub(now)
 }</span>
 
 func (edm *dnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMatch bool) *histogramData <span class="cov4" title="11">{
@@ -3906,11 +3910,11 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov1" title="1">{
+                for </span><span class="cov2" title="2">{
                         select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
+                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov1" title="1">
                                 return</span>
@@ -3935,12 +3939,12 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov5" title="12">{
+        for </span><span class="cov4" title="11">{
                 select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
+                case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C:<span class="cov1" title="1">
