@@ -65,7 +65,7 @@
 				
 				<option value="file4">github.com/dnstapir/edm/pkg/runner/aggregate_sender.go (87.9%)</option>
 				
-				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.8%)</option>
+				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.7%)</option>
 				
 				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
 				
@@ -638,6 +638,7 @@ import (
         "fmt"
         "log/slog"
         "net/url"
+        "strings"
         "sync"
 
         "github.com/eclipse/paho.golang/autopaho"
@@ -687,9 +688,9 @@ type mqttConnectionManager interface {
 }
 
 func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) <span class="cov5" title="4">{
-        u, err := url.Parse(server)
+        u, err := parseMQTTServerURL(server)
         if err != nil </span><span class="cov1" title="1">{
-                return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse URL: %w", err)
+                return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
         }</span>
 
         <span class="cov4" title="3">cliCfg := autopaho.ClientConfig{
@@ -725,6 +726,28 @@ func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
         }</span>
 
         <span class="cov4" title="3">return cliCfg, nil</span>
+}
+
+func parseMQTTServerURL(server string) (*url.URL, error) <span class="cov9" title="12">{
+        if !strings.Contains(server, "://") </span><span class="cov3" title="2">{
+                server = "tls://" + server
+        }</span>
+
+        <span class="cov9" title="12">u, err := url.Parse(server)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, err
+        }</span>
+        <span class="cov8" title="11">if u.Hostname() == "" </span><span class="cov3" title="2">{
+                return nil, fmt.Errorf("missing host in %q", server)
+        }</span>
+
+        <span class="cov8" title="9">switch strings.ToLower(u.Scheme) </span>{
+        case "mqtt", "tcp", "ssl", "tls", "mqtts", "mqtt+ssl", "tcps", "ws", "wss":<span class="cov7" title="8"></span>
+        default:<span class="cov1" title="1">
+                return nil, fmt.Errorf("unsupported scheme %q", u.Scheme)</span>
+        }
+
+        <span class="cov7" title="8">return u, nil</span>
 }
 
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
