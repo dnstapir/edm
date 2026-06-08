@@ -717,10 +717,8 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 // arms of parsePacket that the addr+port-present canary in
 // TestSessionParquetAndSessionConstruction does not reach: the
 // addr-without-port and all-nil fallbacks, plus the response-unpack-error
-// path. The qa==nil && QueryPort==nil && ResponsePort!=nil branch is
-// intentionally not exercised — it dereferences *QueryPort despite the
-// guard and is unreachable without panicking, so it is left
-// accepted-as-uncovered.
+// path. The port-without-address branch is covered directly by
+// TestFormatDnstapEndpoint.
 func TestParsePacketAddressFormattingBranches(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
