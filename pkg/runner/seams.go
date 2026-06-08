@@ -43,7 +43,6 @@ var (
 	osStat     = os.Stat
 
 	now                     = time.Now
-	sleep                   = time.Sleep
 	configUpdateDebounce    = 100 * time.Millisecond
 	fsEventDebounce         = 100 * time.Millisecond
 	diskCleanerInterval     = time.Minute
