@@ -159,6 +159,7 @@ func main() <span class="cov0" title="0">{
 import (
         "log/slog"
         "os"
+        "strings"
 
         "github.com/spf13/cobra"
         "github.com/spf13/viper"
@@ -171,15 +172,19 @@ var (
         exitProcess    = os.Exit
         userHomeDir    = os.UserHomeDir
 
-        viperSetConfigFile  = viper.SetConfigFile
-        viperAddConfigPath  = viper.AddConfigPath
-        viperSetConfigType  = viper.SetConfigType
-        viperSetConfigName  = viper.SetConfigName
-        viperAutomaticEnv   = viper.AutomaticEnv
-        viperReadInConfig   = viper.ReadInConfig
-        viperConfigFileUsed = viper.ConfigFileUsed
-        viperWatchConfig    = viper.WatchConfig
+        viperSetConfigFile     = viper.SetConfigFile
+        viperAddConfigPath     = viper.AddConfigPath
+        viperSetConfigType     = viper.SetConfigType
+        viperSetConfigName     = viper.SetConfigName
+        viperSetEnvPrefix      = viper.SetEnvPrefix
+        viperSetEnvKeyReplacer = viper.SetEnvKeyReplacer
+        viperAutomaticEnv      = viper.AutomaticEnv
+        viperReadInConfig      = viper.ReadInConfig
+        viperConfigFileUsed    = viper.ConfigFileUsed
+        viperWatchConfig       = viper.WatchConfig
 )
+
+const envPrefix = "DNSTAPIR_EDM"
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &amp;cobra.Command{
@@ -194,7 +199,7 @@ outputting minimised output data.`,
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov10" title="2">{
+func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov4" title="2">{
         // Set global variables so it can be used from run.go
         edmLogger = logger
         edmLoggerLevel = loggerLevel
@@ -219,8 +224,8 @@ func init() <span class="cov1" title="1">{
 }</span>
 
 // initConfig reads in config file and ENV variables if set.
-func initConfig() <span class="cov10" title="2">{
-        if cfgFile != "" </span><span class="cov1" title="1">{
+func initConfig() <span class="cov10" title="5">{
+        if cfgFile != "" </span><span class="cov8" title="4">{
                 // Use config file from the flag.
                 viperSetConfigFile(cfgFile)
         }</span> else<span class="cov1" title="1"> {
@@ -234,16 +239,26 @@ func initConfig() <span class="cov10" title="2">{
                 viperSetConfigName(".dnstapir-edm")
         }</span>
 
-        <span class="cov10" title="2">viperAutomaticEnv() // read in environment variables that match
+        <span class="cov10" title="5">configureEnv()
 
         // If a config file is found, read it in.
-        if err := viperReadInConfig(); err == nil </span><span class="cov1" title="1">{
+        if err := viperReadInConfig(); err == nil </span><span class="cov8" title="4">{
                 edmLogger.Info("using config file", "filename", viperConfigFileUsed())
         }</span>
 
         // Make it so we can detect changes to the cryptopan secret in the config
-        <span class="cov10" title="2">viperWatchConfig()</span>
+        <span class="cov10" title="5">viperWatchConfig()</span>
 }
+
+// configureEnv isolates environment overrides to the [envPrefix] namespace.
+//
+// It binds Viper to environment variables prefixed with [envPrefix], mapping
+// "-" in keys to "_", then enables automatic environment lookups.
+func configureEnv() <span class="cov10" title="5">{
+        viperSetEnvPrefix(envPrefix)
+        viperSetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+        viperAutomaticEnv() // read in environment variables that match
+}</span>
 </pre>
 		
 		<pre class="file" id="file2" style="display: none">package cmd
@@ -3333,13 +3348,13 @@ func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg
 
         <span class="cov4" title="9">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov7" title="50">{
+        for </span><span class="cov7" title="51">{
                 select </span>{
-                case &lt;-ticker.C:<span class="cov7" title="42">
+                case &lt;-ticker.C:<span class="cov7" title="43">
                         if conf.DisableHistogramSender </span><span class="cov6" title="24">{
                                 continue</span>
                         }
-                        <span class="cov5" title="18">dirEntries, err := osReadDir(outboxDir)
+                        <span class="cov5" title="19">dirEntries, err := osReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -3348,7 +3363,7 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov5" title="18">for _, dirEntry := range dirEntries </span><span class="cov4" title="9">{
+                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="9">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
