@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.7%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.4%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
 				
@@ -473,6 +473,7 @@ func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON <span class="cov6" t
 
 import (
         "bufio"
+        "context"
         "crypto/ed25519"
         "crypto/tls"
         "crypto/x509"
@@ -510,10 +511,10 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
         // Create HTTP handler for sending aggregate files to aggrec
         <span class="cov8" title="6">httpClient := http.Client{
                 Transport: &amp;http.Transport{
-                        Dial: (&amp;net.Dialer{
+                        DialContext: (&amp;net.Dialer{
                                 Timeout:   30 * time.Second,
                                 KeepAlive: 30 * time.Second,
-                        }).Dial,
+                        }).DialContext,
                         TLSHandshakeTimeout:   10 * time.Second,
                         ResponseHeaderTimeout: 10 * time.Second,
                         TLSClientConfig: &amp;tls.Config{
@@ -545,7 +546,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="8">{
+func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov10" title="8">{
         fileName = filepath.Clean(fileName)
         file, err := os.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
@@ -570,7 +571,7 @@ func (as aggregateSender) send(fileName string, ts time.Time, duration time.Dura
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov9" title="7">req, err := http.NewRequest("POST", histogramURL, bufio.NewReader(file))
+        <span class="cov9" title="7">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -3348,13 +3349,13 @@ func (edm *dnstapMinimiser) histogramSender(outboxDir string, sentDir string, wg
 
         <span class="cov4" title="9">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov7" title="51">{
+        for </span><span class="cov7" title="49">{
                 select </span>{
-                case &lt;-ticker.C:<span class="cov7" title="43">
+                case &lt;-ticker.C:<span class="cov7" title="41">
                         if conf.DisableHistogramSender </span><span class="cov6" title="24">{
                                 continue</span>
                         }
-                        <span class="cov5" title="19">dirEntries, err := osReadDir(outboxDir)
+                        <span class="cov5" title="17">dirEntries, err := osReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -3363,7 +3364,7 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="9">{
+                        <span class="cov5" title="17">for _, dirEntry := range dirEntries </span><span class="cov4" title="9">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
@@ -3385,7 +3386,7 @@ timerLoop:
                                         edm.aggregSenderMutex.RLock()
                                         as := edm.aggregSender
                                         edm.aggregSenderMutex.RUnlock()
-                                        err = as.send(absPath, startTS, duration)
+                                        err = as.send(edm.ctx, absPath, startTS, duration)
                                         if err != nil </span><span class="cov2" title="3">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 select </span>{
@@ -3944,11 +3945,11 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov2" title="3">{
+                for </span><span class="cov1" title="1">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov1" title="1">
                                 return</span>
@@ -3973,12 +3974,12 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov4" title="10">{
+        for </span><span class="cov5" title="12">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C:<span class="cov1" title="1">
