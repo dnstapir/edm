@@ -1839,6 +1839,7 @@ func TestSetupMQTT(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTServer = "mqtts://example.test:8883"
 		edm.conf.DisableMQTTFilequeue = true
 		err := edm.setupMQTT()
 		if !errors.Is(err, errConnect) {
