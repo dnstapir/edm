@@ -391,12 +391,9 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 		if err := edm.setIgnoredQuestionNames(); err != nil {
 			t.Fatalf("initial load: %v", err)
 		}
-		edm.ignoredQuestionsMutex.RLock()
-		if edm.ignoredQuestions == nil {
-			edm.ignoredQuestionsMutex.RUnlock()
+		if edm.ignoredQuestions.Load() == nil {
 			t.Fatal("expected finder loaded; got nil")
 		}
-		edm.ignoredQuestionsMutex.RUnlock()
 
 		// Unset the filename and reload — the close-on-replace branch
 		// fires and ignoredQuestions returns to nil.
@@ -404,9 +401,7 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 		if err := edm.setIgnoredQuestionNames(); err != nil {
 			t.Fatalf("unset reload: %v", err)
 		}
-		edm.ignoredQuestionsMutex.RLock()
-		defer edm.ignoredQuestionsMutex.RUnlock()
-		if edm.ignoredQuestions != nil {
+		if edm.ignoredQuestions.Load() != nil {
 			t.Fatal("expected finder cleared after unset; got non-nil")
 		}
 	})
@@ -427,9 +422,7 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 		if err := edm.setIgnoredQuestionNames(); err != nil {
 			t.Fatalf("empty file: %v", err)
 		}
-		edm.ignoredQuestionsMutex.RLock()
-		defer edm.ignoredQuestionsMutex.RUnlock()
-		if edm.ignoredQuestions != nil {
+		if edm.ignoredQuestions.Load() != nil {
 			t.Fatal("expected finder cleared for empty file; got non-nil")
 		}
 	})
@@ -443,9 +436,7 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 		if err := edm.setIgnoredQuestionNames(); err != nil {
 			t.Fatalf("zero-name dawg: %v", err)
 		}
-		edm.ignoredQuestionsMutex.RLock()
-		defer edm.ignoredQuestionsMutex.RUnlock()
-		if edm.ignoredQuestions != nil {
+		if edm.ignoredQuestions.Load() != nil {
 			t.Fatal("expected nil finder for zero-name dawg; got non-nil")
 		}
 	})
@@ -455,20 +446,27 @@ func TestSetIgnoredQuestionNamesBranches(t *testing.T) {
 // branches that TestIPConversionErrorsAndPseudonymiseInvalid (bad-slice)
 // and TestPseudonymiseDnstap (one-shot success) do not reach: cache hit,
 // cache eviction at the LRU size limit, and the cache-disabled path
-// reached via cryptopanCache == nil.
+// reached via a nil cache. pseudonymiseIP takes the per-worker cache and
+// the cryptopan snapshot as parameters, so each subtest manages its own
+// cache the way runMinimiser does.
 func TestPseudonymiseIPCacheBranches(t *testing.T) {
 	addrA := netip.MustParseAddr("198.51.100.20").AsSlice()
 	addrB := netip.MustParseAddr("198.51.100.30").AsSlice()
 
 	t.Run("cache hit on repeat", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		cpn := edm.cryptopan.Load()
+		cache, err := lru.New[netip.Addr, netip.Addr](10)
+		if err != nil {
+			t.Fatalf("lru.New: %v", err)
+		}
 		// First call populates the cache, second returns the cached
-		// value via cryptopanCache.Get — exercising the cacheHit arm.
-		first, err := edm.pseudonymiseIP(addrA)
+		// value via cache.Get — exercising the cacheHit arm.
+		first, err := edm.pseudonymiseIP(addrA, cpn, cache)
 		if err != nil {
 			t.Fatalf("first: %v", err)
 		}
-		second, err := edm.pseudonymiseIP(addrA)
+		second, err := edm.pseudonymiseIP(addrA, cpn, cache)
 		if err != nil {
 			t.Fatalf("second: %v", err)
 		}
@@ -479,47 +477,41 @@ func TestPseudonymiseIPCacheBranches(t *testing.T) {
 		// if caching were silently bypassed. Pin the assertion to the
 		// observable side-effect of the hit arm: exactly one entry in
 		// the LRU, keyed by addrA.
-		if edm.cryptopanCache == nil {
-			t.Fatal("cryptopanCache is nil")
-		}
-		if got := edm.cryptopanCache.Len(); got != 1 {
+		if got := cache.Len(); got != 1 {
 			t.Fatalf("cache len = %d, want 1", got)
 		}
-		if !edm.cryptopanCache.Contains(netip.MustParseAddr("198.51.100.20")) {
+		if !cache.Contains(netip.MustParseAddr("198.51.100.20")) {
 			t.Fatal("cache does not contain addrA")
 		}
 	})
 
 	t.Run("cache eviction at size limit", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		cpn := edm.cryptopan.Load()
 		// Shrink the LRU to a single entry so the second distinct
 		// address evicts the first — exercising the evicted arm and
 		// the promCryptopanCacheEvicted.Inc() call.
-		if err := edm.setCryptopan("key1", "aabbccddeeffgghh", 1); err != nil {
-			t.Fatalf("setCryptopan size 1: %v", err)
+		cache, err := lru.New[netip.Addr, netip.Addr](1)
+		if err != nil {
+			t.Fatalf("lru.New: %v", err)
 		}
-		if _, err := edm.pseudonymiseIP(addrA); err != nil {
+		if _, err := edm.pseudonymiseIP(addrA, cpn, cache); err != nil {
 			t.Fatalf("populate: %v", err)
 		}
-		if _, err := edm.pseudonymiseIP(addrB); err != nil {
+		if _, err := edm.pseudonymiseIP(addrB, cpn, cache); err != nil {
 			t.Fatalf("evict: %v", err)
 		}
-		if edm.cryptopanCache.Len() != 1 {
-			t.Fatalf("cache len = %d, want 1 after eviction", edm.cryptopanCache.Len())
+		if cache.Len() != 1 {
+			t.Fatalf("cache len = %d, want 1 after eviction", cache.Len())
 		}
 	})
 
 	t.Run("cache disabled bypasses cache logic", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
-		// cacheEntries=0 leaves cryptopanCache nil so the cache-Get
-		// and cache-Add branches are skipped entirely.
-		if err := edm.setCryptopan("key1", "aabbccddeeffgghh", 0); err != nil {
-			t.Fatalf("setCryptopan disabled: %v", err)
-		}
-		if edm.cryptopanCache != nil {
-			t.Fatal("cryptopanCache should be nil with cacheEntries=0")
-		}
-		if _, err := edm.pseudonymiseIP(addrA); err != nil {
+		cpn := edm.cryptopan.Load()
+		// A nil cache skips the cache-Get and cache-Add branches
+		// entirely, mirroring CryptopanAddressEntries == 0.
+		if _, err := edm.pseudonymiseIP(addrA, cpn, nil); err != nil {
 			t.Fatalf("pseudonymiseIP with disabled cache: %v", err)
 		}
 	})
@@ -583,7 +575,7 @@ func TestIPConversionErrorsAndPseudonymiseInvalid(t *testing.T) {
 	}
 
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	got, err := edm.pseudonymiseIP([]byte{1, 2, 3})
+	got, err := edm.pseudonymiseIP([]byte{1, 2, 3}, edm.cryptopan.Load(), nil)
 	if err == nil {
 		t.Fatal("invalid pseudonymiseIP succeeded")
 	}
@@ -592,7 +584,7 @@ func TestIPConversionErrorsAndPseudonymiseInvalid(t *testing.T) {
 	}
 
 	dt := &dnstap.Dnstap{Message: &dnstap.Message{QueryAddress: []byte{1, 2, 3}, ResponseAddress: []byte{4, 5, 6}}}
-	edm.pseudonymiseDnstap(dt)
+	edm.testPseudonymiseDnstap(dt)
 	if !bytes.Equal(dt.Message.QueryAddress, []byte{0, 0, 0}) || !bytes.Equal(dt.Message.ResponseAddress, []byte{0, 0, 0}) {
 		t.Fatalf("invalid dnstap addresses were not zeroed: %#v", dt.Message)
 	}
@@ -935,15 +927,15 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 		t.Fatal("timed out waiting for update")
 	}
 
-	prev, err := wkd.rotateTracker(edm, path, time.Unix(60, 0))
+	prev, err := wkd.rotateTracker(edm, path, time.Unix(0, 0), time.Unix(60, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !prev.rotationTime.Equal(time.Unix(60, 0)) || len(wkd.m) != 0 {
+	if !prev.startTime.Equal(time.Unix(0, 0)) || !prev.rotationTime.Equal(time.Unix(60, 0)) || len(wkd.m) != 0 {
 		t.Fatalf("unexpected rotation state: %#v", prev)
 	}
 
-	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Now()); err == nil {
+	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err == nil {
 		t.Fatal("rotateTracker with missing file succeeded")
 	}
 }
@@ -2562,10 +2554,11 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	}
 	var builder netipx.IPSetBuilder
 	builder.AddPrefix(netip.MustParsePrefix("198.51.100.20/32"))
-	edm.ignoredClientsIPSet, err = builder.IPSet()
+	ipset, err := builder.IPSet()
 	if err != nil {
 		t.Fatal(err)
 	}
+	edm.ignoredClientsIPSet.Store(ipset)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -2580,10 +2573,11 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
 	edm.sessionCollectorCh = make(chan *sessionData)
-	edm.ignoredClientsIPSet, err = builder.IPSet()
+	ipset, err = builder.IPSet()
 	if err != nil {
 		t.Fatal(err)
 	}
+	edm.ignoredClientsIPSet.Store(ipset)
 	wg.Add(1)
 	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
 	edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))

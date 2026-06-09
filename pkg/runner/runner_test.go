@@ -241,7 +241,7 @@ func TestWKD(t *testing.T) {
 	for _, test := range wkdDawgIndexTests {
 		m := new(dns.Msg)
 		m.SetQuestion(test.domain, dns.TypeA)
-		i, suffixMatch := getDawgIndex(wkd.dawgFinder, m.Question[0].Name)
+		i, suffixMatch := getDawgIndex(wkd.snap.Load().dawgFinder, m.Question[0].Name)
 
 		if test.found && i == dawgNotFound {
 			t.Fatalf("%s: expected match %s, but was not found", test.name, test.domain)
@@ -294,6 +294,58 @@ func TestWKD(t *testing.T) {
 		if test.known != known {
 			t.Fatalf("%s: unexpected known status, have: %t, want: %t", test.name, known, test.known)
 		}
+	}
+}
+
+func TestTimestampsFromFilenameRejectsMalformedNames(t *testing.T) {
+	tests := []string{
+		"dns_histogram.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z.parquet",
+		"dns_histogram-bad_2026-04-30T12-01-00Z.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z_bad.parquet",
+	}
+
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := timestampsFromFilename(name); err == nil {
+				t.Fatal("timestampsFromFilename returned nil error")
+			}
+		})
+	}
+}
+
+func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
+	dBuilder := dawg.New()
+	dBuilder.Add("example.com.")
+	dFinder := dBuilder.Finish()
+
+	dawgFile := filepath.Join(t.TempDir(), "well-known-domains.dawg")
+	if _, err := dFinder.Save(dawgFile); err != nil {
+		t.Fatalf("Save: %s", err)
+	}
+	fileInfo, err := os.Stat(dawgFile)
+	if err != nil {
+		t.Fatalf("Stat: %s", err)
+	}
+
+	wkd, err := newWellKnownDomainsTracker(dFinder, fileInfo.ModTime())
+	if err != nil {
+		t.Fatalf("newWellKnownDomainsTracker: %s", err)
+	}
+	edm := &dnstapMinimiser{
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile: %s", err)
+	}
+	nextModTime := fileInfo.ModTime().Add(time.Second)
+	if err := os.Chtimes(dawgFile, nextModTime, nextModTime); err != nil {
+		t.Fatalf("Chtimes: %s", err)
+	}
+
+	if _, err := wkd.rotateTracker(edm, dawgFile, time.Time{}, time.Now()); !errors.Is(err, errEmptyDawgFile) {
+		t.Fatalf("rotateTracker error have: %v, want: %v", err, errEmptyDawgFile)
 	}
 }
 
@@ -550,7 +602,7 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	expectedValidNumCIDRs := 2
 
 	// Make sure we actually got anything loaded from the file with content
-	if edm.ignoredClientsIPSet == nil {
+	if edm.ignoredClientsIPSet.Load() == nil {
 		t.Fatalf("edm.ignoredClientsIPSet parsed from '%s' should not be nil", testdataFile)
 	}
 	if edm.getNumIgnoredClientCIDRs() < 1 {
@@ -571,8 +623,8 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile, edm.getNumIgnoredClientCIDRs(), expectedNumCIDRs)
 	}
 
-	if edm.ignoredClientsIPSet != nil {
-		t.Fatalf("edm.ignoredClientsIPSet should be nil, have: %#v", edm.ignoredClientsIPSet)
+	if got := edm.ignoredClientsIPSet.Load(); got != nil {
+		t.Fatalf("edm.ignoredClientsIPSet should be nil, have: %#v", got)
 	}
 
 	ipLookupTests := []struct {
@@ -739,8 +791,8 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions.NumAdded() != expectedNumNames {
-		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile1, edm.ignoredQuestions.NumAdded(), expectedNumNames)
+	if edm.ignoredQuestions.Load().finder.NumAdded() != expectedNumNames {
+		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile1, edm.ignoredQuestions.Load().finder.NumAdded(), expectedNumNames)
 	}
 
 	questionLookupTests := []struct {
@@ -807,8 +859,8 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions.NumAdded() != expectedNumNames {
-		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile2, edm.ignoredQuestions.NumAdded(), expectedNumNames)
+	if edm.ignoredQuestions.Load().finder.NumAdded() != expectedNumNames {
+		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile2, edm.ignoredQuestions.Load().finder.NumAdded(), expectedNumNames)
 	}
 
 	questionLookupTests2 := []struct {
@@ -883,8 +935,8 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 	// Magic value counted by hand
 	expectedNumNames := 2
 
-	if edm.ignoredQuestions.NumAdded() != expectedNumNames {
-		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile, edm.ignoredQuestions.NumAdded(), expectedNumNames)
+	if edm.ignoredQuestions.Load().finder.NumAdded() != expectedNumNames {
+		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile, edm.ignoredQuestions.Load().finder.NumAdded(), expectedNumNames)
 	}
 
 	testdataFile = "testdata/ignored-question-names.empty.dawg"
@@ -894,8 +946,8 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions != nil {
-		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions)
+	if edm.ignoredQuestions.Load() != nil {
+		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions.Load())
 	}
 
 	// Try to look for things that was present in the initial valid data
@@ -958,8 +1010,8 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	// Magic value counted by hand
 	expectedNumNames := 2
 
-	if edm.ignoredQuestions.NumAdded() != expectedNumNames {
-		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile, edm.ignoredQuestions.NumAdded(), expectedNumNames)
+	if edm.ignoredQuestions.Load().finder.NumAdded() != expectedNumNames {
+		t.Fatalf("unexpected number of names parsed from '%s': have: %d, want: %d", testdataFile, edm.ignoredQuestions.Load().finder.NumAdded(), expectedNumNames)
 	}
 
 	// Now set an empty filename
@@ -969,8 +1021,8 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	if edm.ignoredQuestions != nil {
-		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions)
+	if edm.ignoredQuestions.Load() != nil {
+		t.Fatalf("edm.ignoredQuestions should be nil: have: %#v", edm.ignoredQuestions.Load())
 	}
 
 	// Try to look for things that was present in the initial valid data
@@ -1291,14 +1343,14 @@ func TestPseudonymiseDnstap(t *testing.T) {
 
 	edm := newTestDnstapMinimiser(t, defaultTC)
 
-	if edm.cryptopanCache != nil {
-		if edm.cryptopanCache.Len() != 0 {
-			t.Fatalf("there should be no entries in newly initialised cryptopan cache but it contains items: %d", edm.cryptopanCache.Len())
+	if edm.testCryptopanCache() != nil {
+		if edm.testCryptopanCache().Len() != 0 {
+			t.Fatalf("there should be no entries in newly initialised cryptopan cache but it contains items: %d", edm.testCryptopanCache().Len())
 		}
 	}
 
-	edm.pseudonymiseDnstap(dt4)
-	edm.pseudonymiseDnstap(dt6)
+	edm.testPseudonymiseDnstap(dt4)
+	edm.testPseudonymiseDnstap(dt6)
 
 	pseudoQueryAddr4, ok := netip.AddrFromSlice(dt4.Message.QueryAddress)
 	if !ok {
@@ -1354,13 +1406,13 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		t.Fatalf("pseudonymised IPv6 resp address %s is not the expected address %s", pseudoRespAddr6, expectedPseudoRespAddr6)
 	}
 
-	if edm.cryptopanCache != nil {
-		if edm.cryptopanCache.Len() == 0 {
+	if edm.testCryptopanCache() != nil {
+		if edm.testCryptopanCache().Len() == 0 {
 			t.Fatalf("there should be entries in the cryptopan cache but it is empty")
 		}
 
 		// Verify the entry in the cache is the same as the one we got back
-		cachedPseudoQueryAddr4, ok := edm.cryptopanCache.Get(origQueryAddr4)
+		cachedPseudoQueryAddr4, ok := edm.testCryptopanCache().Get(origQueryAddr4)
 		if !ok {
 			t.Fatalf("unable to lookup IPv4 query address %s in cache", origQueryAddr4)
 		}
@@ -1368,7 +1420,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 			t.Fatalf("cached pseudonymised IPv4 query address %s is not the same as the calculated address %s", cachedPseudoQueryAddr4, pseudoQueryAddr4)
 		}
 
-		cachedPseudoRespAddr4, ok := edm.cryptopanCache.Get(origRespAddr4)
+		cachedPseudoRespAddr4, ok := edm.testCryptopanCache().Get(origRespAddr4)
 		if !ok {
 			t.Fatalf("unable to lookup IPv4 response address %s in cache", origRespAddr4)
 		}
@@ -1376,7 +1428,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 			t.Fatalf("cached pseudonymised IPv4 response address %s is not the same as the calculated address %s", cachedPseudoRespAddr4, pseudoRespAddr4)
 		}
 
-		cachedPseudoQueryAddr6, ok := edm.cryptopanCache.Get(origQueryAddr6)
+		cachedPseudoQueryAddr6, ok := edm.testCryptopanCache().Get(origQueryAddr6)
 		if !ok {
 			t.Fatalf("unable to lookup IPv6 query address %s in cache", origQueryAddr6)
 		}
@@ -1384,7 +1436,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 			t.Fatalf("cached pseudonymised IPv6 query address %s is not the same as the calculated address %s", cachedPseudoQueryAddr6, pseudoQueryAddr6)
 		}
 
-		cachedPseudoRespAddr6, ok := edm.cryptopanCache.Get(origRespAddr6)
+		cachedPseudoRespAddr6, ok := edm.testCryptopanCache().Get(origRespAddr6)
 		if !ok {
 			t.Fatalf("unable to lookup IPv6 response address %s in cache", origRespAddr6)
 		}
@@ -1393,13 +1445,13 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		}
 	}
 
-	if edm.cryptopanCache != nil {
-		t.Logf("number of pseudonymisation cache entries before reset: %d", edm.cryptopanCache.Len())
+	if edm.testCryptopanCache() != nil {
+		t.Logf("number of pseudonymisation cache entries before reset: %d", edm.testCryptopanCache().Len())
 	}
 
-	if edm.cryptopanCache != nil {
-		for _, key := range edm.cryptopanCache.Keys() {
-			value, ok := edm.cryptopanCache.Get(key)
+	if edm.testCryptopanCache() != nil {
+		for _, key := range edm.testCryptopanCache().Keys() {
+			value, ok := edm.testCryptopanCache().Get(key)
 			if !ok {
 				t.Fatalf("unable to extract value for key before reset: %s", key)
 			}
@@ -1414,9 +1466,13 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		t.Fatalf("unable to call edm.SetCryptopan: %s", err)
 	}
 
-	if edm.cryptopanCache != nil {
-		if edm.cryptopanCache.Len() != 0 {
-			t.Fatalf("there should be no cache entries in replaced cryptopan cache but it contains items: %d", edm.cryptopanCache.Len())
+	// Mirror the per-worker cache purge that runMinimiser would do on
+	// detecting a cryptopan generation change.
+	edm.testResetCryptopanCache()
+
+	if edm.testCryptopanCache() != nil {
+		if edm.testCryptopanCache().Len() != 0 {
+			t.Fatalf("there should be no cache entries in replaced cryptopan cache but it contains items: %d", edm.testCryptopanCache().Len())
 		}
 	}
 
@@ -1426,8 +1482,8 @@ func TestPseudonymiseDnstap(t *testing.T) {
 	dt6.Message.QueryAddress = origQueryAddr6.AsSlice()
 	dt6.Message.ResponseAddress = origRespAddr6.AsSlice()
 
-	edm.pseudonymiseDnstap(dt4)
-	edm.pseudonymiseDnstap(dt6)
+	edm.testPseudonymiseDnstap(dt4)
+	edm.testPseudonymiseDnstap(dt6)
 
 	pseudoQueryAddrUpdated4, ok := netip.AddrFromSlice(dt4.Message.QueryAddress)
 	if !ok {
@@ -1488,10 +1544,10 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		t.Fatalf("updated pseudonymised IPv6 resp address %s is not the expected address %s", pseudoRespAddrUpdated6, expectedPseudoRespAddrUpdated6)
 	}
 
-	if edm.cryptopanCache != nil {
-		t.Logf("number of pseudonymisation cache entries before end: %d", edm.cryptopanCache.Len())
-		for _, key := range edm.cryptopanCache.Keys() {
-			value, ok := edm.cryptopanCache.Get(key)
+	if edm.testCryptopanCache() != nil {
+		t.Logf("number of pseudonymisation cache entries before end: %d", edm.testCryptopanCache().Len())
+		for _, key := range edm.testCryptopanCache().Keys() {
+			value, ok := edm.testCryptopanCache().Get(key)
 			if !ok {
 				t.Fatalf("unable to extract value for key before end: %s", key)
 			}
@@ -1506,14 +1562,20 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		t.Fatalf("unable to call edm.SetCryptopan with 0 cache size: %s", err)
 	}
 
+	// Mirror the per-worker cache purge + disable that runMinimiser would
+	// do in production: drop the existing test cache and zero the config
+	// so testCryptopanCache returns nil (uncached path).
+	edm.testResetCryptopanCache()
+	edm.conf.CryptopanAddressEntries = 0
+
 	// Reset the addresses and pseudonymise again with the updated key
 	dt4.Message.QueryAddress = origQueryAddr4.AsSlice()
 	dt4.Message.ResponseAddress = origRespAddr4.AsSlice()
 	dt6.Message.QueryAddress = origQueryAddr6.AsSlice()
 	dt6.Message.ResponseAddress = origRespAddr6.AsSlice()
 
-	edm.pseudonymiseDnstap(dt4)
-	edm.pseudonymiseDnstap(dt6)
+	edm.testPseudonymiseDnstap(dt4)
+	edm.testPseudonymiseDnstap(dt6)
 
 	uncachedPseudoQueryAddr4, ok := netip.AddrFromSlice(dt4.Message.QueryAddress)
 	if !ok {
@@ -1586,7 +1648,7 @@ func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 				ResponseAddress: origRespAddr4.AsSlice(),
 			},
 		}
-		edm.pseudonymiseDnstap(dt4)
+		edm.testPseudonymiseDnstap(dt4)
 	}
 }
 
@@ -1610,7 +1672,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 				ResponseAddress: origRespAddr4.AsSlice(),
 			},
 		}
-		edm.pseudonymiseDnstap(dt4)
+		edm.testPseudonymiseDnstap(dt4)
 	}
 }
 
@@ -1631,7 +1693,7 @@ func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 				ResponseAddress: origRespAddr6.AsSlice(),
 			},
 		}
-		edm.pseudonymiseDnstap(dt6)
+		edm.testPseudonymiseDnstap(dt6)
 	}
 }
 
@@ -1655,7 +1717,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 				ResponseAddress: origRespAddr6.AsSlice(),
 			},
 		}
-		edm.pseudonymiseDnstap(dt6)
+		edm.testPseudonymiseDnstap(dt6)
 	}
 }
 
