@@ -378,14 +378,18 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
+const sentHistogramRetention = 24 * time.Hour
+
+func sentHistogramExpired(modTime, now time.Time) bool {
+	return now.Sub(modTime) > sentHistogramRetention
+}
+
 func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) {
 	// We will scan the directory each tick for sent files to remove.
 	defer wg.Done()
 
 	ticker := time.NewTicker(diskCleanerInterval)
 	defer ticker.Stop()
-
-	oneDay := time.Hour * 12
 
 timerLoop:
 	for {
@@ -411,7 +415,7 @@ timerLoop:
 						continue
 					}
 
-					if time.Since(fileInfo.ModTime()) > oneDay {
+					if sentHistogramExpired(fileInfo.ModTime(), time.Now()) {
 						absPath := filepath.Join(sentDir, dirEntry.Name())
 						edm.log.Info("diskCleaner: removing file", "filename", absPath)
 						err = osRemove(absPath)
@@ -615,13 +619,26 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) {
 	})
 	t.Stop()
 
-	for e = range viperNotifyCh {
-		// If an event has been recevied this means we now want to
-		// enable the timer so the function will be called "soon", but
-		// if more events occur we will reset it again. This allows us
-		// to wait until events on the file settles down before
-		// actually calling the update function.
-		t.Reset(configUpdateDebounce)
+	for {
+		select {
+		case event, ok := <-viperNotifyCh:
+			if !ok {
+				// Mirror the ctx.Done() branch: stop the debounce timer so a
+				// pending callback cannot fire after configUpdater returns.
+				t.Stop()
+				return
+			}
+			e = event
+			// If an event has been received this means we now want to
+			// enable the timer so the function will be called "soon", but
+			// if more events occur we will reset it again. This allows us
+			// to wait until events on the file settles down before
+			// actually calling the update function.
+			t.Reset(configUpdateDebounce)
+		case <-edm.ctx.Done():
+			t.Stop()
+			return
+		}
 	}
 }
 
@@ -1104,6 +1121,7 @@ func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error)
 
 func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 	edm.fsWatcherMutex.RLock()
+	defer edm.fsWatcherMutex.RUnlock()
 	for _, watchPath := range edm.fsWatcher.WatchList() {
 		watchPathInUse := false
 		for fsWatcherFuncFilename := range edm.fsWatcherFuncs {
@@ -1114,13 +1132,12 @@ func (edm *dnstapMinimiser) cleanupFSWatchers() error {
 
 		if !watchPathInUse {
 			edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
-			err := edm.fsWatcher.Remove(watchPath)
+			err := removeFSWatcherPath(edm.fsWatcher, watchPath)
 			if err != nil {
 				return fmt.Errorf("cleanupFSWatchers: unable to remove path watcher '%s': %w", watchPath, err)
 			}
 		}
 	}
-	edm.fsWatcherMutex.RUnlock()
 
 	return nil
 }
@@ -1281,12 +1298,15 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 		return fmt.Errorf("unable to configure ignored question names: %w", err)
 	}
 
-	viperNotifyCh := make(chan fsnotify.Event)
+	viperNotifyCh := make(chan fsnotify.Event, 1)
 
 	go configUpdater(viperNotifyCh, edm)
 
 	viper.OnConfigChange(func(e fsnotify.Event) {
-		viperNotifyCh <- e
+		select {
+		case viperNotifyCh <- e:
+		default:
+		}
 	})
 
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
@@ -1509,6 +1529,14 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
 	// deferred cleanup registered when they were started.
 	edm.log.Info("Run: waiting for other workers to exit")
 	wg.Wait()
+
+	// configUpdater is not tracked by wg; it observes the same edm.ctx
+	// cancellation as the wg workers and returns on its own. viperNotifyCh is
+	// deliberately left open: viper's config watcher started by WatchConfig
+	// outlives run and keeps invoking the OnConfigChange callback, so closing
+	// the channel here would let a later config change panic on a send to a
+	// closed channel. The buffered channel plus the callback's non-blocking
+	// send keep that callback from blocking once configUpdater has stopped.
 
 	// Wait for graceful disconnection from MQTT bus
 	if !startConf.DisableMQTT {

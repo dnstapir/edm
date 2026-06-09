@@ -2356,7 +2356,8 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 		if err := os.WriteFile(oldFile, []byte("x"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		oldTime := time.Now().Add(-13 * time.Hour)
+		// One hour past the retention window, so diskCleaner must remove it.
+		oldTime := time.Now().Add(-sentHistogramRetention - time.Hour)
 		if err := os.Chtimes(oldFile, oldTime, oldTime); err != nil {
 			t.Fatal(err)
 		}
