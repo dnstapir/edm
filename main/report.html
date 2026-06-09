@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.7%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.5%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (33.3%)</option>
 				
@@ -298,6 +298,7 @@ func init() <span class="cov8" title="1">{
         runCmd.Flags().Bool("disable-mqtt", false, "disable MQTT message sending")
         runCmd.Flags().Bool("disable-mqtt-filequeue", false, "disable MQTT file based queue")
         runCmd.Flags().Bool("enable-manual-parquet-rotation", false, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
+        runCmd.Flags().Bool("pebble-sync", false, "fsync seen-qname pebble writes")
 
         runCmd.Flags().String("input-unix", "", "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
         runCmd.Flags().String("input-tcp", "", "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
@@ -1005,6 +1006,7 @@ type config struct {
         DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
         DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
         EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
+        PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
         InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
         InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
         InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
@@ -1230,24 +1232,24 @@ func (cs *certStore) loadCert(certPath string, keyPath string) error <span class
         return nil</span>
 }
 
-func newCertStore() *certStore <span class="cov9" title="190">{
+func newCertStore() *certStore <span class="cov9" title="196">{
         return &amp;certStore{}
 }</span>
 
-func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLabels) <span class="cov6" title="22">{
+func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLabels) <span class="cov6" title="23">{
         // If labels is nil (the "." zone) we can depend on the zero type of
         // the label fields being nil, so nothing to do
         if labels == nil </span><span class="cov1" title="1">{
                 return
         }</span>
 
-        <span class="cov5" title="21">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
+        <span class="cov6" title="22">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
 
-        for index := range reverseLabels </span><span class="cov8" title="74">{
+        for index := range reverseLabels </span><span class="cov8" title="76">{
                 switch index </span>{
-                case 0:<span class="cov5" title="21">
+                case 0:<span class="cov6" title="22">
                         l.Label0 = &amp;reverseLabels[index]</span>
-                case 1:<span class="cov5" title="21">
+                case 1:<span class="cov6" title="22">
                         l.Label1 = &amp;reverseLabels[index]</span>
                 case 2:<span class="cov4" title="11">
                         l.Label2 = &amp;reverseLabels[index]</span>
@@ -1269,13 +1271,13 @@ func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLab
         }
 }
 
-func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string <span class="cov6" title="23">{
+func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string <span class="cov6" title="24">{
         // If labels is nil (the "." zone) there is nothing to do
         if labels == nil </span><span class="cov1" title="1">{
                 return nil
         }</span>
 
-        <span class="cov6" title="22">boundedReverseLabels := []string{}
+        <span class="cov6" title="23">boundedReverseLabels := []string{}
 
         remainderElems := 0
         if len(labels) &gt; maxLen </span><span class="cov1" title="1">{
@@ -1283,13 +1285,13 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
         }</span>
 
         // Append all labels except the last one
-        <span class="cov6" title="22">for i := len(labels) - 1; i &gt; remainderElems; i-- </span><span class="cov7" title="55">{
+        <span class="cov6" title="23">for i := len(labels) - 1; i &gt; remainderElems; i-- </span><span class="cov7" title="56">{
                 boundedReverseLabels = append(boundedReverseLabels, labels[i])
         }</span>
 
         // If the labels fit inside maxLen then just append the last remaining
         // label as-is
-        <span class="cov6" title="22">if len(labels) &lt;= maxLen </span><span class="cov5" title="21">{
+        <span class="cov6" title="23">if len(labels) &lt;= maxLen </span><span class="cov6" title="22">{
                 boundedReverseLabels = append(boundedReverseLabels, labels[0])
         }</span> else<span class="cov1" title="1"> {
                 // If there are more labels than maxLen we need to concatenate
@@ -1303,7 +1305,7 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
                         <span class="cov1" title="1">boundedReverseLabels = append(boundedReverseLabels, strings.Join(remainderLabels, "."))</span>
                 }
         }
-        <span class="cov6" title="22">return boundedReverseLabels</span>
+        <span class="cov6" title="23">return boundedReverseLabels</span>
 }
 
 const sentHistogramRetention = 24 * time.Hour
@@ -1367,29 +1369,29 @@ timerLoop:
 // Using a proper password KDF (argon2) might be overkill as we are not
 // storing the resulting hash anywhere, but it only affects startup/key
 // rotation time of a mostly long running tool.
-func getCryptopanAESKey(key string, salt string) []byte <span class="cov8" title="99">{
+func getCryptopanAESKey(key string, salt string) []byte <span class="cov8" title="102">{
         var aesKeyLen uint32 = 32
         aesKey := argon2.IDKey([]byte(key), []byte(salt), 1, 64*1024, 4, aesKeyLen)
         return aesKey
 }</span>
 
-func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov8" title="100">{
+func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov8" title="103">{
         var cpnCache *lru.Cache[netip.Addr, netip.Addr]
         var err error
 
-        if cacheEntries != 0 </span><span class="cov8" title="98">{
+        if cacheEntries != 0 </span><span class="cov8" title="101">{
                 cpnCache, err = lru.New[netip.Addr, netip.Addr](cacheEntries)
                 if err != nil </span><span class="cov1" title="1">{
                         return fmt.Errorf("setCryptopan: unable to create cache: %w", err)
                 }</span>
         }
 
-        <span class="cov8" title="99">cpn, err := createCryptopan(key, salt)
+        <span class="cov8" title="102">cpn, err := createCryptopan(key, salt)
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
         }</span>
 
-        <span class="cov8" title="99">edm.cryptopanMutex.Lock()
+        <span class="cov8" title="102">edm.cryptopanMutex.Lock()
         edm.cryptopan = cpn
         edm.cryptopanCache = cpnCache
         edm.cryptopanMutex.Unlock()
@@ -1441,7 +1443,7 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) <spa
                 vNew := reflect.ValueOf(conf)
                 typ := vOld.Type()
 
-                for i := 0; i &lt; typ.NumField(); i++ </span><span class="cov9" title="156">{
+                for i := 0; i &lt; typ.NumField(); i++ </span><span class="cov9" title="160">{
                         field := typ.Field(i)
 
                         oldVal := vOld.Field(i).Interface()
@@ -2108,7 +2110,7 @@ func (vc viperConfiger) getConfig() (config, error) <span class="cov1" title="1"
         <span class="cov1" title="1">return conf, nil</span>
 }
 
-func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="98">{
+func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="101">{
         edm.confMutex.Lock()
         defer edm.confMutex.Unlock()
 
@@ -2117,12 +2119,12 @@ func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="98">{
                 return err
         }</span>
 
-        <span class="cov8" title="98">edm.conf = conf
+        <span class="cov8" title="101">edm.conf = conf
 
         return nil</span>
 }
 
-func (edm *dnstapMinimiser) getConfig() config <span class="cov10" title="242">{
+func (edm *dnstapMinimiser) getConfig() config <span class="cov10" title="249">{
         edm.confMutex.RLock()
         conf := edm.conf
         edm.confMutex.RUnlock()
@@ -2526,9 +2528,10 @@ type dnstapMinimiser struct {
         reloadMinimiserMutex          sync.RWMutex
         reloadMinimiserConfigCh       []chan struct{}
         reloadHistogramSenderConfigCh chan struct{}
+        seenQnameMutex                sync.Mutex
 }
 
-func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <span class="cov8" title="99">{
+func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <span class="cov8" title="102">{
         cryptopanKey := getCryptopanAESKey(key, salt)
 
         cpn, err := cryptopan.New(cryptopanKey)
@@ -2536,10 +2539,10 @@ func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <spa
                 return nil, fmt.Errorf("createCryptopan: %w", err)
         }</span>
 
-        <span class="cov8" title="99">return cpn, nil</span>
+        <span class="cov8" title="102">return cpn, nil</span>
 }
 
-func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimiser, error) <span class="cov8" title="94">{
+func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimiser, error) <span class="cov8" title="97">{
         edm := &amp;dnstapMinimiser{
                 configer: edmConf,
         }
@@ -2549,7 +2552,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
                 return nil, fmt.Errorf("newDnstapMinimiser: unable to set config: %w", err)
         }</span>
 
-        <span class="cov8" title="94">conf := edm.getConfig()
+        <span class="cov8" title="97">conf := edm.getConfig()
 
         err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
         if err != nil </span><span class="cov0" title="0">{
@@ -2557,7 +2560,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
         }</span>
 
         // Exit gracefully on SIGINT or SIGTERM
-        <span class="cov8" title="94">edm.ctx, edm.stop = notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+        <span class="cov8" title="97">edm.ctx, edm.stop = notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
         // Use separate prometheus registry for each edm instance, otherwise
         // trying to run tests where each test do their own call to
@@ -2654,7 +2657,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
                 return nil, fmt.Errorf("newDnstapMinimiser: unable to create fsWatcher: %w", err)
         }</span>
 
-        <span class="cov8" title="94">edm.fsWatcherFuncs = map[string][]func() error{}
+        <span class="cov8" title="97">edm.fsWatcherFuncs = map[string][]func() error{}
 
         // Prepare client cert/key storage for mTLS authentication
         edm.httpClientCertStore = newCertStore()
@@ -2699,7 +2702,7 @@ type wellKnownDomainsData struct {
         dawgIsRotated bool
 }
 
-func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov5" title="13">{
+func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov5" title="15">{
         return &amp;wellKnownDomainsTracker{
                 wellKnownDomainsData: wellKnownDomainsData{
                         m:          map[int]*histogramData{},
@@ -2715,18 +2718,18 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov6" title="36">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov6" title="38">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov6" title="24">{
+        if dawgIndex == dawgNotFound </span><span class="cov6" title="25">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov6" title="37">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov6" title="38">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
                         if dawgIndex != dawgNotFound </span><span class="cov4" title="10">{
                                 return dawgIndex, true
@@ -2734,7 +2737,7 @@ func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="
                 }
         }
 
-        <span class="cov6" title="26">return dawgIndex, false</span>
+        <span class="cov6" title="28">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -2751,7 +2754,7 @@ type wkdUpdate struct {
         retryLimit  int
 }
 
-func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov5" title="12">{
+func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov5" title="14">{
         wkd.mutex.RLock()
         defer wkd.mutex.RUnlock()
 
@@ -2791,7 +2794,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *dnstapMinimiser, wg *sync
         close(wkd.retryerDone)</span>
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov4" title="9">{
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov4" title="10">{
         wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
@@ -2803,7 +2806,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Create hash from IP address for use in HLL data
         ip, ok := netip.AddrFromSlice(ipBytes)
-        if ok </span><span class="cov4" title="8">{
+        if ok </span><span class="cov4" title="9">{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
                 wu.hllHash = murmur3.Sum64(ipBytes)
@@ -2811,8 +2814,8 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }</span>
 
         // Counters based on header
-        <span class="cov4" title="9">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov3" title="6">
+        <span class="cov4" title="10">switch msg.Rcode </span>{
+        case dns.RcodeSuccess:<span class="cov4" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
@@ -2823,9 +2826,9 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov4" title="9">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov4" title="8">{
+        <span class="cov4" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov4" title="9">{
                 switch msg.Question[0].Qtype </span>{
-                case dns.TypeA:<span class="cov3" title="4">
+                case dns.TypeA:<span class="cov3" title="5">
                         wu.ACount++</span>
                 case dns.TypeAAAA:<span class="cov1" title="1">
                         wu.AAAACount++</span>
@@ -2840,7 +2843,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 wu.NonINCount++
         }</span>
 
-        <span class="cov4" title="9">wkd.updateCh &lt;- wu</span>
+        <span class="cov4" title="10">wkd.updateCh &lt;- wu</span>
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile string, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov3" title="4">{
@@ -2880,32 +2883,42 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
         return prevWKD, nil</span>
 }
 
-// Check if we have already seen this qname since we started.
-func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB) bool <span class="cov4" title="8">{
-        // NOTE: This looks like it might be a race (calling
-        // Get() followed by separate Add()) but since we want
-        // to keep often looked-up names in the cache we need to
-        // use Get() for updating recent-ness, and there is no
-        // GetOrAdd() method available. However, it should be
-        // safe for multiple threads to call Add() as this will
-        // only move an already added entry to the front of the
-        // eviction list which should be OK.
+// seenQnameWriteOptions selects the pebble write options for seen-qname inserts.
+//
+// It returns [pebble.Sync] when conf.PebbleSync is set so writes are fsynced,
+// and [pebble.NoSync] otherwise.
+func seenQnameWriteOptions(conf config) *pebble.WriteOptions <span class="cov8" title="81">{
+        if conf.PebbleSync </span><span class="cov1" title="1">{
+                return pebble.Sync
+        }</span>
+        <span class="cov8" title="80">return pebble.NoSync</span>
+}
 
+// qnameSeen reports whether qname has been seen since startup, recording it (in
+// the in-memory LRU and in pebble) on first sight. writeOpts is the pebble write
+// option for the insert (see [seenQnameWriteOptions]); the caller derives it
+// once per config rather than passing the whole config down this hot path.
+//
+// The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
+// workers report any given qname as new at most once.
+func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, writeOpts *pebble.WriteOptions) bool <span class="cov7" title="73">{
         qname := strings.ToLower(msg.Question[0].Name)
+        edm.seenQnameMutex.Lock()
+        defer edm.seenQnameMutex.Unlock()
 
         _, ok := seenQnameLRU.Get(qname)
-        if ok </span><span class="cov2" title="2">{
+        if ok </span><span class="cov7" title="65">{
                 // It exists in the LRU cache
                 return true
         }</span>
         // Add it to the LRU
-        <span class="cov3" title="6">evicted := seenQnameLRU.Add(qname, struct{}{})
+        <span class="cov4" title="8">evicted := seenQnameLRU.Add(qname, struct{}{})
         if evicted </span><span class="cov2" title="2">{
                 edm.promSeenQnameLRUEvicted.Inc()
         }</span>
 
         // It was not in the LRU cache, does it exist in pebble (on disk)?
-        <span class="cov3" title="6">_, closer, err := pdb.Get([]byte(qname))
+        <span class="cov4" title="8">_, closer, err := pdb.Get([]byte(qname))
         if err == nil </span><span class="cov1" title="1">{
                 // The value exists in pebble
                 if err := closer.Close(); err != nil </span><span class="cov0" title="0">{
@@ -2915,11 +2928,11 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
         }
 
         // If the key does not exist in pebble we insert it
-        <span class="cov3" title="5">if errors.Is(err, pebble.ErrNotFound) </span><span class="cov3" title="5">{
-                if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil </span><span class="cov0" title="0">{
+        <span class="cov4" title="7">if errors.Is(err, pebble.ErrNotFound) </span><span class="cov4" title="7">{
+                if err := pdb.Set([]byte(qname), []byte{}, writeOpts); err != nil </span><span class="cov0" title="0">{
                         edm.log.Error("unable to insert key in pebble", "error", err)
                 }</span>
-                <span class="cov3" title="5">return false</span>
+                <span class="cov4" title="7">return false</span>
         }
 
         // Some other error occured
@@ -2927,7 +2940,7 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
         return false</span>
 }
 
-func (edm *dnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov7" title="41">{
+func (edm *dnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov7" title="43">{
         // edm.ignoredClientsIPSet can be modified at runtime so wrap everything
         // in a RO lock
         edm.ignoredClientsIPSetMutex.RLock()
@@ -2952,10 +2965,10 @@ func (edm *dnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                         return true
                 }</span>
         }
-        <span class="cov6" title="26">return false</span>
+        <span class="cov6" title="28">return false</span>
 }
 
-func (edm *dnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov6" title="31">{
+func (edm *dnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov6" title="33">{
         // edm.ignoredQuestions can be modified at runtime so wrap everything
         // in a RO lock
         edm.ignoredQuestionsMutex.RLock()
@@ -2973,13 +2986,13 @@ func (edm *dnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="co
                         }</span>
                 }
         }
-        <span class="cov6" title="22">return false</span>
+        <span class="cov6" title="24">return false</span>
 }
 
 // runMinimiser is the main loop of the program, it reads dnstap from
 // inputChannel and decides what further processing to do.
 // To gracefully stop runMinimiser() you can call edm.stop().
-func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, debugDnstapFile *os.File, labelLimit int, wkdTracker *wellKnownDomainsTracker) <span class="cov3" title="5">{
+func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, debugDnstapFile *os.File, labelLimit int, wkdTracker *wellKnownDomainsTracker) <span class="cov4" title="7">{
         defer wg.Done()
 
         dt := &amp;dnstap.Dnstap{}
@@ -2994,20 +3007,33 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
         // conf is meant to be dynamically modified if the config changes at runtime
         conf := edm.getConfig()
+        // Derived from conf once here (and re-derived on reload below) so the
+        // qnameSeen hot path takes a pointer instead of copying the whole config.
+        writeOpts := seenQnameWriteOptions(conf)
 
 minimiserLoop:
-        for </span><span class="cov5" title="14">{
+        for </span><span class="cov6" title="22">{
                 select </span>{
-                case frame := &lt;-edm.inputChannel:<span class="cov4" title="8">
+                case frame := &lt;-edm.inputChannel:<span class="cov5" title="13">
                         edm.promDnstapProcessed.Inc()
-                        if err := proto.Unmarshal(frame, dt); err != nil </span><span class="cov1" title="1">{
-                                edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, returning", "error", err, "minimiser_id", minimiserID)
-                                break minimiserLoop</span>
+                        if err := proto.Unmarshal(frame, dt); err != nil </span><span class="cov2" title="3">{
+                                edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, skipping frame", "error", err, "minimiser_id", minimiserID)
+                                continue</span>
+                        }
+                        // Guard the hot-path dereferences (here and below: QueryAddress,
+                        // clientIPIsIgnored) so a partially populated frame is dropped
+                        // rather than panicking before parsePacket's own nil checks. A
+                        // Message present but missing its required Type is already rejected
+                        // by proto.Unmarshal above; the Type check here is belt-and-braces.
+                        <span class="cov4" title="10">if dt.Message == nil || dt.Message.Type == nil </span><span class="cov1" title="1">{
+                                edm.log.Error("dnstapMinimiser.runMinimiser: dnstap message or type missing, skipping frame", "minimiser_id", minimiserID)
+                                edm.promDNSParseError.Inc()
+                                continue</span>
                         }
 
                         // Keep in mind that this outputs the unmodified dnstap
                         // data, so it contains sensitive information.
-                        <span class="cov4" title="7">if debugDnstapFile != nil </span><span class="cov0" title="0">{
+                        <span class="cov4" title="9">if debugDnstapFile != nil </span><span class="cov0" title="0">{
                                 out, ok := dnstap.JSONFormat(dt)
                                 if !ok </span><span class="cov0" title="0">{
                                         edm.log.Error("unable to format dnstap debug log")
@@ -3019,23 +3045,14 @@ minimiserLoop:
                                 }
                         }
 
-                        // Guard the hot-path dereferences (here and below: QueryAddress,
-                        // clientIPIsIgnored) so a partially populated frame is dropped
-                        // rather than panicking before parsePacket's own nil checks.
-                        <span class="cov4" title="7">if dt.Message == nil || dt.Message.Type == nil </span><span class="cov0" title="0">{
-                                edm.log.Error("runMinimiser: dnstap message or type missing, dropping packet", "minimiser_id", minimiserID)
-                                edm.promDNSParseError.Inc()
-                                continue</span>
-                        }
-
-                        <span class="cov4" title="7">isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
+                        <span class="cov4" title="9">isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
 
                         // For now we only care about response type dnstap packets
                         if isQuery </span><span class="cov1" title="1">{
                                 continue</span>
                         }
 
-                        <span class="cov3" title="6">if edm.clientIPIsIgnored(dt) </span><span class="cov1" title="1">{
+                        <span class="cov4" title="8">if edm.clientIPIsIgnored(dt) </span><span class="cov1" title="1">{
                                 continue</span>
                         }
 
@@ -3045,14 +3062,14 @@ minimiserLoop:
                         // scratch buffer, falling back to allocation only for an
                         // address longer than the scratch buffer (IPv4 and IPv6
                         // both fit).
-                        <span class="cov3" title="5">n := len(dt.Message.QueryAddress)
+                        <span class="cov4" title="7">n := len(dt.Message.QueryAddress)
                         var dangerRealClientIP []byte
-                        if n &lt;= len(dangerScratch) </span><span class="cov3" title="5">{
+                        if n &lt;= len(dangerScratch) </span><span class="cov4" title="7">{
                                 dangerRealClientIP = dangerScratch[:n]
                         }</span> else<span class="cov0" title="0"> {
                                 dangerRealClientIP = make([]byte, n)
                         }</span>
-                        <span class="cov3" title="5">copy(dangerRealClientIP, dt.Message.QueryAddress)
+                        <span class="cov4" title="7">copy(dangerRealClientIP, dt.Message.QueryAddress)
 
                         edm.pseudonymiseDnstap(dt)
 
@@ -3069,36 +3086,36 @@ minimiserLoop:
                                 continue</span>
                         }
 
-                        <span class="cov3" title="5">if len(msg.Question) == 0 </span><span class="cov0" title="0">{
+                        <span class="cov4" title="7">if len(msg.Question) == 0 </span><span class="cov0" title="0">{
                                 edm.promEmptyQuestionSection.Inc()
                                 continue</span>
                         }
 
-                        <span class="cov3" title="5">for _, question := range msg.Question </span><span class="cov3" title="5">{
+                        <span class="cov4" title="7">for _, question := range msg.Question </span><span class="cov4" title="7">{
                                 if _, ok := dns.IsDomainName(question.Name); !ok </span><span class="cov0" title="0">{
                                         edm.promInvalidQuestionName.Inc()
                                         continue minimiserLoop</span>
                                 }
                         }
 
-                        <span class="cov3" title="5">if edm.questionIsIgnored(msg) </span><span class="cov0" title="0">{
+                        <span class="cov4" title="7">if edm.questionIsIgnored(msg) </span><span class="cov0" title="0">{
                                 continue</span>
                         }
 
                         // We pass on the client address for cardinality
                         // measurements.
-                        <span class="cov3" title="5">dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
-                        if dawgIndex != dawgNotFound </span><span class="cov2" title="3">{
+                        <span class="cov4" title="7">dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
+                        if dawgIndex != dawgNotFound </span><span class="cov3" title="4">{
                                 wkdTracker.sendUpdate(dangerRealClientIP, msg, dawgIndex, suffixMatch, dawgModTime)
                                 continue</span>
                         }
 
-                        <span class="cov2" title="2">if !edm.qnameSeen(msg, seenQnameLRU, pdb) </span><span class="cov1" title="1">{
-                                if !startConf.DisableMQTT </span><span class="cov1" title="1">{
+                        <span class="cov2" title="3">if !edm.qnameSeen(msg, seenQnameLRU, pdb, writeOpts) </span><span class="cov2" title="2">{
+                                if !startConf.DisableMQTT </span><span class="cov2" title="2">{
                                         newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
                                         select </span>{
-                                        case edm.newQnamePublisherCh &lt;- &amp;newQname:<span class="cov1" title="1">
+                                        case edm.newQnamePublisherCh &lt;- &amp;newQname:<span class="cov2" title="2">
                                                 edm.promNewQnameQueued.Inc()</span>
                                         default:<span class="cov0" title="0">
                                                 // If the publisher channel is full we skip creating an event.
@@ -3107,10 +3124,13 @@ minimiserLoop:
                                 }
                         }
 
-                        <span class="cov2" title="2">if !conf.DisableSessionFiles </span><span class="cov1" title="1">{
+                        <span class="cov2" title="3">if !conf.DisableSessionFiles </span><span class="cov2" title="2">{
                                 session := edm.newSession(dt, msg, isQuery, labelLimit, timestamp)
-                                edm.sessionCollectorCh &lt;- session
-                        }</span>
+                                select </span>{
+                                case edm.sessionCollectorCh &lt;- session:<span class="cov1" title="1"></span>
+                                case &lt;-edm.ctx.Done():<span class="cov1" title="1"></span>
+                                }
+                        }
                 case &lt;-edm.reloadMinimiserConfigCh[minimiserID]:<span class="cov2" title="2">
                         edm.log.Info("runMinimiser: reloading config", "minimiser_id", minimiserID)
                         newConf := edm.getConfig()
@@ -3122,12 +3142,13 @@ minimiserLoop:
                                 }</span>
                         }
 
-                        <span class="cov2" title="2">conf = newConf</span>
-                case &lt;-edm.ctx.Done():<span class="cov3" title="4">
+                        <span class="cov2" title="2">conf = newConf
+                        writeOpts = seenQnameWriteOptions(conf)</span>
+                case &lt;-edm.ctx.Done():<span class="cov4" title="7">
                         break minimiserLoop</span>
                 }
         }
-        <span class="cov3" title="5">edm.log.Info("runMinimiser: exiting loop", "minimiser_id", minimiserID)</span>
+        <span class="cov4" title="7">edm.log.Info("runMinimiser: exiting loop", "minimiser_id", minimiserID)</span>
 }
 
 func (edm *dnstapMinimiser) monitorChannelLen(wg *sync.WaitGroup) <span class="cov3" title="4">{
@@ -3148,32 +3169,32 @@ func (edm *dnstapMinimiser) monitorChannelLen(wg *sync.WaitGroup) <span class="c
         }
 }
 
-func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData <span class="cov4" title="10">{
+func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData <span class="cov4" title="11">{
         sd := &amp;sessionData{}
 
-        if dt.Message.QueryPort != nil </span><span class="cov4" title="9">{
+        if dt.Message.QueryPort != nil </span><span class="cov4" title="10">{
                 if *dt.Message.QueryPort &gt; math.MaxInt32 </span><span class="cov1" title="1">{
                         edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", *dt.Message.QueryPort)
                         var qp int32
                         sd.SourcePort = &amp;qp
-                }</span> else<span class="cov4" title="8"> {
+                }</span> else<span class="cov4" title="9"> {
                         qp := int32(*dt.Message.QueryPort) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
                         sd.SourcePort = &amp;qp
                 }</span>
         }
 
-        <span class="cov4" title="10">if dt.Message.ResponsePort != nil </span><span class="cov4" title="9">{
+        <span class="cov4" title="11">if dt.Message.ResponsePort != nil </span><span class="cov4" title="10">{
                 if *dt.Message.ResponsePort &gt; math.MaxInt32 </span><span class="cov1" title="1">{
                         edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", *dt.Message.ResponsePort)
                         var rp int32
                         sd.DestPort = &amp;rp
-                }</span> else<span class="cov4" title="8"> {
+                }</span> else<span class="cov4" title="9"> {
                         rp := int32(*dt.Message.ResponsePort) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
                         sd.DestPort = &amp;rp
                 }</span>
         }
 
-        <span class="cov4" title="10">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
+        <span class="cov4" title="11">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
 
         if isQuery </span><span class="cov1" title="1">{
                 qms := string(dt.Message.QueryMessage)
@@ -3181,7 +3202,7 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 
                 ms := timestamp.UnixMicro()
                 sd.QueryTime = &amp;ms
-        }</span> else<span class="cov4" title="9"> {
+        }</span> else<span class="cov4" title="10"> {
                 rms := string(dt.Message.ResponseMessage)
                 sd.ResponseMessage = &amp;rms
 
@@ -3189,28 +3210,28 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                 sd.ResponseTime = &amp;ms
         }</span>
 
-        <span class="cov4" title="10">if len(dt.Identity) != 0 </span><span class="cov4" title="8">{
+        <span class="cov4" title="11">if len(dt.Identity) != 0 </span><span class="cov4" title="9">{
                 sID := string(dt.Identity)
                 sd.ServerID = &amp;sID
         }</span>
 
-        <span class="cov4" title="10">switch dt.Message.GetSocketFamily() </span>{
-        case dnstap.SocketFamily_INET:<span class="cov4" title="7">
-                if dt.Message.QueryAddress != nil </span><span class="cov3" title="6">{
+        <span class="cov4" title="11">switch dt.Message.GetSocketFamily() </span>{
+        case dnstap.SocketFamily_INET:<span class="cov4" title="8">
+                if dt.Message.QueryAddress != nil </span><span class="cov4" title="7">{
                         sourceIPInt, err := ipBytesToInt(dt.Message.QueryAddress)
                         if err != nil </span><span class="cov2" title="2">{
                                 edm.log.Error("unable to create uint32 from dt.Message.QueryAddress", "error", err)
-                        }</span> else<span class="cov3" title="4"> {
+                        }</span> else<span class="cov3" title="5"> {
                                 i32SourceIPInt := int32(sourceIPInt) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
                                 sd.SourceIPv4 = &amp;i32SourceIPInt
                         }</span>
                 }
 
-                <span class="cov4" title="7">if dt.Message.ResponseAddress != nil </span><span class="cov3" title="6">{
+                <span class="cov4" title="8">if dt.Message.ResponseAddress != nil </span><span class="cov4" title="7">{
                         destIPInt, err := ipBytesToInt(dt.Message.ResponseAddress)
                         if err != nil </span><span class="cov2" title="2">{
                                 edm.log.Error("unable to create uint32 from dt.Message.ResponseAddress", "error", err)
-                        }</span> else<span class="cov3" title="4"> {
+                        }</span> else<span class="cov3" title="5"> {
                                 i32DestIPInt := int32(destIPInt) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
                                 sd.DestIPv4 = &amp;i32DestIPInt
                         }</span>
@@ -3246,12 +3267,12 @@ func (edm *dnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
                 edm.log.Error("packet is neither INET or INET6")</span>
         }
 
-        <span class="cov4" title="10">if dt.Message.SocketProtocol != nil </span><span class="cov4" title="9">{
+        <span class="cov4" title="11">if dt.Message.SocketProtocol != nil </span><span class="cov4" title="10">{
                 dnsProtocol := int32(dt.Message.GetSocketProtocol())
                 sd.DNSProtocol = &amp;dnsProtocol
         }</span>
 
-        <span class="cov4" title="10">return sd</span>
+        <span class="cov4" title="11">return sd</span>
 }
 
 func (edm *dnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) (string, error) <span class="cov2" title="2">{
@@ -3605,7 +3626,7 @@ func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) <span class="c
         edm.log.Info("newQnamePublisher: exiting loop")</span>
 }
 
-func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) <span class="cov6" title="22">{
+func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) <span class="cov6" title="24">{
         var err error
 
         if dt.Message == nil </span><span class="cov1" title="1">{
@@ -3613,7 +3634,7 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
                 return nil, time.Unix(0, 0).UTC()
         }</span>
 
-        <span class="cov5" title="21">queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
+        <span class="cov6" title="23">queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
         responseAddress := formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort)
 
         msg := new(dns.Msg)
@@ -3627,18 +3648,18 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
                 return msg, t</span>
         }
 
-        <span class="cov5" title="17">err = msg.Unpack(dt.Message.ResponseMessage)
+        <span class="cov5" title="19">err = msg.Unpack(dt.Message.ResponseMessage)
         if err != nil </span><span class="cov1" title="1">{
                 edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
                 msg = nil
         }</span>
-        <span class="cov5" title="17">t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
+        <span class="cov5" title="19">t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
         return msg, t</span>
 }
 
-func formatDnstapEndpoint(ipBytes []byte, port *uint32) string <span class="cov7" title="46">{
+func formatDnstapEndpoint(ipBytes []byte, port *uint32) string <span class="cov7" title="50">{
         ip, ok := netip.AddrFromSlice(ipBytes)
-        if ok &amp;&amp; port != nil </span><span class="cov6" title="27">{
+        if ok &amp;&amp; port != nil </span><span class="cov6" title="31">{
                 return ip.String() + ":" + strconv.FormatUint(uint64(*port), 10)
         }</span>
         <span class="cov5" title="19">if ok </span><span class="cov2" title="3">{
@@ -3650,36 +3671,36 @@ func formatDnstapEndpoint(ipBytes []byte, port *uint32) string <span class="cov7
         <span class="cov4" title="11">return "?"</span>
 }
 
-func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time <span class="cov5" title="21">{
+func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time <span class="cov6" title="23">{
         if sec == nil </span><span class="cov2" title="2">{
                 edm.log.Error(fieldName + " is missing, setting time to 0")
                 return time.Unix(0, 0).UTC()
         }</span>
-        <span class="cov5" title="19">if *sec &gt; math.MaxInt64 </span><span class="cov2" title="2">{
+        <span class="cov5" title="21">if *sec &gt; math.MaxInt64 </span><span class="cov2" title="2">{
                 edm.log.Error(fieldName+" is too large for int64, setting time to 0", "value", *sec)
                 return time.Unix(0, 0).UTC()
         }</span>
 
-        <span class="cov5" title="17">var nsecValue uint32
-        if nsec != nil </span><span class="cov5" title="17">{
+        <span class="cov5" title="19">var nsecValue uint32
+        if nsec != nil </span><span class="cov5" title="19">{
                 nsecValue = *nsec
         }</span>
 
-        <span class="cov5" title="17">return time.Unix(int64(*sec), int64(nsecValue)).UTC()</span> // #nosec G115 -- sec is checked above and nsec is uint32.
+        <span class="cov5" title="19">return time.Unix(int64(*sec), int64(nsecValue)).UTC()</span> // #nosec G115 -- sec is checked above and nsec is uint32.
 }
 
-func ipBytesToInt(ip4Bytes []byte) (uint32, error) <span class="cov5" title="15">{
+func ipBytesToInt(ip4Bytes []byte) (uint32, error) <span class="cov5" title="17">{
         ip, ok := netip.AddrFromSlice(ip4Bytes)
         if !ok </span><span class="cov2" title="3">{
                 return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
         }</span>
-        <span class="cov5" title="12">ip = ip.Unmap()
+        <span class="cov5" title="14">ip = ip.Unmap()
         if !ip.Is4() </span><span class="cov2" title="2">{
                 return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
         }</span>
 
         // Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
-        <span class="cov4" title="10">ip4 := ip.As4()
+        <span class="cov5" title="12">ip4 := ip.As4()
 
         ipInt := binary.BigEndian.Uint32(ip4[:])
 
@@ -3903,29 +3924,29 @@ func certPoolFromFile(fileName string) (*x509.CertPool, error) <span class="cov4
 }
 
 // Pseudonymise IP address fields in a dnstap message
-func (edm *dnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Dnstap) <span class="cov5" title="12">{
+func (edm *dnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Dnstap) <span class="cov5" title="14">{
         var err error
 
         // Lock is used here because the cryptopan instance can get updated at runtime.
         edm.cryptopanMutex.RLock()
 
-        if dt.Message.QueryAddress != nil </span><span class="cov5" title="12">{
+        if dt.Message.QueryAddress != nil </span><span class="cov5" title="14">{
                 dt.Message.QueryAddress, err = edm.pseudonymiseIP(dt.Message.QueryAddress)
                 if err != nil </span><span class="cov1" title="1">{
                         edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.QueryAddress", "error", err)
                 }</span>
         }
-        <span class="cov5" title="12">if dt.Message.ResponseAddress != nil </span><span class="cov5" title="12">{
+        <span class="cov5" title="14">if dt.Message.ResponseAddress != nil </span><span class="cov5" title="14">{
                 dt.Message.ResponseAddress, err = edm.pseudonymiseIP(dt.Message.ResponseAddress)
                 if err != nil </span><span class="cov1" title="1">{
                         edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.ResponseAddress", "error", err)
                 }</span>
         }
-        <span class="cov5" title="12">edm.cryptopanMutex.RUnlock()</span>
+        <span class="cov5" title="14">edm.cryptopanMutex.RUnlock()</span>
 }
 
 // Pseudonymise IP address, even on error the returned []byte is usable (zeroed address)
-func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span class="cov6" title="30">{
+func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span class="cov6" title="34">{
         addr, ok := netip.AddrFromSlice(ipBytes)
         if !ok </span><span class="cov2" title="3">{
                 // Replace address with zeroes since we do not know if
@@ -3933,16 +3954,16 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span
                 return make([]byte, len(ipBytes)), errors.New("unable to parse addr")
         }</span>
 
-        <span class="cov6" title="27">var pseudonymisedAddr netip.Addr
+        <span class="cov6" title="31">var pseudonymisedAddr netip.Addr
         var cacheHit bool
 
-        if edm.cryptopanCache != nil </span><span class="cov6" title="22">{
+        if edm.cryptopanCache != nil </span><span class="cov6" title="26">{
                 pseudonymisedAddr, cacheHit = edm.cryptopanCache.Get(addr)
         }</span>
 
-        <span class="cov6" title="27">if cacheHit </span><span class="cov3" title="5">{
+        <span class="cov6" title="31">if cacheHit </span><span class="cov3" title="5">{
                 edm.promCryptopanCacheHit.Inc()
-        }</span> else<span class="cov6" title="22"> {
+        }</span> else<span class="cov6" title="26"> {
                 // Not in cache or cache disabled, calculate the pseudonymised IP
                 pseudonymisedAddr, ok = netip.AddrFromSlice(edm.cryptopan.Anonymize(addr.AsSlice()))
                 if !ok </span><span class="cov0" title="0">{
@@ -3956,9 +3977,9 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span
                 // meaning we will get IPv4 addresses mapped to IPv6, e.g.
                 // ::ffff:127.0.0.1. It is easier to handle these as native
                 // IPv4 addresses in our system so call Unmap() on it.
-                <span class="cov6" title="22">pseudonymisedAddr = pseudonymisedAddr.Unmap()
+                <span class="cov6" title="26">pseudonymisedAddr = pseudonymisedAddr.Unmap()
 
-                if edm.cryptopanCache != nil </span><span class="cov5" title="17">{
+                if edm.cryptopanCache != nil </span><span class="cov5" title="21">{
                         evicted := edm.cryptopanCache.Add(addr, pseudonymisedAddr)
                         if evicted </span><span class="cov1" title="1">{
                                 edm.promCryptopanCacheEvicted.Inc()
@@ -3966,7 +3987,7 @@ func (edm *dnstapMinimiser) pseudonymiseIP(ipBytes []byte) ([]byte, error) <span
                 }
         }
 
-        <span class="cov6" title="27">return pseudonymisedAddr.AsSlice(), nil</span>
+        <span class="cov6" title="31">return pseudonymisedAddr.AsSlice(), nil</span>
 }
 
 func timeUntilNextMinute() time.Duration <span class="cov3" title="5">{
@@ -4095,11 +4116,11 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov2" title="3">{
+                for </span><span class="cov2" title="2">{
                         select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov1" title="1">
                                 return</span>
@@ -4124,12 +4145,12 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov4" title="10">{
+        for </span><span class="cov4" title="11">{
                 select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C:<span class="cov1" title="1">
