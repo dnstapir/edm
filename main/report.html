@@ -67,9 +67,9 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.7%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.1%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/runner.go (89.3%)</option>
 				
-				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (0.0%)</option>
+				<option value="file7">github.com/dnstapir/edm/pkg/runner/seams.go (33.3%)</option>
 				
 				</select>
 			</div>
@@ -1230,7 +1230,7 @@ func (cs *certStore) loadCert(certPath string, keyPath string) error <span class
         return nil</span>
 }
 
-func newCertStore() *certStore <span class="cov9" title="184">{
+func newCertStore() *certStore <span class="cov9" title="190">{
         return &amp;certStore{}
 }</span>
 
@@ -1241,13 +1241,13 @@ func (edm *dnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLab
                 return
         }</span>
 
-        <span class="cov6" title="21">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
+        <span class="cov5" title="21">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
 
         for index := range reverseLabels </span><span class="cov8" title="74">{
                 switch index </span>{
-                case 0:<span class="cov6" title="21">
+                case 0:<span class="cov5" title="21">
                         l.Label0 = &amp;reverseLabels[index]</span>
-                case 1:<span class="cov6" title="21">
+                case 1:<span class="cov5" title="21">
                         l.Label1 = &amp;reverseLabels[index]</span>
                 case 2:<span class="cov4" title="11">
                         l.Label2 = &amp;reverseLabels[index]</span>
@@ -1289,7 +1289,7 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 
         // If the labels fit inside maxLen then just append the last remaining
         // label as-is
-        <span class="cov6" title="22">if len(labels) &lt;= maxLen </span><span class="cov6" title="21">{
+        <span class="cov6" title="22">if len(labels) &lt;= maxLen </span><span class="cov5" title="21">{
                 boundedReverseLabels = append(boundedReverseLabels, labels[0])
         }</span> else<span class="cov1" title="1"> {
                 // If there are more labels than maxLen we need to concatenate
@@ -1306,14 +1306,18 @@ func (edm *dnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
         <span class="cov6" title="22">return boundedReverseLabels</span>
 }
 
+const sentHistogramRetention = 24 * time.Hour
+
+func sentHistogramExpired(modTime, now time.Time) bool <span class="cov3" title="4">{
+        return now.Sub(modTime) &gt; sentHistogramRetention
+}</span>
+
 func (edm *dnstapMinimiser) diskCleaner(wg *sync.WaitGroup, sentDir string) <span class="cov3" title="5">{
         // We will scan the directory each tick for sent files to remove.
         defer wg.Done()
 
         ticker := time.NewTicker(diskCleanerInterval)
         defer ticker.Stop()
-
-        oneDay := time.Hour * 12
 
 timerLoop:
         for </span><span class="cov4" title="7">{
@@ -1339,7 +1343,7 @@ timerLoop:
                                                 continue</span>
                                         }
 
-                                        <span class="cov1" title="1">if time.Since(fileInfo.ModTime()) &gt; oneDay </span><span class="cov1" title="1">{
+                                        <span class="cov1" title="1">if sentHistogramExpired(fileInfo.ModTime(), time.Now()) </span><span class="cov1" title="1">{
                                                 absPath := filepath.Join(sentDir, dirEntry.Name())
                                                 edm.log.Info("diskCleaner: removing file", "filename", absPath)
                                                 err = osRemove(absPath)
@@ -1363,29 +1367,29 @@ timerLoop:
 // Using a proper password KDF (argon2) might be overkill as we are not
 // storing the resulting hash anywhere, but it only affects startup/key
 // rotation time of a mostly long running tool.
-func getCryptopanAESKey(key string, salt string) []byte <span class="cov8" title="96">{
+func getCryptopanAESKey(key string, salt string) []byte <span class="cov8" title="99">{
         var aesKeyLen uint32 = 32
         aesKey := argon2.IDKey([]byte(key), []byte(salt), 1, 64*1024, 4, aesKeyLen)
         return aesKey
 }</span>
 
-func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov8" title="97">{
+func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov8" title="100">{
         var cpnCache *lru.Cache[netip.Addr, netip.Addr]
         var err error
 
-        if cacheEntries != 0 </span><span class="cov8" title="95">{
+        if cacheEntries != 0 </span><span class="cov8" title="98">{
                 cpnCache, err = lru.New[netip.Addr, netip.Addr](cacheEntries)
                 if err != nil </span><span class="cov1" title="1">{
                         return fmt.Errorf("setCryptopan: unable to create cache: %w", err)
                 }</span>
         }
 
-        <span class="cov8" title="96">cpn, err := createCryptopan(key, salt)
+        <span class="cov8" title="99">cpn, err := createCryptopan(key, salt)
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
         }</span>
 
-        <span class="cov8" title="96">edm.cryptopanMutex.Lock()
+        <span class="cov8" title="99">edm.cryptopanMutex.Lock()
         edm.cryptopan = cpn
         edm.cryptopanCache = cpnCache
         edm.cryptopanMutex.Unlock()
@@ -1393,7 +1397,7 @@ func (edm *dnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
         return nil</span>
 }
 
-func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) <span class="cov5" title="13">{
+func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) <span class="cov5" title="15">{
         // Since not all config changes are dynamically picked up and requires
         // a restart, keep a reference to what we started with.
         startConf := edm.getConfig()
@@ -1541,16 +1545,29 @@ func configUpdater(viperNotifyCh chan fsnotify.Event, edm *dnstapMinimiser) <spa
                         }
                 }
         })
-        <span class="cov5" title="13">t.Stop()
+        <span class="cov5" title="15">t.Stop()
 
-        for e = range viperNotifyCh </span><span class="cov3" title="4">{
-                // If an event has been recevied this means we now want to
-                // enable the timer so the function will be called "soon", but
-                // if more events occur we will reset it again. This allows us
-                // to wait until events on the file settles down before
-                // actually calling the update function.
-                t.Reset(configUpdateDebounce)
-        }</span>
+        for </span><span class="cov5" title="19">{
+                select </span>{
+                case event, ok := &lt;-viperNotifyCh:<span class="cov4" title="9">
+                        if !ok </span><span class="cov3" title="5">{
+                                // Mirror the ctx.Done() branch: stop the debounce timer so a
+                                // pending callback cannot fire after configUpdater returns.
+                                t.Stop()
+                                return
+                        }</span>
+                        <span class="cov3" title="4">e = event
+                        // If an event has been received this means we now want to
+                        // enable the timer so the function will be called "soon", but
+                        // if more events occur we will reset it again. This allows us
+                        // to wait until events on the file settles down before
+                        // actually calling the update function.
+                        t.Reset(configUpdateDebounce)</span>
+                case &lt;-edm.ctx.Done():<span class="cov4" title="10">
+                        t.Stop()
+                        return</span>
+                }
+        }
 }
 
 func getHllDefaults(explicitThreshold int) hll.Settings <span class="cov4" title="11">{
@@ -2030,9 +2047,10 @@ func (edm *dnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error)
         <span class="cov4" title="11">return nil</span>
 }
 
-func (edm *dnstapMinimiser) cleanupFSWatchers() error <span class="cov4" title="11">{
+func (edm *dnstapMinimiser) cleanupFSWatchers() error <span class="cov5" title="12">{
         edm.fsWatcherMutex.RLock()
-        for _, watchPath := range edm.fsWatcher.WatchList() </span><span class="cov4" title="8">{
+        defer edm.fsWatcherMutex.RUnlock()
+        for _, watchPath := range edm.fsWatcher.WatchList() </span><span class="cov4" title="9">{
                 watchPathInUse := false
                 for fsWatcherFuncFilename := range edm.fsWatcherFuncs </span><span class="cov5" title="15">{
                         if filepath.Dir(fsWatcherFuncFilename) == watchPath </span><span class="cov4" title="11">{
@@ -2040,17 +2058,16 @@ func (edm *dnstapMinimiser) cleanupFSWatchers() error <span class="cov4" title="
                         }</span>
                 }
 
-                <span class="cov4" title="8">if !watchPathInUse </span><span class="cov1" title="1">{
+                <span class="cov4" title="9">if !watchPathInUse </span><span class="cov2" title="2">{
                         edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
-                        err := edm.fsWatcher.Remove(watchPath)
-                        if err != nil </span><span class="cov0" title="0">{
+                        err := removeFSWatcherPath(edm.fsWatcher, watchPath)
+                        if err != nil </span><span class="cov1" title="1">{
                                 return fmt.Errorf("cleanupFSWatchers: unable to remove path watcher '%s': %w", watchPath, err)
                         }</span>
                 }
         }
-        <span class="cov4" title="11">edm.fsWatcherMutex.RUnlock()
 
-        return nil</span>
+        <span class="cov4" title="11">return nil</span>
 }
 
 type edmConfiger interface {
@@ -2091,7 +2108,7 @@ func (vc viperConfiger) getConfig() (config, error) <span class="cov1" title="1"
         <span class="cov1" title="1">return conf, nil</span>
 }
 
-func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="95">{
+func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="98">{
         edm.confMutex.Lock()
         defer edm.confMutex.Unlock()
 
@@ -2100,12 +2117,12 @@ func (edm *dnstapMinimiser) updateConfig() error <span class="cov8" title="95">{
                 return err
         }</span>
 
-        <span class="cov8" title="95">edm.conf = conf
+        <span class="cov8" title="98">edm.conf = conf
 
         return nil</span>
 }
 
-func (edm *dnstapMinimiser) getConfig() config <span class="cov10" title="237">{
+func (edm *dnstapMinimiser) getConfig() config <span class="cov10" title="242">{
         edm.confMutex.RLock()
         conf := edm.conf
         edm.confMutex.RUnlock()
@@ -2209,13 +2226,16 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
                 return fmt.Errorf("unable to configure ignored question names: %w", err)
         }</span>
 
-        <span class="cov4" title="9">viperNotifyCh := make(chan fsnotify.Event)
+        <span class="cov4" title="9">viperNotifyCh := make(chan fsnotify.Event, 1)
 
         go configUpdater(viperNotifyCh, edm)
 
         viper.OnConfigChange(func(e fsnotify.Event) </span><span class="cov0" title="0">{
-                viperNotifyCh &lt;- e
-        }</span>)
+                select </span>{
+                case viperNotifyCh &lt;- e:<span class="cov0" title="0"></span>
+                default:<span class="cov0" title="0"></span>
+                }
+        })
 
         <span class="cov4" title="9">pdbDir := filepath.Join(startConf.DataDir, "pebble")
         pdb, err := openPebble(pdbDir, &amp;pebble.Options{})
@@ -2438,6 +2458,14 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
         <span class="cov1" title="1">edm.log.Info("Run: waiting for other workers to exit")
         wg.Wait()
 
+        // configUpdater is not tracked by wg; it observes the same edm.ctx
+        // cancellation as the wg workers and returns on its own. viperNotifyCh is
+        // deliberately left open: viper's config watcher started by WatchConfig
+        // outlives run and keeps invoking the OnConfigChange callback, so closing
+        // the channel here would let a later config change panic on a send to a
+        // closed channel. The buffered channel plus the callback's non-blocking
+        // send keep that callback from blocking once configUpdater has stopped.
+
         // Wait for graceful disconnection from MQTT bus
         if !startConf.DisableMQTT </span><span class="cov0" title="0">{
                 edm.log.Info("Run: waiting on MQTT disconnection")
@@ -2500,7 +2528,7 @@ type dnstapMinimiser struct {
         reloadHistogramSenderConfigCh chan struct{}
 }
 
-func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <span class="cov8" title="96">{
+func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <span class="cov8" title="99">{
         cryptopanKey := getCryptopanAESKey(key, salt)
 
         cpn, err := cryptopan.New(cryptopanKey)
@@ -2508,10 +2536,10 @@ func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) <spa
                 return nil, fmt.Errorf("createCryptopan: %w", err)
         }</span>
 
-        <span class="cov8" title="96">return cpn, nil</span>
+        <span class="cov8" title="99">return cpn, nil</span>
 }
 
-func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimiser, error) <span class="cov8" title="91">{
+func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimiser, error) <span class="cov8" title="94">{
         edm := &amp;dnstapMinimiser{
                 configer: edmConf,
         }
@@ -2521,7 +2549,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
                 return nil, fmt.Errorf("newDnstapMinimiser: unable to set config: %w", err)
         }</span>
 
-        <span class="cov8" title="91">conf := edm.getConfig()
+        <span class="cov8" title="94">conf := edm.getConfig()
 
         err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
         if err != nil </span><span class="cov0" title="0">{
@@ -2529,7 +2557,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
         }</span>
 
         // Exit gracefully on SIGINT or SIGTERM
-        <span class="cov8" title="91">edm.ctx, edm.stop = notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+        <span class="cov8" title="94">edm.ctx, edm.stop = notifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
         // Use separate prometheus registry for each edm instance, otherwise
         // trying to run tests where each test do their own call to
@@ -2626,7 +2654,7 @@ func newDnstapMinimiser(logger *slog.Logger, edmConf edmConfiger) (*dnstapMinimi
                 return nil, fmt.Errorf("newDnstapMinimiser: unable to create fsWatcher: %w", err)
         }</span>
 
-        <span class="cov8" title="91">edm.fsWatcherFuncs = map[string][]func() error{}
+        <span class="cov8" title="94">edm.fsWatcherFuncs = map[string][]func() error{}
 
         // Prepare client cert/key storage for mTLS authentication
         edm.httpClientCertStore = newCertStore()
@@ -3585,7 +3613,7 @@ func (edm *dnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
                 return nil, time.Unix(0, 0).UTC()
         }</span>
 
-        <span class="cov6" title="21">queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
+        <span class="cov5" title="21">queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
         responseAddress := formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort)
 
         msg := new(dns.Msg)
@@ -3622,7 +3650,7 @@ func formatDnstapEndpoint(ipBytes []byte, port *uint32) string <span class="cov7
         <span class="cov4" title="11">return "?"</span>
 }
 
-func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time <span class="cov6" title="21">{
+func (edm *dnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName string) time.Time <span class="cov5" title="21">{
         if sec == nil </span><span class="cov2" title="2">{
                 edm.log.Error(fieldName + " is missing, setting time to 0")
                 return time.Unix(0, 0).UTC()
@@ -4067,11 +4095,11 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov2" title="2">{
+                for </span><span class="cov2" title="3">{
                         select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
+                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov1" title="1">
                                 return</span>
@@ -4096,12 +4124,12 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov4" title="11">{
+        for </span><span class="cov4" title="10">{
                 select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
+                case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C:<span class="cov1" title="1">
@@ -4215,6 +4243,12 @@ var (
         osMkdirAll = os.MkdirAll
         osReadDir  = os.ReadDir
         osStat     = os.Stat
+
+        // removeFSWatcherPath wraps (*fsnotify.Watcher).Remove so tests can
+        // inject removal failures into cleanupFSWatchers.
+        removeFSWatcherPath = func(w *fsnotify.Watcher, path string) error <span class="cov8" title="1">{
+                return w.Remove(path)
+        }</span>
 
         now                     = time.Now
         configUpdateDebounce    = 100 * time.Millisecond
