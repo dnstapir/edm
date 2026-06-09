@@ -548,23 +548,23 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 }
 
 // Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="11">{
+func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="12">{
         fileName = filepath.Clean(fileName)
         file, err := os.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
         }</span>
-        <span class="cov8" title="10">defer func() </span><span class="cov8" title="10">{
+        <span class="cov8" title="11">defer func() </span><span class="cov8" title="11">{
                 if cerr := file.Close(); cerr != nil </span><span class="cov0" title="0">{
                         as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
                 }</span>
         }()
 
-        <span class="cov8" title="10">fileInfo, err := file.Stat()
+        <span class="cov8" title="11">fileInfo, err := file.Stat()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
         }</span>
-        <span class="cov8" title="10">fileSize := fileInfo.Size()
+        <span class="cov8" title="11">fileSize := fileInfo.Size()
 
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
@@ -573,7 +573,7 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov8" title="10">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
+        <span class="cov8" title="11">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -585,7 +585,7 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov8" title="10">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov8" title="11">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
@@ -607,7 +607,7 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
         startTime := now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := time.Since(startTime)
-        if err != nil </span><span class="cov4" title="3">{
+        if err != nil </span><span class="cov5" title="4">{
                 return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
         }</span>
         <span class="cov7" title="7">defer res.Body.Close()
@@ -644,12 +644,12 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
 //
 // Sub-second precision is preserved as a fractional seconds component.
 // Non-positive durations yield "PT0S".
-func iso8601Duration(duration time.Duration) string <span class="cov10" title="16">{
+func iso8601Duration(duration time.Duration) string <span class="cov10" title="17">{
         if duration &lt;= 0 </span><span class="cov3" title="2">{
                 return "PT0S"
         }</span>
 
-        <span class="cov9" title="14">total := int64(duration / time.Second)
+        <span class="cov9" title="15">total := int64(duration / time.Second)
         nanoseconds := duration % time.Second
 
         hours := total / 3600
@@ -661,10 +661,10 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
         if hours &gt; 0 </span><span class="cov1" title="1">{
                 res += strconv.FormatInt(hours, 10) + "H"
         }</span>
-        <span class="cov9" title="14">if minutes &gt; 0 </span><span class="cov8" title="10">{
+        <span class="cov9" title="15">if minutes &gt; 0 </span><span class="cov8" title="11">{
                 res += strconv.FormatInt(minutes, 10) + "M"
         }</span>
-        <span class="cov9" title="14">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
+        <span class="cov9" title="15">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
                 if nanoseconds == 0 </span><span class="cov5" title="4">{
                         res += strconv.FormatInt(seconds, 10)
                 }</span> else<span class="cov1" title="1"> {
@@ -674,7 +674,7 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
                 <span class="cov6" title="5">res += "S"</span>
         }
 
-        <span class="cov9" title="14">return res</span>
+        <span class="cov9" title="15">return res</span>
 }
 </pre>
 		
@@ -1882,7 +1882,8 @@ func (edm *dnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov3"
         return edm.ignoredClientCIDRsParsed
 }</span>
 
-func (edm *dnstapMinimiser) fsEventWatcher() <span class="cov3" title="6">{
+func (edm *dnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) <span class="cov3" title="4">{
+        defer wg.Done()
         // Like in
         // https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
         // we keep a timer per registered filename
@@ -1905,7 +1906,7 @@ func (edm *dnstapMinimiser) fsEventWatcher() <span class="cov3" title="6">{
                 }
         }
 
-        <span class="cov3" title="6">for </span><span class="cov4" title="7">{
+        <span class="cov3" title="4">for </span><span class="cov3" title="5">{
                 select </span>{
                 case event, ok := &lt;-edm.fsWatcher.Events:<span class="cov1" title="1">
                         if !ok </span><span class="cov0" title="0">{
@@ -1942,8 +1943,8 @@ func (edm *dnstapMinimiser) fsEventWatcher() <span class="cov3" title="6">{
                         }</span>
 
                         <span class="cov1" title="1">t.Reset(fsEventDebounce)</span>
-                case err, ok := &lt;-edm.fsWatcher.Errors:<span class="cov3" title="6">
-                        if !ok </span><span class="cov3" title="6">{
+                case err, ok := &lt;-edm.fsWatcher.Errors:<span class="cov3" title="4">
+                        if !ok </span><span class="cov3" title="4">{
                                 // watcher is closed
                                 return
                         }</span>
@@ -2155,9 +2156,17 @@ func Run(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov1" tit
                 return
         }</span>
         <span class="cov1" title="1">defer edm.stop()
-        defer edm.fsWatcher.Close()
+        defer func() </span><span class="cov1" title="1">{
+                // Safety net for early-return paths in run() that exit before the
+                // explicit fsWatcher.Close() preceding wg.Wait(). fsnotify's Close
+                // is idempotent, so calling it again after the normal shutdown is a
+                // harmless no-op.
+                if err := edm.fsWatcher.Close(); err != nil </span><span class="cov0" title="0">{
+                        edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
+                }</span>
+        }()
 
-        if err := run(edm, logger, loggerLevel); err != nil </span><span class="cov0" title="0">{
+        <span class="cov1" title="1">if err := run(edm, logger, loggerLevel); err != nil </span><span class="cov0" title="0">{
                 logger.Error("edm: run failed", "error", err)
                 exitProcess(1)
         }</span>
@@ -2243,9 +2252,7 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
                 return fmt.Errorf("unable to configure fsWatchers: %w", err)
         }</span>
 
-        <span class="cov3" title="5">go edm.fsEventWatcher()
-
-        dti, err := setupDnstapInput(logger, startConf)
+        <span class="cov3" title="5">dti, err := setupDnstapInput(logger, startConf)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("unable to setup dnstap input: %w", err)
         }</span>
@@ -2306,9 +2313,15 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
                 serverWg.Wait()</span>
         }()
 
+        // Track the fsEventWatcher goroutine so shutdown can wait for it. It
+        // exits once fsWatcher.Close() closes the Events and Errors channels,
+        // which happens before wg.Wait() below.
+        <span class="cov2" title="3">wg.Add(1)
+        go edm.fsEventWatcher(&amp;wg)
+
         // Write histogram file to an outbox dir where it will get picked up by
         // the histogram sender. Upon being sent it will be moved to the sent dir.
-        <span class="cov2" title="3">dataDir := startConf.DataDir
+        dataDir := startConf.DataDir
         outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
         sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
@@ -2412,6 +2425,12 @@ func run(edm *dnstapMinimiser, logger *slog.Logger, loggerLevel *slog.LevelVar) 
         if !startConf.DisableMQTT </span><span class="cov0" title="0">{
                 edm.log.Info("Run: stopping MQTT publisher")
                 edm.autopahoCancel()
+        }</span>
+
+        // Close fsWatcher to signal fsEventWatcher to exit. Must happen before
+        // wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
+        <span class="cov1" title="1">if err := edm.fsWatcher.Close(); err != nil </span><span class="cov0" title="0">{
+                edm.log.Error("Run: fsWatcher.Close error", "error", err)
         }</span>
 
         // Wait for all workers to exit. The HTTP servers are shut down by the
@@ -3459,17 +3478,17 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="9">{
+                        <span class="cov5" title="19">for _, dirEntry := range dirEntries </span><span class="cov4" title="10">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov4" title="9">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov4" title="9">{
+                                <span class="cov4" title="10">if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), ".parquet") </span><span class="cov4" title="10">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
                                         if err != nil </span><span class="cov3" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
-                                        <span class="cov3" title="4">duration := stopTS.Sub(startTS)
+                                        <span class="cov3" title="5">duration := stopTS.Sub(startTS)
 
                                         absPath := filepath.Join(outboxDir, dirEntry.Name())
                                         absPathSent := filepath.Join(sentDir, dirEntry.Name())
@@ -3482,14 +3501,14 @@ timerLoop:
                                         as := edm.aggregSender
                                         edm.aggregSenderMutex.RUnlock()
                                         err = as.send(edm.ctx, absPath, startTS, duration)
-                                        if err != nil </span><span class="cov2" title="3">{
+                                        if err != nil </span><span class="cov3" title="4">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 select </span>{
-                                                case &lt;-time.After(backoffDuration):<span class="cov1" title="1"></span>
+                                                case &lt;-time.After(backoffDuration):<span class="cov2" title="2"></span>
                                                 case &lt;-edm.ctx.Done():<span class="cov2" title="2">
                                                         break timerLoop</span>
                                                 }
-                                                <span class="cov1" title="1">continue</span>
+                                                <span class="cov2" title="2">continue</span>
                                         }
                                         <span class="cov1" title="1">err = edm.renameFile(absPath, absPathSent)
                                         if err != nil </span><span class="cov0" title="0">{
@@ -3517,7 +3536,7 @@ timerLoop:
         <span class="cov4" title="9">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
-func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="12">{
+func timestampsFromFilename(name string) (time.Time, time.Time, error) <span class="cov5" title="13">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3526,12 +3545,12 @@ func timestampsFromFilename(name string) (time.Time, time.Time, error) <span cla
         if err != nil </span><span class="cov3" title="6">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
         }</span>
-        <span class="cov3" title="6">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+        <span class="cov4" title="7">stopTime, err := time.Parse("2006-01-02T15-04-05Z07:00", times[1])
         if err != nil </span><span class="cov1" title="1">{
                 return time.Time{}, time.Time{}, fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
         }</span>
 
-        <span class="cov3" title="5">return startTime, stopTime, nil</span>
+        <span class="cov3" title="6">return startTime, stopTime, nil</span>
 }
 
 func (edm *dnstapMinimiser) newQnamePublisher(wg *sync.WaitGroup) <span class="cov1" title="1">{
@@ -4048,9 +4067,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov2" title="3">drainCollectorQueues := func() </span><span class="cov1" title="1">{
-                for </span><span class="cov1" title="1">{
+                for </span><span class="cov2" title="2">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                                 processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
@@ -4077,9 +4096,9 @@ func (edm *dnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov2" title="3">collectorLoop:
-        for </span><span class="cov5" title="12">{
+        for </span><span class="cov4" title="11">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov2" title="2">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                         processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
