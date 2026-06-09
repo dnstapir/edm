@@ -77,6 +77,7 @@ type config struct {
 	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
 	EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
+	PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
 	InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
 	InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
 	InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
@@ -1598,6 +1599,7 @@ type dnstapMinimiser struct {
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
+	seenQnameMutex                sync.Mutex
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -1952,18 +1954,28 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *dnstapMinimiser, dawgFile
 	return prevWKD, nil
 }
 
-// Check if we have already seen this qname since we started.
-func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB) bool {
-	// NOTE: This looks like it might be a race (calling
-	// Get() followed by separate Add()) but since we want
-	// to keep often looked-up names in the cache we need to
-	// use Get() for updating recent-ness, and there is no
-	// GetOrAdd() method available. However, it should be
-	// safe for multiple threads to call Add() as this will
-	// only move an already added entry to the front of the
-	// eviction list which should be OK.
+// seenQnameWriteOptions selects the pebble write options for seen-qname inserts.
+//
+// It returns [pebble.Sync] when conf.PebbleSync is set so writes are fsynced,
+// and [pebble.NoSync] otherwise.
+func seenQnameWriteOptions(conf config) *pebble.WriteOptions {
+	if conf.PebbleSync {
+		return pebble.Sync
+	}
+	return pebble.NoSync
+}
 
+// qnameSeen reports whether qname has been seen since startup, recording it (in
+// the in-memory LRU and in pebble) on first sight. writeOpts is the pebble write
+// option for the insert (see [seenQnameWriteOptions]); the caller derives it
+// once per config rather than passing the whole config down this hot path.
+//
+// The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
+// workers report any given qname as new at most once.
+func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], pdb *pebble.DB, writeOpts *pebble.WriteOptions) bool {
 	qname := strings.ToLower(msg.Question[0].Name)
+	edm.seenQnameMutex.Lock()
+	defer edm.seenQnameMutex.Unlock()
 
 	_, ok := seenQnameLRU.Get(qname)
 	if ok {
@@ -1988,7 +2000,7 @@ func (edm *dnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	// If the key does not exist in pebble we insert it
 	if errors.Is(err, pebble.ErrNotFound) {
-		if err := pdb.Set([]byte(qname), []byte{}, pebble.Sync); err != nil {
+		if err := pdb.Set([]byte(qname), []byte{}, writeOpts); err != nil {
 			edm.log.Error("unable to insert key in pebble", "error", err)
 		}
 		return false
@@ -2066,6 +2078,9 @@ func (edm *dnstapMinimiser) runMinimiser(minimiserID int, wg *sync.WaitGroup, se
 
 	// conf is meant to be dynamically modified if the config changes at runtime
 	conf := edm.getConfig()
+	// Derived from conf once here (and re-derived on reload below) so the
+	// qnameSeen hot path takes a pointer instead of copying the whole config.
+	writeOpts := seenQnameWriteOptions(conf)
 
 minimiserLoop:
 	for {
@@ -2073,8 +2088,18 @@ minimiserLoop:
 		case frame := <-edm.inputChannel:
 			edm.promDnstapProcessed.Inc()
 			if err := proto.Unmarshal(frame, dt); err != nil {
-				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, returning", "error", err, "minimiser_id", minimiserID)
-				break minimiserLoop
+				edm.log.Error("dnstapMinimiser.runMinimiser: proto.Unmarshal() failed, skipping frame", "error", err, "minimiser_id", minimiserID)
+				continue
+			}
+			// Guard the hot-path dereferences (here and below: QueryAddress,
+			// clientIPIsIgnored) so a partially populated frame is dropped
+			// rather than panicking before parsePacket's own nil checks. A
+			// Message present but missing its required Type is already rejected
+			// by proto.Unmarshal above; the Type check here is belt-and-braces.
+			if dt.Message == nil || dt.Message.Type == nil {
+				edm.log.Error("dnstapMinimiser.runMinimiser: dnstap message or type missing, skipping frame", "minimiser_id", minimiserID)
+				edm.promDNSParseError.Inc()
+				continue
 			}
 
 			// Keep in mind that this outputs the unmodified dnstap
@@ -2089,15 +2114,6 @@ minimiserLoop:
 						edm.log.Error("unable to write to dnstap debug file", "error", err, "filename", debugDnstapFile.Name(), "minimiser_id", minimiserID)
 					}
 				}
-			}
-
-			// Guard the hot-path dereferences (here and below: QueryAddress,
-			// clientIPIsIgnored) so a partially populated frame is dropped
-			// rather than panicking before parsePacket's own nil checks.
-			if dt.Message == nil || dt.Message.Type == nil {
-				edm.log.Error("runMinimiser: dnstap message or type missing, dropping packet", "minimiser_id", minimiserID)
-				edm.promDNSParseError.Inc()
-				continue
 			}
 
 			isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
@@ -2165,7 +2181,7 @@ minimiserLoop:
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, pdb) {
+			if !edm.qnameSeen(msg, seenQnameLRU, pdb, writeOpts) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
@@ -2181,7 +2197,10 @@ minimiserLoop:
 
 			if !conf.DisableSessionFiles {
 				session := edm.newSession(dt, msg, isQuery, labelLimit, timestamp)
-				edm.sessionCollectorCh <- session
+				select {
+				case edm.sessionCollectorCh <- session:
+				case <-edm.ctx.Done():
+				}
 			}
 		case <-edm.reloadMinimiserConfigCh[minimiserID]:
 			edm.log.Info("runMinimiser: reloading config", "minimiser_id", minimiserID)
@@ -2195,6 +2214,7 @@ minimiserLoop:
 			}
 
 			conf = newConf
+			writeOpts = seenQnameWriteOptions(conf)
 		case <-edm.ctx.Done():
 			break minimiserLoop
 		}
