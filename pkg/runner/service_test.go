@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,11 +56,29 @@ func TestDnstapMinimiserRunGuards(t *testing.T) {
 		t.Fatalf("Run(nil) err = %v, want %v", err, ErrNilRunContext)
 	}
 
-	edm.running.Store(true)
-	t.Cleanup(func() { edm.running.Store(false) })
+	input := newBlockingTestDnstapInput()
+	edm = newRunLifecycleTestMinimiser(t, input)
+	ctx, cancel := context.WithCancel(t.Context())
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- edm.Run(ctx)
+	}()
 
+	<-input.ready
 	if err := edm.Run(t.Context()); !errors.Is(err, ErrDnstapMinimiserRunning) {
 		t.Fatalf("concurrent Run err = %v, want %v", err, ErrDnstapMinimiserRunning)
+	}
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("first Run err = %v, want nil", err)
+	}
+	if err := edm.Run(t.Context()); !errors.Is(err, ErrDnstapMinimiserAlreadyRun) {
+		t.Fatalf("second Run err = %v, want %v", err, ErrDnstapMinimiserAlreadyRun)
+	}
+	select {
+	case <-input.done:
+	default:
+		t.Fatal("Run returned before DNSTAP input exited")
 	}
 }
 
@@ -99,6 +118,25 @@ newqname-buffer = 1
 		return http.ErrServerClosed
 	})
 	deps.CryptopanFactory = fastTestCryptopanFactory{}
+	input := newBlockingTestDnstapInput()
+	listener := newTestNetListener("unix", socketPath)
+	listenCall := make(chan [2]string, 1)
+	deps.ListenerFactory = testListenerFactory{
+		ListenerFactory: deps.ListenerFactory,
+		listen: func(network, address string) (net.Listener, error) {
+			select {
+			case listenCall <- [2]string{network, address}:
+			default:
+			}
+			return listener, nil
+		},
+	}
+	deps.DnstapInputFactory = testDnstapInputFactory{
+		DnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) DnstapInput {
+			return input
+		},
+	}
 	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), WithDependencies(deps))
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +149,11 @@ newqname-buffer = 1
 		}
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	<-input.ready
+	call := <-listenCall
+	if call[0] != "unix" || call[1] != socketPath {
+		t.Fatalf("Listen(%q, %q), want unix/%q", call[0], call[1], socketPath)
+	}
 	cancel()
 
 	select {
@@ -119,4 +161,44 @@ newqname-buffer = 1
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not exit")
 	}
+	select {
+	case <-input.done:
+	default:
+		t.Fatal("Run returned before DNSTAP input exited")
+	}
+}
+
+func TestRunReturnsDnstapInputRuntimeError(t *testing.T) {
+	input := newBlockingTestDnstapInput()
+	input.err = errInjected
+	edm := newRunLifecycleTestMinimiser(t, input)
+
+	err := edm.Run(t.Context())
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("Run err = %v, want errInjected", err)
+	}
+}
+
+func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapMinimiser {
+	t.Helper()
+	runCoreCleanup(t)
+	tc := runCoreTC(t)
+	deps := newTestDependencies()
+	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
+		return http.ErrServerClosed
+	})
+	listener := newTestNetListener("unix", tc.InputUnix)
+	deps.ListenerFactory = testListenerFactory{
+		ListenerFactory: deps.ListenerFactory,
+		listen: func(_, _ string) (net.Listener, error) {
+			return listener, nil
+		},
+	}
+	deps.DnstapInputFactory = testDnstapInputFactory{
+		DnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) DnstapInput {
+			return input
+		},
+	}
+	return newTestDnstapMinimiserWithDependencies(t, tc, deps)
 }

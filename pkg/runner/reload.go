@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -31,14 +32,7 @@ func configUpdater(ctx context.Context, viperNotifyCh chan fsnotify.Event, edm *
 	// The code below is inspired by the example at:
 	// https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
 
-	// Start with creating a timer that will call the update function in the
-	// future but stop it so it never runs by default.
-	var eventMutex sync.Mutex
-	var event fsnotify.Event
-	t := edm.deps.Clock.AfterFunc(math.MaxInt64, func() {
-		eventMutex.Lock()
-		eventName := event.Name
-		eventMutex.Unlock()
+	applyUpdate := func(eventName string) {
 		edm.log.Info("configUpdater: config file was modified", "filename", eventName)
 
 		oldConf := edm.getConfig()
@@ -162,29 +156,28 @@ func configUpdater(ctx context.Context, viperNotifyCh chan fsnotify.Event, edm *
 			default: // notify already queued
 			}
 		}
-	})
-	t.Stop()
+	}
 
+	var debounce <-chan time.Time
+	var eventName string
 	for {
 		select {
 		case ev, ok := <-viperNotifyCh:
 			if !ok {
-				// Mirror the ctx.Done() branch: stop the debounce timer so a
-				// pending callback cannot fire after configUpdater returns.
-				t.Stop()
 				return
 			}
-			eventMutex.Lock()
-			event = ev
-			eventMutex.Unlock()
 			// If an event has been received this means we now want to
-			// enable the timer so the function will be called "soon", but
-			// if more events occur we will reset it again. This allows us
-			// to wait until events on the file settles down before
-			// actually calling the update function.
-			t.Reset(edm.deps.ConfigUpdateDebounce)
+			// wait "soon" before updating, but if more events occur we
+			// replace the pending debounce channel. This allows us to wait
+			// until events on the file settle down before actually calling
+			// the update function.
+			eventName = ev.Name
+			debounce = edm.deps.Clock.After(edm.deps.ConfigUpdateDebounce)
+		case <-debounce:
+			name := eventName
+			debounce = nil
+			applyUpdate(name)
 		case <-ctx.Done():
-			t.Stop()
 			return
 		}
 	}

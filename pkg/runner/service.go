@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +28,8 @@ import (
 var (
 	// ErrDnstapMinimiserRunning is returned when Run is called concurrently.
 	ErrDnstapMinimiserRunning = errors.New("dnstap minimiser is already running")
+	// ErrDnstapMinimiserAlreadyRun is returned when Run is called after a prior run.
+	ErrDnstapMinimiserAlreadyRun = errors.New("dnstap minimiser has already run")
 	// ErrNilConfigProvider is returned when a nil ConfigProvider is supplied.
 	ErrNilConfigProvider = errors.New("nil config provider")
 	// ErrNilLogger is returned when a nil logger is supplied.
@@ -74,13 +77,26 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return ErrNilRunContext
 	}
 
+	if edm.started.Load() {
+		if edm.running.Load() {
+			return ErrDnstapMinimiserRunning
+		}
+		return ErrDnstapMinimiserAlreadyRun
+	}
+
 	if !edm.running.CompareAndSwap(false, true) {
 		return ErrDnstapMinimiserRunning
 	}
+	if !edm.started.CompareAndSwap(false, true) {
+		edm.running.Store(false)
+		return ErrDnstapMinimiserAlreadyRun
+	}
 
 	ctx, stop := context.WithCancel(ctx)
+	var configUpdaterWg sync.WaitGroup
 	defer func() {
 		stop()
+		configUpdaterWg.Wait()
 		if edm.fsWatcher != nil {
 			if err := edm.fsWatcher.Close(); err != nil {
 				if !errors.Is(err, fsnotify.ErrClosed) {
@@ -125,7 +141,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 
 	viperNotifyCh := make(chan fsnotify.Event, 1)
 
-	go configUpdater(ctx, viperNotifyCh, edm)
+	configUpdaterWg.Add(1)
+	go func() {
+		defer configUpdaterWg.Done()
+		configUpdater(ctx, viperNotifyCh, edm)
+	}()
 
 	viper.OnConfigChange(func(e fsnotify.Event) {
 		select {
@@ -178,6 +198,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("unable to setup dnstap input: %w", err)
 	}
+	defer func() {
+		if err := dti.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			edm.log.Error("Run: dnstap input close error", "error", err)
+		}
+	}()
 
 	// We need to keep track of domains that are not on the well-known
 	// domain list yet we have seen since we started. To limit the
@@ -327,15 +352,28 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
-	// Start dnstap.Input. The golang-dnstap library does not provide a
-	// stop/close mechanism for ReadInto, so we cannot track this goroutine
-	// in the WaitGroup without blocking shutdown indefinitely. The
-	// inputChannel is intentionally left unclosed because ReadInto sends
-	// to it and would panic; the OS reclaims the goroutine on process exit.
-	go dti.ReadInto(edm.inputChannel)
+	dnstapInputErrCh := make(chan error, 1)
+	var dnstapInputWg sync.WaitGroup
+	dnstapInputWg.Add(1)
+	go func() {
+		defer dnstapInputWg.Done()
+		if err := dti.ReadInto(ctx, edm.inputChannel); err != nil {
+			select {
+			case dnstapInputErrCh <- err:
+			default:
+			}
+			stop()
+		}
+	}()
 
 	// Wait here until all instances of runMinimiser() is done
 	minimiserWg.Wait()
+	dnstapInputWg.Wait()
+	var dnstapInputErr error
+	select {
+	case dnstapInputErr = <-dnstapInputErrCh:
+	default:
+	}
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
@@ -362,13 +400,13 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	edm.log.Info("Run: waiting for other workers to exit")
 	wg.Wait()
 
-	// configUpdater is not tracked by wg; it observes the same run context
-	// cancellation as the wg workers and returns on its own. viperNotifyCh is
-	// deliberately left open: viper's config watcher started by WatchConfig
-	// outlives run and keeps invoking the OnConfigChange callback, so closing
-	// the channel here would let a later config change panic on a send to a
-	// closed channel. The buffered channel plus the callback's non-blocking
-	// send keep that callback from blocking once configUpdater has stopped.
+	configUpdaterWg.Wait()
+	// viperNotifyCh is deliberately left open: viper's config watcher
+	// started by WatchConfig outlives run and keeps invoking the
+	// OnConfigChange callback, so closing the channel here would let a later
+	// config change panic on a send to a closed channel. The buffered channel
+	// plus the callback's non-blocking send keep that callback from blocking
+	// once configUpdater has stopped.
 
 	// Wait for graceful disconnection from MQTT bus
 	if !startConf.DisableMQTT {
@@ -376,22 +414,29 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		edm.autopahoWg.Wait()
 	}
 
+	if dnstapInputErr != nil &&
+		!errors.Is(dnstapInputErr, context.Canceled) &&
+		!errors.Is(dnstapInputErr, context.DeadlineExceeded) {
+		return fmt.Errorf("dnstap input failed: %w", dnstapInputErr)
+	}
 	return nil
 }
 
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.
 //
-// Construct instances with [NewDnstapMinimiser]. A DnstapMinimiser may run at
-// most once at a time; concurrent [DnstapMinimiser.Run] calls return
-// [ErrDnstapMinimiserRunning].
+// Construct instances with [NewDnstapMinimiser]. A DnstapMinimiser is
+// single-use: one instance supports exactly one [DnstapMinimiser.Run]
+// lifecycle. Concurrent Run calls return [ErrDnstapMinimiserRunning]; calls
+// after a prior Run has started return [ErrDnstapMinimiserAlreadyRun].
 type DnstapMinimiser struct {
 	configer     ConfigProvider
 	conf         Config
 	confMutex    sync.RWMutex
 	deps         Dependencies
 	loggerLevel  *slog.LevelVar
+	started      atomic.Bool
 	running      atomic.Bool
-	inputChannel chan []byte  // the channel expected to be passed to dnstap ReadInto()
+	inputChannel chan []byte  // the channel passed to DNSTAP input readers
 	log          *slog.Logger // any information logging is sent here
 
 	// Cryptopan instance is held in an atomic.Pointer so the hot path

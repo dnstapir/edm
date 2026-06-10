@@ -94,14 +94,14 @@ type ListenerFactory interface {
 
 // DnstapInput is the DNSTAP input surface used by Run.
 type DnstapInput interface {
-	ReadInto(chan []byte)
+	ReadInto(context.Context, chan<- []byte) error
 	SetTimeout(time.Duration)
 	SetLogger(dnstap.Logger)
+	Close() error
 }
 
 // DnstapInputFactory creates DNSTAP frame stream inputs.
 type DnstapInputFactory interface {
-	NewFrameStreamSockInputFromPath(path string) (DnstapInput, error)
 	NewFrameStreamSockInput(listener net.Listener) DnstapInput
 }
 
@@ -355,12 +355,8 @@ func (netListenerFactory) ListenTLS(network, address string, config *tls.Config)
 
 type dnstapInputFactory struct{}
 
-func (dnstapInputFactory) NewFrameStreamSockInputFromPath(path string) (DnstapInput, error) {
-	return dnstap.NewFrameStreamSockInputFromPath(path)
-}
-
 func (dnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) DnstapInput {
-	return dnstap.NewFrameStreamSockInput(listener)
+	return newSocketDnstapInput(listener)
 }
 
 type pebbleSeenQnameStoreFactory struct{}
