@@ -47,7 +47,7 @@ type Config struct {
 	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
 	MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
 	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
+	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries" validate:"gte=0"`
 	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
 	HTTPCAFile                    string `mapstructure:"http-ca-file"`
 	HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`

@@ -18,7 +18,12 @@ import (
 
 // runMinimiser is the main loop of the program, it reads dnstap from
 // inputChannel and decides what further processing to do.
-func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, wg *sync.WaitGroup, seenQnameLRU *lru.Cache[string, struct{}], seenStore SeenQnameStore, debugDnstapFile File, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+//
+// reloadConfigCh delivers config-reload notifications for this worker.
+// cryptopanCache is the worker-private Crypto-PAn LRU (nil disables
+// caching); Run creates it so a creation failure surfaces as a startup
+// error instead of a silently dead worker.
+func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, wg *sync.WaitGroup, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore SeenQnameStore, debugDnstapFile File, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	defer wg.Done()
 
 	dt := &dnstap.Dnstap{}
@@ -31,21 +36,11 @@ func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, w
 	// startConf is used for things that do not handle reconfiguration at runtime
 	startConf := edm.getConfig()
 
-	// Per-worker Crypto-PAn cache. Each worker holds its own LRU so the
-	// pseudonymise hot path takes no shared lock. cryptopanLastGen tracks
-	// the last cryptopan-instance generation we saw; when setCryptopan
-	// installs a new key it bumps edm.cryptopanGen and we Purge on the next
-	// frame, so at most one frame after a key rotation can still return a
-	// cached old-key pseudonym before the cache is cleared.
-	var cryptopanCache *lru.Cache[netip.Addr, netip.Addr]
-	if startConf.CryptopanAddressEntries != 0 {
-		var lerr error
-		cryptopanCache, lerr = lru.New[netip.Addr, netip.Addr](startConf.CryptopanAddressEntries)
-		if lerr != nil {
-			edm.log.Error("runMinimiser: unable to create per-worker cryptopan cache", "error", lerr, "minimiser_id", minimiserID)
-			return
-		}
-	}
+	// cryptopanLastGen tracks the last cryptopan-instance generation we
+	// saw; when setCryptopan installs a new key it bumps edm.cryptopanGen
+	// and we Purge on the next frame, so at most one frame after a key
+	// rotation can still return a cached old-key pseudonym before the
+	// cache is cleared.
 	cryptopanLastGen := edm.cryptopanGen.Load()
 
 	// conf is meant to be dynamically modified if the config changes at runtime
@@ -182,7 +177,7 @@ minimiserLoop:
 				case <-ctx.Done():
 				}
 			}
-		case <-edm.reloadMinimiserConfigCh[minimiserID]:
+		case <-reloadConfigCh:
 			edm.log.Info("runMinimiser: reloading config", "minimiser_id", minimiserID)
 			newConf := edm.getConfig()
 			if conf.DisableSessionFiles != newConf.DisableSessionFiles {

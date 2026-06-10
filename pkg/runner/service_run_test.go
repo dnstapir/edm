@@ -206,6 +206,22 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("cryptopan cache creation error", func(t *testing.T) {
+		runCoreCleanup(t)
+		tc := runCoreTC(t)
+		edm := newTestDnstapMinimiser(t, tc)
+		pinHTTPServersToEphemeral(t, edm)
+		// A negative entry count cannot pass NewDnstapMinimiser, so mutate
+		// the stored config to emulate a bad runtime reload landing before
+		// the workers start. Run must fail instead of silently running
+		// without minimiser workers.
+		edm.conf.CryptopanAddressEntries = -1
+		err := edm.Run(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "cryptopan cache") {
+			t.Fatalf("err = %v, want cryptopan cache failure", err)
+		}
+	})
+
 	t.Run("debug dnstap file open error", func(t *testing.T) {
 		runCoreCleanup(t)
 		tc := runCoreTC(t)

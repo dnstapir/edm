@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -342,19 +343,36 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		numMinimiserWorkers = runtime.GOMAXPROCS(0)
 	}
 
+	// Per-worker Crypto-PAn caches. Each worker holds its own LRU so the
+	// pseudonymise hot path takes no shared lock. Created before any
+	// worker starts so a creation failure is a startup error instead of a
+	// silently dead worker.
+	cryptopanCaches := make([]*lru.Cache[netip.Addr, netip.Addr], numMinimiserWorkers)
+	if startConf.CryptopanAddressEntries != 0 {
+		for i := range cryptopanCaches {
+			cryptopanCaches[i], err = lru.New[netip.Addr, netip.Addr](startConf.CryptopanAddressEntries)
+			if err != nil {
+				return fmt.Errorf("unable to create per-worker cryptopan cache: %w", err)
+			}
+		}
+	}
+
 	// Start minimiser
 	edm.reloadMinimiserMutex.Lock()
 	for minimiserID := 0; minimiserID < numMinimiserWorkers; minimiserID++ {
 		edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
 		// This append aims to map 1:1 between offset in the resulting
 		// slice and minimiserID of a worker, so edm.reloadMinimiserConfigCh[3]
-		// should be a channel read by the worker with minimiserID 3
+		// should be a channel sending to the worker with minimiserID 3.
+		// The channel is also handed to the worker directly so it never
+		// reads the slice, which Run is still appending to.
 		//
 		// Capacity is set to 1 so we can do a send without hanging if
 		// the worker is currently busy.
-		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, make(chan struct{}, 1))
+		reloadConfigCh := make(chan struct{}, 1)
+		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Add(1)
-		go edm.runMinimiser(ctx, minimiserID, &minimiserWg, seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
+		go edm.runMinimiser(ctx, minimiserID, &minimiserWg, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
