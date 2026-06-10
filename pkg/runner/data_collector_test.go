@@ -64,9 +64,10 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	if len(prevWKD.m) != 1 {
 		t.Fatalf("flushed histogram domains have: %d, want: 1", len(prevWKD.m))
 	}
-	got := prevWKD.m[dawgIndex]
-	if got == nil {
+	got, ok := prevWKD.m[dawgIndex]
+	if !ok || got == nil {
 		t.Fatalf("flushed histogram missing DAWG index %d", dawgIndex)
+		return
 	}
 	if got.ACount != 1 || got.OKCount != 1 {
 		t.Fatalf("flushed histogram counts have A=%d OK=%d, want A=1 OK=1", got.ACount, got.OKCount)

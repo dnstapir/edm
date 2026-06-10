@@ -77,9 +77,10 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 	if !prevWKD.rotationTime.Equal(rotationTime) {
 		t.Fatalf("manual histogram rotation time have: %s, want: %s", prevWKD.rotationTime, rotationTime)
 	}
-	got := prevWKD.m[dawgIndex]
-	if got == nil {
+	got, ok := prevWKD.m[dawgIndex]
+	if !ok || got == nil {
 		t.Fatalf("manual histogram flush missing DAWG index %d", dawgIndex)
+		return
 	}
 	if got.ACount != 1 || got.OKCount != 1 {
 		t.Fatalf("manual histogram counts have A=%d OK=%d, want A=1 OK=1", got.ACount, got.OKCount)
