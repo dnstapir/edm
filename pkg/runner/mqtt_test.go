@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"errors"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dnstapir/edm/pkg/protocols"
@@ -70,49 +70,47 @@ func cleanupMQTTTestMinimiser(edm *DnstapMinimiser) {
 // across workers would corrupt the signature, and this test would catch
 // it.
 func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	// The worker ranges over mqttPubCh and selects on ctx.Done() for
-	// cancellation. Bind a fresh context so this test does not affect other
-	// tests and so we can guarantee cancellation on cleanup.
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		// The worker ranges over mqttPubCh and selects on ctx.Done() for
+		// cancellation. Bind a fresh context so this test does not affect other
+		// tests and so we can guarantee cancellation before the bubble exits.
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	priv, pub := newTestMQTTJWK(t)
+		priv, pub := newTestMQTTJWK(t)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.mqttSignWorker(ctx, &wg, priv)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.mqttSignWorker(ctx, &wg, priv)
 
-	payload := []byte(`{"qname":"example.com.","time":"2026-01-02T03:04:05Z"}`)
-	edm.mqttPubCh <- payload
+		payload := []byte(`{"qname":"example.com.","time":"2026-01-02T03:04:05Z"}`)
+		edm.mqttPubCh <- payload
 
-	select {
-	case signed := <-edm.mqttSignedCh:
-		// Verify the signature using the matching public key. Verify
-		// returns the original payload bytes on success.
-		got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
-		if err != nil {
-			t.Fatalf("jws.Verify: %s", err)
+		select {
+		case signed := <-edm.mqttSignedCh:
+			// Verify the signature using the matching public key. Verify
+			// returns the original payload bytes on success.
+			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
+			if err != nil {
+				t.Fatalf("jws.Verify: %s", err)
+			}
+			if string(got) != string(payload) {
+				t.Fatalf("signed payload mismatch\n  have: %s\n  want: %s", got, payload)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for signed message on mqttSignedCh")
 		}
-		if string(got) != string(payload) {
-			t.Fatalf("signed payload mismatch\n  have: %s\n  want: %s", got, payload)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for signed message on mqttSignedCh")
-	}
 
-	// Closing the input channel must let the worker exit cleanly. If a
-	// future refactor accidentally introduced an unbounded inner loop the
-	// wg.Wait() below would hang and t.Cleanup-driven cancel() would not
-	// rescue us - so we wait with a timeout and fail loudly instead.
-	close(edm.mqttPubCh)
-	waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit after mqttPubCh close")
+		// Closing the input channel must let the worker exit cleanly. If a
+		// future refactor accidentally introduced an unbounded inner loop the
+		// wg.Wait() below would hang and deferred cancel() would not rescue us,
+		// so we wait with a timeout and fail loudly instead.
+		close(edm.mqttPubCh)
+		waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit after mqttPubCh close")
+	})
 }
 
 // TestMqttSignWorkerExitsOnContextCancelWhenSignedFull demonstrates the
@@ -125,39 +123,33 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 // (capacity 1, pre-loaded) so the worker's send blocks. Then cancel the
 // context and observe that the worker exits.
 func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	// Replace the default 1024-deep channel with a tiny pre-filled one so
-	// we can deterministically force the worker's send to block.
-	edm.mqttSignedCh = make(chan []byte, 1)
-	edm.mqttSignedCh <- []byte("placeholder")
+		// Replace the default 1024-deep channel with a tiny pre-filled one so
+		// we can deterministically force the worker's send to block.
+		edm.mqttSignedCh = make(chan []byte, 1)
+		edm.mqttSignedCh <- []byte("placeholder")
 
-	priv, _ := newTestMQTTJWK(t)
+		priv, _ := newTestMQTTJWK(t)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.mqttSignWorker(ctx, &wg, priv)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.mqttSignWorker(ctx, &wg, priv)
 
-	// Hand the worker exactly one message; it will sign it and then block
-	// trying to enqueue on the (already full) signed channel.
-	edm.mqttPubCh <- []byte("payload")
+		// Hand the worker exactly one message; it will sign it and then block
+		// trying to enqueue on the (already full) signed channel.
+		edm.mqttPubCh <- []byte("payload")
 
-	// Give the worker a moment to actually reach the blocked select.
-	// 50ms is generous on any real machine; we don't poll with a
-	// shorter, busier loop because we want to keep the test simple and
-	// the operation we're racing against is a cheap goroutine reaching
-	// a select.
-	time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
 
-	cancel()
-	waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit after context cancel")
+		cancel()
+		waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit after context cancel")
+	})
 }
 
 // TestMqttSignWorkerSkipsBadKey verifies the worker tolerates jws.Sign
@@ -175,64 +167,60 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 // restarted. The "continue past sign errors" behaviour was a deliberate
 // design choice; this test pins it.
 func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	priv, pub := newTestMQTTJWK(t)
+		priv, pub := newTestMQTTJWK(t)
 
-	// Force a signing error by claiming the Ed25519 key uses RS256 - the
-	// jws library will refuse to sign.
-	if err := priv.Set(jwk.AlgorithmKey, jwa.RS256); err != nil {
-		t.Fatalf("set Algorithm: %s", err)
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.mqttSignWorker(ctx, &wg, priv)
-
-	// Push one "bad" message; the worker will fail to sign and continue.
-	edm.mqttPubCh <- []byte("bad-payload")
-
-	// Drain attempt: there must be no signed message. We rely on a short
-	// wait because nothing else is feeding mqttSignedCh.
-	select {
-	case got := <-edm.mqttSignedCh:
-		t.Fatalf("mqttSignedCh unexpectedly received: %q", got)
-	case <-time.After(100 * time.Millisecond):
-		// expected: no signed output
-	}
-
-	// Now flip the algorithm back to a valid one and push a real message.
-	// A correctly configured worker continues past the prior error and
-	// signs this one.
-	if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
-		t.Fatalf("restore Algorithm: %s", err)
-	}
-	good := []byte(`{"ok":true}`)
-	edm.mqttPubCh <- good
-
-	select {
-	case signed := <-edm.mqttSignedCh:
-		got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
-		if err != nil {
-			t.Fatalf("jws.Verify: %s", err)
+		// Force a signing error by claiming the Ed25519 key uses RS256 - the
+		// jws library will refuse to sign.
+		if err := priv.Set(jwk.AlgorithmKey, jwa.RS256); err != nil {
+			t.Fatalf("set Algorithm: %s", err)
 		}
-		if string(got) != string(good) {
-			t.Fatalf("payload mismatch have: %s want: %s", got, good)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("timed out waiting for signed message after recovery")
-	}
 
-	close(edm.mqttPubCh)
-	waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit cleanly")
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.mqttSignWorker(ctx, &wg, priv)
+
+		// Push one "bad" message; the worker will fail to sign and continue.
+		edm.mqttPubCh <- []byte("bad-payload")
+
+		synctest.Wait()
+		select {
+		case got := <-edm.mqttSignedCh:
+			t.Fatalf("mqttSignedCh unexpectedly received: %q", got)
+		default:
+		}
+
+		// Now flip the algorithm back to a valid one and push a real message.
+		// A correctly configured worker continues past the prior error and
+		// signs this one.
+		if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+			t.Fatalf("restore Algorithm: %s", err)
+		}
+		good := []byte(`{"ok":true}`)
+		edm.mqttPubCh <- good
+
+		select {
+		case signed := <-edm.mqttSignedCh:
+			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
+			if err != nil {
+				t.Fatalf("jws.Verify: %s", err)
+			}
+			if string(got) != string(good) {
+				t.Fatalf("payload mismatch have: %s want: %s", got, good)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for signed message after recovery")
+		}
+
+		close(edm.mqttPubCh)
+		waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit cleanly")
+	})
 }
 
 type blockingMQTTConnectionManager struct {
@@ -269,48 +257,47 @@ func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *p
 }
 
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	edm.mqttSignedCh = make(chan []byte, 2)
-	cm := &blockingMQTTConnectionManager{
-		publishStarted: make(chan []byte, 2),
-		release:        make(chan struct{}),
-	}
-
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
-
-	edm.mqttSignedCh <- []byte("first")
-	select {
-	case got := <-cm.publishStarted:
-		if string(got) != "first" {
-			t.Fatalf("first publish payload have: %s, want: first", got)
+		edm.mqttSignedCh = make(chan []byte, 2)
+		cm := &blockingMQTTConnectionManager{
+			publishStarted: make(chan []byte, 2),
+			release:        make(chan struct{}),
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("first publish did not start")
-	}
 
-	edm.mqttSignedCh <- []byte("second")
-	select {
-	case got := <-cm.publishStarted:
-		t.Fatalf("second publish started before first publish completed: %s", got)
-	case <-time.After(100 * time.Millisecond):
-	}
-	if cm.concurrent.Load() {
-		t.Fatal("mqttPublishWorker called Publish concurrently")
-	}
+		edm.autopahoWg.Add(1)
+		go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
 
-	close(cm.release)
-	close(edm.mqttSignedCh)
-	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not drain and exit")
+		edm.mqttSignedCh <- []byte("first")
+		select {
+		case got := <-cm.publishStarted:
+			if string(got) != "first" {
+				t.Fatalf("first publish payload have: %s, want: first", got)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("first publish did not start")
+		}
+
+		edm.mqttSignedCh <- []byte("second")
+		synctest.Wait()
+		select {
+		case got := <-cm.publishStarted:
+			t.Fatalf("second publish started before first publish completed: %s", got)
+		default:
+		}
+		if cm.concurrent.Load() {
+			t.Fatal("mqttPublishWorker called Publish concurrently")
+		}
+
+		close(cm.release)
+		close(edm.mqttSignedCh)
+		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not drain and exit")
+	})
 }
 
 // TestMqttPublishWorkerExitsOnContextCancel verifies that mqttPublishWorker
@@ -319,29 +306,28 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 // the channel is closed (the !ok path) or a message arrives, not on context
 // cancellation.
 func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	edm.mqttSignedCh = make(chan []byte)
+		edm.mqttSignedCh = make(chan []byte)
 
-	cm := &blockingMQTTConnectionManager{
-		publishStarted: make(chan []byte, 1),
-		release:        make(chan struct{}),
-	}
+		cm := &blockingMQTTConnectionManager{
+			publishStarted: make(chan []byte, 1),
+			release:        make(chan struct{}),
+		}
 
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+		edm.autopahoWg.Add(1)
+		go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
 
-	time.Sleep(50 * time.Millisecond)
+		synctest.Wait()
 
-	cancel()
-	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit after context cancel")
+		cancel()
+		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit after context cancel")
+	})
 }
 
 // TestMqttPublishWorkerLogsPublishError feeds a signed message at a fake
@@ -349,38 +335,37 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 // "error publishing" and continues to the next iteration rather than
 // exiting. Closing mqttSignedCh ends the loop.
 func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	edm.mqttSignedCh = make(chan []byte, 1)
-	conn := &fakeAutoPahoConnection{
-		publishedCh: make(chan struct{}, 1),
-		publishErr:  errInjected,
-	}
+		edm.mqttSignedCh = make(chan []byte, 1)
+		conn := &fakeAutoPahoConnection{
+			publishedCh: make(chan struct{}, 1),
+			publishErr:  errInjected,
+		}
 
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		edm.autopahoWg.Add(1)
+		go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
 
-	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
-	select {
-	case <-conn.publishedCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Publish was never called")
-	}
-	close(edm.mqttSignedCh)
-	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
+		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Publish was never called")
+		}
+		close(edm.mqttSignedCh)
+		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
 
-	if !strings.Contains(buf.String(), "error publishing") {
-		t.Fatalf("expected error log, got: %q", buf.String())
-	}
+		if !strings.Contains(buf.String(), "error publishing") {
+			t.Fatalf("expected error log, got: %q", buf.String())
+		}
+	})
 }
 
 // TestMqttPublishWorkerLogsNonZeroReasonCode covers the QoS-1+ "reason
@@ -388,38 +373,37 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 // is neither 0 (success) nor 16 (no-subscribers, which is silenced) is
 // logged at info.
 func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
+	synctest.Test(t, func(t *testing.T) {
+		var buf bytes.Buffer
+		logger := slog.New(slog.NewJSONHandler(&buf, nil))
+		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
+		defer cleanupMQTTTestMinimiser(edm)
 
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	edm.mqttSignedCh = make(chan []byte, 1)
-	conn := &fakeAutoPahoConnection{
-		publishedCh: make(chan struct{}, 1),
-		publishResp: &paho.PublishResponse{ReasonCode: 0x80},
-	}
+		edm.mqttSignedCh = make(chan []byte, 1)
+		conn := &fakeAutoPahoConnection{
+			publishedCh: make(chan struct{}, 1),
+			publishResp: &paho.PublishResponse{ReasonCode: 0x80},
+		}
 
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		edm.autopahoWg.Add(1)
+		go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
 
-	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
-	select {
-	case <-conn.publishedCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("Publish was never called")
-	}
-	close(edm.mqttSignedCh)
-	waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
+		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("Publish was never called")
+		}
+		close(edm.mqttSignedCh)
+		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
 
-	if !strings.Contains(buf.String(), "reason code received") {
-		t.Fatalf("expected reason code log, got: %q", buf.String())
-	}
+		if !strings.Contains(buf.String(), "reason code received") {
+			t.Fatalf("expected reason code log, got: %q", buf.String())
+		}
+	})
 }
 
 // waitOrFail waits for wg with a deadline, calling t.Fatalf with the
@@ -517,79 +501,90 @@ func TestParseMQTTServerURL(t *testing.T) {
 }
 
 func TestMQTTConfigAndPublisher(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	ctx, _ := testRunContext(t)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ClientID != "client-id" || cfg.KeepAlive != 30 || cfg.TlsCfg.MinVersion != tls.VersionTLS13 {
-		t.Fatalf("unexpected MQTT config: %#v", cfg)
-	}
-	cfg.OnConnectionUp(nil, nil)
-	cfg.OnConnectError(errors.New("connect"))
-	cfg.OnClientError(errors.New("client"))
-	cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
-	cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
-	if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30, nil); err == nil {
-		t.Fatal("bad MQTT URL succeeded")
-	}
+		cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ClientID != "client-id" || cfg.KeepAlive != 30 || cfg.TlsCfg.MinVersion != tls.VersionTLS13 {
+			t.Fatalf("unexpected MQTT config: %#v", cfg)
+		}
+		cfg.OnConnectionUp(nil, nil)
+		cfg.OnConnectError(errors.New("connect"))
+		cfg.OnClientError(errors.New("client"))
+		cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
+		cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
+		if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30, nil); err == nil {
+			t.Fatal("bad MQTT URL succeeded")
+		}
 
-	jwk := testJWK(t)
-	conn := &fakeAutoPahoConnection{}
-	edm.startMQTTPipeline(ctx, conn, jwk, true, 1)
-	edm.mqttPubCh <- []byte(`{"hello":"world"}`)
-	close(edm.mqttPubCh)
-	edm.autopahoWg.Wait()
-	conn.mu.Lock()
-	queued := len(conn.queued)
-	conn.mu.Unlock()
-	if queued != 1 {
-		t.Fatalf("queued messages = %d, want 1", queued)
-	}
+		jwk := testJWK(t)
+		conn := &fakeAutoPahoConnection{}
+		edm.startMQTTPipeline(ctx, conn, jwk, true, 1)
+		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+		close(edm.mqttPubCh)
+		edm.autopahoWg.Wait()
+		conn.mu.Lock()
+		queued := len(conn.queued)
+		conn.mu.Unlock()
+		if queued != 1 {
+			t.Fatalf("queued messages = %d, want 1", queued)
+		}
 
-	var buf bytes.Buffer
-	pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "debug")
-	pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "debug")
-	pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "error")
-	pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "error")
-	if !strings.Contains(buf.String(), "hello") {
-		t.Fatalf("logger output = %q", buf.String())
-	}
+		var buf bytes.Buffer
+		pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "debug")
+		pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "debug")
+		pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "error")
+		pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "error")
+		if !strings.Contains(buf.String(), "hello") {
+			t.Fatalf("logger output = %q", buf.String())
+		}
+	})
 }
 
 func TestMQTTPipelinePublishPath(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	ctx, _ := testRunContext(t)
-	jwk := testJWK(t)
-	conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		jwk := testJWK(t)
+		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-	edm.startMQTTPipeline(ctx, conn, jwk, false, 1)
-	edm.mqttPubCh <- []byte(`{"publish":"now"}`)
-	select {
-	case <-conn.publishedCh:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for publish")
-	}
-	close(edm.mqttPubCh)
-	edm.autopahoWg.Wait()
+		edm.startMQTTPipeline(ctx, conn, jwk, false, 1)
+		edm.mqttPubCh <- []byte(`{"publish":"now"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for publish")
+		}
+		close(edm.mqttPubCh)
+		edm.autopahoWg.Wait()
 
-	conn.mu.Lock()
-	published := len(conn.published)
-	conn.mu.Unlock()
-	if published != 1 {
-		t.Fatalf("published messages = %d, want 1", published)
-	}
+		conn.mu.Lock()
+		published := len(conn.published)
+		conn.mu.Unlock()
+		if published != 1 {
+			t.Fatalf("published messages = %d, want 1", published)
+		}
+	})
 }
 
 func TestMQTTPublishWorkerAwaitError(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
+		conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
-	waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
+		edm.autopahoWg.Add(1)
+		go edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
+		waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
+	})
 }
 
 type fakeAutoPahoConnection struct {
@@ -643,26 +638,30 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 }
 
 func TestNewQnamePublisher(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	ctx, _ := testRunContext(t)
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-	edm.mqttPubCh = make(chan []byte, 1)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupMQTTTestMinimiser(edm)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+		edm.mqttPubCh = make(chan []byte, 1)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.newQnamePublisher(ctx, &wg)
-	event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
-	edm.newQnamePublisherCh <- &event
-	close(edm.newQnamePublisherCh)
-	wg.Wait()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.newQnamePublisher(ctx, &wg)
+		event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
+		edm.newQnamePublisherCh <- &event
+		close(edm.newQnamePublisherCh)
+		wg.Wait()
 
-	msg := <-edm.mqttPubCh
-	if !strings.Contains(string(msg), "example.com.") {
-		t.Fatalf("MQTT payload = %s", msg)
-	}
-	if _, ok := <-edm.mqttPubCh; ok {
-		t.Fatal("mqttPubCh was not closed")
-	}
+		msg := <-edm.mqttPubCh
+		if !strings.Contains(string(msg), "example.com.") {
+			t.Fatalf("MQTT payload = %s", msg)
+		}
+		if _, ok := <-edm.mqttPubCh; ok {
+			t.Fatal("mqttPubCh was not closed")
+		}
+	})
 }
 
 type testMQTTFactory struct {
@@ -679,42 +678,46 @@ func (tmf testMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.Clien
 
 func TestSetupMQTT(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+		synctest.Test(t, func(t *testing.T) {
+			conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		edm.deps.MQTTFactory = testMQTTFactory{
-			MQTTFactory: edm.deps.MQTTFactory,
-			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
-				return conn, nil
-			},
-		}
-		edm.conf.DataDir = t.TempDir()
-		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
-		edm.conf.MQTTServer = "mqtts://example.test:8883"
-		edm.conf.MQTTKeepalive = 30
-		edm.conf.DisableMQTTFilequeue = false
-		edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			defer cleanupMQTTTestMinimiser(edm)
+			edm.deps.MQTTFactory = testMQTTFactory{
+				MQTTFactory: edm.deps.MQTTFactory,
+				newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+					return conn, nil
+				},
+			}
+			edm.conf.DataDir = t.TempDir()
+			edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+			edm.conf.MQTTServer = "mqtts://example.test:8883"
+			edm.conf.MQTTKeepalive = 30
+			edm.conf.DisableMQTTFilequeue = false
+			edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
 
-		ctx, _ := testRunContext(t)
-		if err := edm.setupMQTT(ctx); err != nil {
-			t.Fatalf("setupMQTT: %v", err)
-		}
-		// Drive the publish path so the fake connection manager is actually
-		// exercised; otherwise the worker would exit before touching cm.
-		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
-		select {
-		case <-conn.publishedCh:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for publish")
-		}
-		close(edm.mqttPubCh)
-		edm.autopahoWg.Wait()
-		conn.mu.Lock()
-		queued := len(conn.queued)
-		conn.mu.Unlock()
-		if queued != 1 {
-			t.Fatalf("queued messages = %d, want 1", queued)
-		}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if err := edm.setupMQTT(ctx); err != nil {
+				t.Fatalf("setupMQTT: %v", err)
+			}
+			// Drive the publish path so the fake connection manager is actually
+			// exercised; otherwise the worker would exit before touching cm.
+			edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+			select {
+			case <-conn.publishedCh:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for publish")
+			}
+			close(edm.mqttPubCh)
+			edm.autopahoWg.Wait()
+			conn.mu.Lock()
+			queued := len(conn.queued)
+			conn.mu.Unlock()
+			if queued != 1 {
+				t.Fatalf("queued messages = %d, want 1", queued)
+			}
+		})
 	})
 
 	t.Run("missing signing key", func(t *testing.T) {

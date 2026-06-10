@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -40,42 +41,49 @@ func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
 }
 
 func TestFSWatchersAndEventWatcher(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	watcher := newTestFileWatcher()
-	edm.fsWatcher = watcher
-	dir := t.TempDir()
-	watched := filepath.Join(dir, "watched.txt")
-	var calls atomic.Int32
-	callbackDone := make(chan struct{}, 1)
-	edm.fsWatcherFuncs = map[string][]func() error{
-		watched: {
-			func() error {
-				calls.Add(1)
-				select {
-				case callbackDone <- struct{}{}:
-				default:
-				}
-				return errors.New("logged")
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		watcher := newTestFileWatcher()
+		edm.fsWatcher = watcher
+		dir := t.TempDir()
+		watched := filepath.Join(dir, "watched.txt")
+		var calls atomic.Int32
+		callbackDone := make(chan struct{}, 1)
+		edm.fsWatcherFuncs = map[string][]func() error{
+			watched: {
+				func() error {
+					calls.Add(1)
+					select {
+					case callbackDone <- struct{}{}:
+					default:
+					}
+					return errors.New("logged")
+				},
 			},
-		},
-	}
+		}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.fsEventWatcher(&wg)
-	watcher.events <- fsnotifyEvent(watched)
-	select {
-	case <-callbackDone:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for watcher callback")
-	}
-	if calls.Load() != 1 {
-		t.Fatalf("watcher callbacks = %d, want 1", calls.Load())
-	}
-	if err := edm.fsWatcher.Close(); err != nil {
-		t.Fatal(err)
-	}
-	wg.Wait()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.fsEventWatcher(&wg)
+		defer func() {
+			if err := edm.fsWatcher.Close(); err != nil {
+				t.Fatal(err)
+			}
+			wg.Wait()
+		}()
+
+		watcher.events <- fsnotifyEvent(watched)
+		time.Sleep(edm.deps.FSEventDebounce)
+		synctest.Wait()
+		select {
+		case <-callbackDone:
+		default:
+			t.Fatal("watcher callback did not run")
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("watcher callbacks = %d, want 1", calls.Load())
+		}
+	})
 }
 
 type testFileWatcher struct {

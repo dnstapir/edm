@@ -2,6 +2,7 @@ package runner
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/miekg/dns"
@@ -583,28 +585,31 @@ func TestHistogramSender(t *testing.T) {
 // the reload arm that flips DisableHistogramSender at runtime.
 func TestHistogramSenderBranches(t *testing.T) {
 	t.Run("disabled at startup skips ticks", func(t *testing.T) {
-		tc := defaultTC
-		tc.DisableHistogramSender = true
-		edm := newTestDnstapMinimiser(t, tc)
-		edm.deps.HistogramSenderInterval = time.Millisecond
-		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+		synctest.Test(t, func(t *testing.T) {
+			tc := defaultTC
+			tc.DisableHistogramSender = true
+			edm := newSynctestDnstapMinimiser(t, tc)
+			edm.deps.HistogramSenderInterval = time.Millisecond
+			edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-		buf := &syncBuf{}
-		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+			buf := &syncBuf{}
+			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
-		ctx, cancel := testRunContext(t)
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
-		// Let several ticks elapse; nothing happens because the
-		// DisableHistogramSender guard short-circuits.
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-		wg.Wait()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
+			// Let several ticks elapse; nothing happens because the
+			// DisableHistogramSender guard short-circuits.
+			time.Sleep(20 * time.Millisecond)
+			cancel()
+			wg.Wait()
 
-		if !strings.Contains(buf.String(), `"state":"disabled"`) {
-			t.Fatalf("expected disabled-state log, got: %q", buf.String())
-		}
+			if !strings.Contains(buf.String(), `"state":"disabled"`) {
+				t.Fatalf("expected disabled-state log, got: %q", buf.String())
+			}
+		})
 	})
 
 	t.Run("parse-error filename is logged and skipped", func(t *testing.T) {
@@ -741,53 +746,45 @@ func TestHistogramSenderBranches(t *testing.T) {
 	})
 
 	t.Run("reload toggles enabled state", func(t *testing.T) {
-		tc := defaultTC
-		tc.DisableHistogramSender = true
-		edm := newTestDnstapMinimiser(t, tc)
-		edm.deps.HistogramSenderInterval = time.Millisecond
-		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+		synctest.Test(t, func(t *testing.T) {
+			tc := defaultTC
+			tc.DisableHistogramSender = true
+			edm := newSynctestDnstapMinimiser(t, tc)
+			edm.deps.HistogramSenderInterval = time.Millisecond
+			edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-		buf := &syncBuf{}
-		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+			buf := &syncBuf{}
+			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
-		ctx, cancel := testRunContext(t)
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
 
-		// Wait until the worker has read its startup conf before flipping
-		// edm.conf — otherwise we race the worker's edm.getConfig() at
-		// histogramSender's entry and it may pick up the post-flip value.
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if strings.Contains(buf.String(), `"state":"disabled"`) {
-				break
+			// Wait until the worker has read its startup conf before flipping
+			// edm.conf — otherwise we race the worker's edm.getConfig() at
+			// histogramSender's entry and it may pick up the post-flip value.
+			time.Sleep(edm.deps.HistogramSenderInterval)
+			synctest.Wait()
+			if !strings.Contains(buf.String(), `"state":"disabled"`) {
+				t.Fatalf("worker did not log the initial disabled state: %q", buf.String())
 			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		if !strings.Contains(buf.String(), `"state":"disabled"`) {
-			t.Fatalf("worker did not log the initial disabled state: %q", buf.String())
-		}
 
-		// Flip DisableHistogramSender on edm.conf and signal a reload.
-		edm.confMutex.Lock()
-		edm.conf.DisableHistogramSender = false
-		edm.confMutex.Unlock()
-		edm.reloadHistogramSenderConfigCh <- struct{}{}
+			// Flip DisableHistogramSender on edm.conf and signal a reload.
+			edm.confMutex.Lock()
+			edm.conf.DisableHistogramSender = false
+			edm.confMutex.Unlock()
+			edm.reloadHistogramSenderConfigCh <- struct{}{}
+			synctest.Wait()
+			cancel()
+			wg.Wait()
 
-		deadline = time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
 			if strings.Contains(buf.String(), "enabling histogram sender") {
-				break
+				return
 			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		cancel()
-		wg.Wait()
-
-		if !strings.Contains(buf.String(), "enabling histogram sender") {
 			t.Fatalf("expected enable log, got: %q", buf.String())
-		}
+		})
 	})
 }
 

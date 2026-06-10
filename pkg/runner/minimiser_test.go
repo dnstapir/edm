@@ -1,11 +1,11 @@
 package runner
 
 import (
-	"io"
-	"log/slog"
+	"context"
 	"net/netip"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -20,76 +20,79 @@ import (
 )
 
 func TestRunMinimiserFlows(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-	edm.sessionCollectorCh = make(chan *sessionData, 1)
-	cache, err := lru.New[string, struct{}](2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := newTestPebble(t)
-	finder := testDawgFinder(t, "known.example.")
-	wkd, err := newWellKnownDomainsTracker(finder, time.Time{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := testRunContext(t)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
-
-	queryFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess)))
-	edm.inputChannel <- queryFrame
-
-	knownFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
-	edm.inputChannel <- knownFrame
-	select {
-	case <-wkd.updateCh:
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for WKD update")
-	}
-
-	newFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
-	edm.inputChannel <- newFrame
-	select {
-	case ev := <-edm.newQnamePublisherCh:
-		if ev.Qname != "new.example." {
-			t.Fatalf("new qname = %s", ev.Qname)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+		edm.sessionCollectorCh = make(chan *sessionData, 1)
+		cache, err := lru.New[string, struct{}](2)
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for new_qname event")
-	}
-
-	select {
-	case sd := <-edm.sessionCollectorCh:
-		if sd.ResponseTime == nil {
-			t.Fatalf("session missing response time: %#v", sd)
+		db := newTestPebble(t)
+		finder := testDawgFinder(t, "known.example.")
+		wkd, err := newWellKnownDomainsTracker(finder, time.Time{})
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for session")
-	}
 
-	edm.conf.DisableSessionFiles = true
-	// Signal a config reload, then send it a second time. The reload channel
-	// has capacity 1, so the second send blocks until runMinimiser has
-	// received (and therefore applied) the first, guaranteeing the
-	// disabled-session config is in effect before we feed the next frame.
-	// Without this, runMinimiser's select could pick the buffered input frame
-	// before the buffered reload and emit a session with the stale config.
-	edm.reloadMinimiserConfigCh[0] <- struct{}{}
-	edm.reloadMinimiserConfigCh[0] <- struct{}{}
-	edm.inputChannel <- newFrame
-	time.Sleep(20 * time.Millisecond)
-	select {
-	case sd := <-edm.sessionCollectorCh:
-		t.Fatalf("unexpected session while disabled: %#v", sd)
-	default:
-	}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
 
-	cancel()
-	wg.Wait()
+		queryFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- queryFrame
+
+		knownFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- knownFrame
+		select {
+		case <-wkd.updateCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for WKD update")
+		}
+
+		newFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- newFrame
+		select {
+		case ev := <-edm.newQnamePublisherCh:
+			if ev.Qname != "new.example." {
+				t.Fatalf("new qname = %s", ev.Qname)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for new_qname event")
+		}
+
+		select {
+		case sd := <-edm.sessionCollectorCh:
+			if sd.ResponseTime == nil {
+				t.Fatalf("session missing response time: %#v", sd)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for session")
+		}
+
+		edm.conf.DisableSessionFiles = true
+		// Signal a config reload, then send it a second time. The reload channel
+		// has capacity 1, so the second send blocks until runMinimiser has
+		// received (and therefore applied) the first, guaranteeing the
+		// disabled-session config is in effect before we feed the next frame.
+		// Without this, runMinimiser's select could pick the buffered input frame
+		// before the buffered reload and emit a session with the stale config.
+		edm.reloadMinimiserConfigCh[0] <- struct{}{}
+		edm.reloadMinimiserConfigCh[0] <- struct{}{}
+		edm.inputChannel <- newFrame
+		synctest.Wait()
+		select {
+		case sd := <-edm.sessionCollectorCh:
+			t.Fatalf("unexpected session while disabled: %#v", sd)
+		default:
+		}
+
+		cancel()
+		wg.Wait()
+	})
 }
 
 // TestRunMinimiserScratchClientIP verifies that the per-worker scratch buffer
@@ -101,101 +104,107 @@ func TestRunMinimiserFlows(t *testing.T) {
 // the IP is captured before pseudonymisation and that reusing the scratch
 // buffer does not corrupt earlier or later frames.
 func TestRunMinimiserScratchClientIP(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-	edm.sessionCollectorCh = make(chan *sessionData, 1)
-	cache, err := lru.New[string, struct{}](2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := newTestPebble(t)
-	wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := testRunContext(t)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
-
-	tests := []struct {
-		family dnstap.SocketFamily
-		ip     netip.Addr
-	}{
-		{dnstap.SocketFamily_INET, netip.MustParseAddr("198.51.100.20")},
-		{dnstap.SocketFamily_INET6, netip.MustParseAddr("2001:db8::20")},
-	}
-	for _, tc := range tests {
-		frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
-		edm.inputChannel <- frame
-		select {
-		case wu := <-wkd.updateCh:
-			if wu.ip != tc.ip {
-				t.Fatalf("client IP for %s: got %s, want %s", tc.family, wu.ip, tc.ip)
-			}
-			wantHash := murmur3.Sum64(tc.ip.AsSlice())
-			if wu.hllHash != wantHash {
-				t.Fatalf("HLL hash for %s: got %d, want %d", tc.family, wu.hllHash, wantHash)
-			}
-		case <-time.After(time.Second):
-			t.Fatalf("timed out waiting for WKD update for %s", tc.family)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+		edm.sessionCollectorCh = make(chan *sessionData, 1)
+		cache, err := lru.New[string, struct{}](2)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
+		db := newTestPebble(t)
+		wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	cancel()
-	wg.Wait()
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+
+		tests := []struct {
+			family dnstap.SocketFamily
+			ip     netip.Addr
+		}{
+			{dnstap.SocketFamily_INET, netip.MustParseAddr("198.51.100.20")},
+			{dnstap.SocketFamily_INET6, netip.MustParseAddr("2001:db8::20")},
+		}
+		for _, tc := range tests {
+			frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
+			edm.inputChannel <- frame
+			select {
+			case wu := <-wkd.updateCh:
+				if wu.ip != tc.ip {
+					t.Fatalf("client IP for %s: got %s, want %s", tc.family, wu.ip, tc.ip)
+				}
+				wantHash := murmur3.Sum64(tc.ip.AsSlice())
+				if wu.hllHash != wantHash {
+					t.Fatalf("HLL hash for %s: got %d, want %d", tc.family, wu.hllHash, wantHash)
+				}
+			case <-time.After(time.Second):
+				t.Fatalf("timed out waiting for WKD update for %s", tc.family)
+			}
+		}
+
+		cancel()
+		wg.Wait()
+	})
 }
 
 func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
-	edm.sessionCollectorCh = make(chan *sessionData)
-	cache, err := lru.New[string, struct{}](2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := newTestPebble(t)
-	wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var builder netipx.IPSetBuilder
-	builder.AddPrefix(netip.MustParsePrefix("198.51.100.20/32"))
-	ipset, err := builder.IPSet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	edm.ignoredClientsIPSet.Store(ipset)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
+		edm.sessionCollectorCh = make(chan *sessionData)
+		cache, err := lru.New[string, struct{}](2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db := newTestPebble(t)
+		wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var builder netipx.IPSetBuilder
+		builder.AddPrefix(netip.MustParsePrefix("198.51.100.20/32"))
+		ipset, err := builder.IPSet()
+		if err != nil {
+			t.Fatal(err)
+		}
+		edm.ignoredClientsIPSet.Store(ipset)
 
-	ctx, cancel := testRunContext(t)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
-	edm.inputChannel <- []byte("not protobuf")
-	// Malformed frames are skipped, not fatal, so stop the minimiser
-	// explicitly to unblock the goroutine.
-	cancel()
-	wg.Wait()
+		ctx, cancel := context.WithCancel(t.Context())
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+		edm.inputChannel <- []byte("not protobuf")
+		synctest.Wait()
+		// Malformed frames are skipped, not fatal, so stop the minimiser
+		// explicitly to unblock the goroutine.
+		cancel()
+		wg.Wait()
 
-	edm = newTestDnstapMinimiser(t, defaultTC)
-	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
-	edm.sessionCollectorCh = make(chan *sessionData)
-	ipset, err = builder.IPSet()
-	if err != nil {
-		t.Fatal(err)
-	}
-	edm.ignoredClientsIPSet.Store(ipset)
-	ctx, cancel = testRunContext(t)
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
-	edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-	wg.Wait()
+		edm = newSynctestDnstapMinimiser(t, defaultTC)
+		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
+		edm.sessionCollectorCh = make(chan *sessionData)
+		ipset, err = builder.IPSet()
+		if err != nil {
+			t.Fatal(err)
+		}
+		edm.ignoredClientsIPSet.Store(ipset)
+		ctx, cancel = context.WithCancel(t.Context())
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+		edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))
+		synctest.Wait()
+		cancel()
+		wg.Wait()
+	})
 }
 
 // TestRunMinimiserSessionSendUnblocksOnContextCancel verifies that
@@ -210,98 +219,100 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 // ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
 // send would deadlock and waitOrFail would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	ctx, cancel := testRunContext(t)
-	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-	edm.sessionCollectorCh = make(chan *sessionData, 1)
-	edm.sessionCollectorCh <- &sessionData{}
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+		edm.sessionCollectorCh = make(chan *sessionData, 1)
+		edm.sessionCollectorCh <- &sessionData{}
 
-	seenQnameLRU, err := lru.New[string, struct{}](10)
-	if err != nil {
-		t.Fatalf("lru.New: %s", err)
-	}
-	pdb := newTestPebble(t)
-	wkdTracker, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Unix(0, 0))
-	if err != nil {
-		t.Fatalf("newWellKnownDomainsTracker: %s", err)
-	}
+		seenQnameLRU, err := lru.New[string, struct{}](10)
+		if err != nil {
+			t.Fatalf("lru.New: %s", err)
+		}
+		pdb := newTestPebble(t)
+		wkdTracker, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Unix(0, 0))
+		if err != nil {
+			t.Fatalf("newWellKnownDomainsTracker: %s", err)
+		}
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
 
-	frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
-	edm.inputChannel <- frame
+		frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- frame
 
-	// Receiving the new_qname event proves runMinimiser is past the
-	// publisher send and about to perform the (blocked) session send.
-	select {
-	case <-edm.newQnamePublisherCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for new_qname event")
-	}
+		// Receiving the new_qname event proves runMinimiser is past the
+		// publisher send and about to perform the (blocked) session send.
+		select {
+		case <-edm.newQnamePublisherCh:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for new_qname event")
+		}
 
-	cancel()
-	waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
+		cancel()
+		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
+	})
 }
 
 func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
-	edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "example.com.")
-	ctx, cancel := testRunContext(t)
+	synctest.Test(t, func(t *testing.T) {
+		edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "example.com.")
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
-	t.Cleanup(func() {
-		cancel()
-		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit after stop")
-	})
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+		defer func() {
+			cancel()
+			waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit after stop")
+		}()
 
-	// Not protobuf at all.
-	edm.inputChannel <- []byte{0xff, 0x01, 0x02}
-	// Valid envelope but no Message.
-	edm.inputChannel <- marshaledDnstap(t, &dnstap.Dnstap{Type: dnstap.Dnstap_MESSAGE.Enum()})
-	// Message present but its required Type is missing.
-	edm.inputChannel <- marshalPartialDnstap(t, &dnstap.Dnstap{
-		Type:    dnstap.Dnstap_MESSAGE.Enum(),
-		Message: &dnstap.Message{},
-	})
-	// A well-formed response for a well-known domain must still be processed.
-	edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess)))
+		// Not protobuf at all.
+		edm.inputChannel <- []byte{0xff, 0x01, 0x02}
+		// Valid envelope but no Message.
+		edm.inputChannel <- marshaledDnstap(t, &dnstap.Dnstap{Type: dnstap.Dnstap_MESSAGE.Enum()})
+		// Message present but its required Type is missing.
+		edm.inputChannel <- marshalPartialDnstap(t, &dnstap.Dnstap{
+			Type:    dnstap.Dnstap_MESSAGE.Enum(),
+			Message: &dnstap.Message{},
+		})
+		// A well-formed response for a well-known domain must still be processed.
+		edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess)))
 
-	select {
-	case wu := <-wkdTracker.updateCh:
-		if wu.dawgIndex == dawgNotFound {
-			t.Fatal("valid frame after malformed input was not treated as well-known")
+		select {
+		case wu := <-wkdTracker.updateCh:
+			if wu.dawgIndex == dawgNotFound {
+				t.Fatal("valid frame after malformed input was not treated as well-known")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("valid frame after malformed input was not processed")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("valid frame after malformed input was not processed")
-	}
 
-	// Exactly one parse error is counted: only the missing-Message frame both
-	// unmarshals and reaches a parse-error guard. The non-protobuf frame and
-	// the missing-Type frame fail proto.Unmarshal first (dnstap is proto2, so a
-	// Message without its required Type is rejected on unmarshal) and are
-	// skipped without counting. The valid frame is processed after all three,
-	// so by the time it reaches wkdTracker the counter has settled.
-	var m dto.Metric
-	if err := edm.promDNSParseError.Write(&m); err != nil {
-		t.Fatalf("write promDNSParseError: %s", err)
-	}
-	if got := m.GetCounter().GetValue(); got != 1 {
-		t.Fatalf("promDNSParseError = %v, want 1", got)
-	}
+		// Exactly one parse error is counted: only the missing-Message frame both
+		// unmarshals and reaches a parse-error guard. The non-protobuf frame and
+		// the missing-Type frame fail proto.Unmarshal first (dnstap is proto2, so a
+		// Message without its required Type is rejected on unmarshal) and are
+		// skipped without counting. The valid frame is processed after all three,
+		// so by the time it reaches wkdTracker the counter has settled.
+		var m dto.Metric
+		if err := edm.promDNSParseError.Write(&m); err != nil {
+			t.Fatalf("write promDNSParseError: %s", err)
+		}
+		if got := m.GetCounter().GetValue(); got != 1 {
+			t.Fatalf("promDNSParseError = %v, want 1", got)
+		}
+	})
 }
 
 func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
 	t.Helper()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
+	edm := newSynctestDnstapMinimiser(t, defaultTC)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 
 	seenQnameLRU, err := lru.New[string, struct{}](10)

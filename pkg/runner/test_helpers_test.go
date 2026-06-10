@@ -178,6 +178,44 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	return edm
 }
 
+type testWatcherFactory struct {
+	watcher FileWatcher
+	err     error
+}
+
+func (twf testWatcherFactory) NewWatcher() (FileWatcher, error) {
+	if twf.err != nil {
+		return nil, twf.err
+	}
+	if twf.watcher != nil {
+		return twf.watcher, nil
+	}
+	return newTestFileWatcher(), nil
+}
+
+func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
+	t.Helper()
+
+	discardLogger := slog.NewTextHandler(io.Discard, nil)
+	logger := slog.New(discardLogger)
+
+	return newSynctestDnstapMinimiserWithLogger(t, tc, logger)
+}
+
+func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
+	t.Helper()
+
+	deps := defaultDependencies()
+	deps.WatcherFactory = testWatcherFactory{}
+
+	edm, err := NewDnstapMinimiser(tc, logger, WithDependencies(deps))
+	if err != nil {
+		t.Fatalf("unable to setup edm: %s", err)
+	}
+
+	return edm
+}
+
 func writeTempFile(t testing.TB, name string, data []byte) string {
 	t.Helper()
 

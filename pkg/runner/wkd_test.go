@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/miekg/dns"
@@ -262,31 +263,33 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 }
 
 func TestUpdateRetryer(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	finder := testDawgFinder(t, "example.com.")
-	wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
-	if err != nil {
-		t.Fatal(err)
-	}
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go wkd.updateRetryer(edm, &wg)
-	wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 2}
-	close(wkd.retryCh)
-
-	select {
-	case wu := <-wkd.updateCh:
-		if wu.retry != 1 || wu.dawgIndex != 0 || wu.dawgModTime != time.Unix(2, 0) {
-			t.Fatalf("unexpected retried update: %#v", wu)
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		finder := testDawgFinder(t, "example.com.")
+		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for retried update")
-	}
-	wg.Wait()
-	<-wkd.retryerDone
+		msg := new(dns.Msg)
+		msg.SetQuestion("example.com.", dns.TypeA)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go wkd.updateRetryer(edm, &wg)
+		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 2}
+		close(wkd.retryCh)
+
+		select {
+		case wu := <-wkd.updateCh:
+			if wu.retry != 1 || wu.dawgIndex != 0 || wu.dawgModTime != time.Unix(2, 0) {
+				t.Fatalf("unexpected retried update: %#v", wu)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for retried update")
+		}
+		wg.Wait()
+		<-wkd.retryerDone
+	})
 }
 
 // TestSendUpdateBranches exercises the rcode/qtype switch arms and the
@@ -395,57 +398,61 @@ func TestSendUpdateBranches(t *testing.T) {
 // reloaded tracker no longer recognises the qname.
 func TestUpdateRetryerBranches(t *testing.T) {
 	t.Run("retry limit reached drops update", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		finder := testDawgFinder(t, "example.com.")
-		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		msg := new(dns.Msg)
-		msg.SetQuestion("example.com.", dns.TypeA)
+		synctest.Test(t, func(t *testing.T) {
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			finder := testDawgFinder(t, "example.com.")
+			wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg := new(dns.Msg)
+			msg.SetQuestion("example.com.", dns.TypeA)
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go wkd.updateRetryer(edm, &wg)
-		// retry is 1 BEFORE the increment, becomes 2 after — equal to
-		// retryLimit, so the skip arm fires and no resend reaches updateCh.
-		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
-		close(wkd.retryCh)
-		wg.Wait()
-		<-wkd.retryerDone
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go wkd.updateRetryer(edm, &wg)
+			// retry is 1 BEFORE the increment, becomes 2 after — equal to
+			// retryLimit, so the skip arm fires and no resend reaches updateCh.
+			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
+			close(wkd.retryCh)
+			wg.Wait()
+			<-wkd.retryerDone
 
-		select {
-		case wu := <-wkd.updateCh:
-			t.Fatalf("expected no resend, got %#v", wu)
-		default:
-		}
+			select {
+			case wu := <-wkd.updateCh:
+				t.Fatalf("expected no resend, got %#v", wu)
+			default:
+			}
+		})
 	})
 
 	t.Run("dawgNotFound drops update", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		// Tracker only knows example.com; the retry will look up a
-		// different qname so wkd.lookup returns dawgNotFound and the
-		// retryer drops the update.
-		finder := testDawgFinder(t, "example.com.")
-		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		msg := new(dns.Msg)
-		msg.SetQuestion("unknown.example.", dns.TypeA)
+		synctest.Test(t, func(t *testing.T) {
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			// Tracker only knows example.com; the retry will look up a
+			// different qname so wkd.lookup returns dawgNotFound and the
+			// retryer drops the update.
+			finder := testDawgFinder(t, "example.com.")
+			wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg := new(dns.Msg)
+			msg.SetQuestion("unknown.example.", dns.TypeA)
 
-		var wg sync.WaitGroup
-		wg.Add(1)
-		go wkd.updateRetryer(edm, &wg)
-		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 5}
-		close(wkd.retryCh)
-		wg.Wait()
-		<-wkd.retryerDone
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go wkd.updateRetryer(edm, &wg)
+			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 5}
+			close(wkd.retryCh)
+			wg.Wait()
+			<-wkd.retryerDone
 
-		select {
-		case wu := <-wkd.updateCh:
-			t.Fatalf("expected no resend on dawgNotFound, got %#v", wu)
-		default:
-		}
+			select {
+			case wu := <-wkd.updateCh:
+				t.Fatalf("expected no resend on dawgNotFound, got %#v", wu)
+			default:
+			}
+		})
 	})
 }
