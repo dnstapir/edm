@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"context"
 	"net/netip"
 	"sync"
+	"testing"
 
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
@@ -11,14 +13,14 @@ import (
 // testPseudonymiseDnstap is the test-side equivalent of the producer
 // hot path. pseudonymiseDnstap takes the per-worker cache + cryptopan
 // snapshot as parameters; tests don't run inside a real worker so they
-// need their own cache. We give each *dnstapMinimiser instance one shared
+// need their own cache. We give each *DnstapMinimiser instance one shared
 // cache via a sync.Map keyed by the minimiser pointer, so repeated test
 // calls accumulate hits like a single worker would.
 //
 // This is purely a test convenience - production code does not use it.
-var testCryptopanCaches sync.Map // map[*dnstapMinimiser]*lru.Cache[netip.Addr, netip.Addr]
+var testCryptopanCaches sync.Map // map[*DnstapMinimiser]*lru.Cache[netip.Addr, netip.Addr]
 
-func (edm *dnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Dnstap) {
+func (edm *DnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Dnstap) {
 	cache := edm.testCryptopanCache()
 	edm.pseudonymiseDnstap(dt, edm.cryptopan.Load(), cache)
 }
@@ -26,7 +28,7 @@ func (edm *dnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Dnstap) {
 // testCryptopanCache returns the shared per-edm-instance cache, creating
 // it lazily so callers don't have to set it up. cacheEntries is read from
 // the current config; 0 disables caching, mirroring production behaviour.
-func (edm *dnstapMinimiser) testCryptopanCache() *lru.Cache[netip.Addr, netip.Addr] {
+func (edm *DnstapMinimiser) testCryptopanCache() *lru.Cache[netip.Addr, netip.Addr] {
 	conf := edm.getConfig()
 	if conf.CryptopanAddressEntries == 0 {
 		return nil
@@ -45,14 +47,18 @@ func (edm *dnstapMinimiser) testCryptopanCache() *lru.Cache[netip.Addr, netip.Ad
 // testResetCryptopanCache drops the test-side cache for edm. Used by
 // tests after setCryptopan to mirror the per-worker Purge that
 // runMinimiser does on cryptopanGen change.
-func (edm *dnstapMinimiser) testResetCryptopanCache() {
+func (edm *DnstapMinimiser) testResetCryptopanCache() {
 	testCryptopanCaches.Delete(edm)
 }
 
-func cleanupTestMinimiser(edm *dnstapMinimiser) {
-	if edm.stop != nil {
-		edm.stop()
-	}
+func testRunContext(t testing.TB) (context.Context, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	return ctx, cancel
+}
+
+func cleanupTestMinimiser(edm *DnstapMinimiser) {
 	if edm.fsWatcher != nil {
 		_ = edm.fsWatcher.Close()
 		edm.fsWatcher = nil

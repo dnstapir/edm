@@ -96,7 +96,7 @@ func TestManualParquetRotationHandlerRejectsNonPost(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/debug/rotate-parquet", nil)
-	edm.manualParquetRotationHandler(rec, req)
+	edm.manualParquetRotationHandler(t.Context(), rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status have: %d, want: %d", rec.Code, http.StatusMethodNotAllowed)
@@ -121,7 +121,7 @@ func TestManualParquetRotationHandlerSurfacesRotationError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
-	edm.manualParquetRotationHandler(rec, req)
+	edm.manualParquetRotationHandler(t.Context(), rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
@@ -138,10 +138,11 @@ func TestManualParquetRotationHandlerSurfacesRotationError(t *testing.T) {
 }
 
 // TestManualParquetRotationHandlerShutsDownDuringSend verifies the 503
-// arm: when edm.ctx is canceled before anything reads from the request
+// arm: when the run context is canceled before anything reads from the request
 // channel, the handler aborts the send select and responds with 503.
 func TestManualParquetRotationHandlerShutsDownDuringSend(t *testing.T) {
 	edm := newManualParquetRotationTestMinimiser(t)
+	ctx, cancel := testRunContext(t)
 
 	// Fill the rotation channel so the handler's send select cannot
 	// take the chan-send case, forcing it onto the ctx.Done branch.
@@ -149,11 +150,11 @@ func TestManualParquetRotationHandlerShutsDownDuringSend(t *testing.T) {
 		rotationTime: time.Now(),
 		done:         make(chan error, 1),
 	}
-	edm.stop()
+	cancel()
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
-	edm.manualParquetRotationHandler(rec, req)
+	edm.manualParquetRotationHandler(ctx, rec, req)
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
@@ -186,7 +187,7 @@ func TestManualParquetRotationHandlerCancelDuringWait(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		edm.manualParquetRotationHandler(rec, req)
+		edm.manualParquetRotationHandler(t.Context(), rec, req)
 	}()
 
 	// Wait until the worker confirmed the handler queued the request,
@@ -223,7 +224,7 @@ func TestManualParquetRotationHandlerAcceptsCompletedRotation(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
-	edm.manualParquetRotationHandler(rec, req)
+	edm.manualParquetRotationHandler(t.Context(), rec, req)
 
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status have: %d, want: %d", rec.Code, http.StatusAccepted)
@@ -236,7 +237,7 @@ func TestManualParquetRotationHandlerAcceptsCompletedRotation(t *testing.T) {
 	}
 }
 
-func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*dnstapMinimiser, *wellKnownDomainsTracker, string) {
+func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*DnstapMinimiser, *wellKnownDomainsTracker, string) {
 	t.Helper()
 
 	edm := newManualParquetRotationTestMinimiser(t)
@@ -249,16 +250,15 @@ func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*dnst
 	return edm, wkdTracker, dawgFile
 }
 
-func newManualParquetRotationTestMinimiser(t *testing.T) *dnstapMinimiser {
+func newManualParquetRotationTestMinimiser(t *testing.T) *DnstapMinimiser {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() {
-		edm.stop()
 		if edm.fsWatcher != nil {
 			_ = edm.fsWatcher.Close()
 		}

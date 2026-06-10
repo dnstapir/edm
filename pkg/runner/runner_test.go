@@ -32,20 +32,20 @@ var (
 	defaultTC    = newDefaultTC()
 )
 
-// testConfiger is an edmConfiger backed by a complete config value. Tests
+// testConfiger is a ConfigProvider backed by a complete Config value. Tests
 // build on defaultTestConfig (which mirrors pkg/cmd/run.go's flag defaults)
 // and override individual fields rather than going through the viper
-// unmarshaling pipeline. Embedding config promotes every field so a test
+// unmarshaling pipeline. Embedding Config promotes every field so a test
 // can do `tc := defaultTC; tc.MQTTServer = "..."` directly.
 //
-// testConfiger is test-only; production wires viperConfiger.
+// testConfiger is test-only; production wires ViperConfigProvider.
 type testConfiger struct {
-	config
+	Config
 }
 
-// getConfig implements edmConfiger.
-func (tc testConfiger) getConfig() (config, error) {
-	return tc.config, nil
+// GetConfig implements ConfigProvider.
+func (tc testConfiger) GetConfig() (Config, error) {
+	return tc.Config, nil
 }
 
 // defaultTestConfig returns a config populated with pkg/cmd/run.go's flag
@@ -57,8 +57,8 @@ func (tc testConfiger) getConfig() (config, error) {
 //
 // testConfiger does not run validate.Struct, so the missing required_*
 // tags do not block construction.
-func defaultTestConfig() config {
-	return config{
+func defaultTestConfig() Config {
+	return Config{
 		ConfigFile:                    "edm.toml",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
 		DataDir:                       "/var/lib/dnstapir/edm",
@@ -87,24 +87,21 @@ func newDefaultTC() testConfiger {
 	c.CryptopanKey = "key1"
 	c.CryptopanKeySalt = "aabbccddeeffgghh"
 	c.CryptopanAddressEntries = 10
-	return testConfiger{config: c}
+	return testConfiger{Config: c}
 }
 
-func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *dnstapMinimiser {
+func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	edm, err := newDnstapMinimiser(logger, tc)
+	edm, err := NewDnstapMinimiser(tc, logger)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 
 	t.Cleanup(func() {
-		if edm.stop != nil {
-			edm.stop()
-		}
 		if edm.fsWatcher != nil {
 			if err := edm.fsWatcher.Close(); err != nil {
 				if !errors.Is(err, fsnotify.ErrClosed) {
@@ -151,7 +148,7 @@ func BenchmarkWKDTLookup(b *testing.B) {
 func BenchmarkSetLabels(b *testing.B) {
 	b.ReportAllocs()
 	labels := []string{"label0", "label1", "label2", "label3", "label4", "label5", "label6", "label7", "label8", "label9"}
-	edm := &dnstapMinimiser{}
+	edm := &DnstapMinimiser{}
 	l := dnsLabels{}
 
 	for i := 0; i < b.N; i++ {
@@ -332,8 +329,9 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWellKnownDomainsTracker: %s", err)
 	}
-	edm := &dnstapMinimiser{
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	edm := &DnstapMinimiser{
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		deps: defaultDependencies(),
 	}
 
 	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
@@ -1080,7 +1078,7 @@ func TestSetHistogramLabels(t *testing.T) {
 	compLabels := slices.Clone(labels)
 	slices.Reverse(compLabels)
 
-	edm := &dnstapMinimiser{}
+	edm := &DnstapMinimiser{}
 	hd := &histogramData{}
 
 	edm.setLabels(labels, 10, &hd.dnsLabels)
@@ -1127,7 +1125,7 @@ func TestSetHistogramLabelsOverLimit(t *testing.T) {
 	compLabels := slices.Clone(labels)
 	slices.Reverse(compLabels)
 
-	edm := &dnstapMinimiser{}
+	edm := &DnstapMinimiser{}
 	hd := &histogramData{}
 
 	// The label9 field contains all overflowing labels
@@ -1173,7 +1171,7 @@ func TestSetSessionLabels(t *testing.T) {
 	// The reason the labels are "backwards" is because we define "label0"
 	// in the struct as the rightmost DNS label, e.g. "com", "net" etc.
 	labels := []string{"label9", "label8", "label7", "label6", "label5", "label4", "label3", "label2", "label1", "label0"}
-	edm := &dnstapMinimiser{}
+	edm := &DnstapMinimiser{}
 	sd := &sessionData{}
 
 	edm.setLabels(labels, 10, &sd.dnsLabels)
@@ -2219,19 +2217,15 @@ func TestCleanupFSWatchersReleasesLockOnError(t *testing.T) {
 
 	// Watch a directory that is not referenced by any callback so
 	// cleanupFSWatchers tries to remove it.
-	if err := edm.fsWatcher.Add(t.TempDir()); err != nil {
-		t.Fatalf("Add watch path: %s", err)
+	removeErr := errors.New("remove failed")
+	edm.fsWatcher = &testFileWatcher{
+		events:    make(chan fsnotify.Event),
+		errors:    make(chan error),
+		done:      make(chan struct{}),
+		watchList: []string{t.TempDir()},
+		removeErr: removeErr,
 	}
 	edm.fsWatcherFuncs = make(map[string][]func() error)
-
-	removeErr := errors.New("remove failed")
-	oldRemoveFSWatcherPath := removeFSWatcherPath
-	removeFSWatcherPath = func(_ *fsnotify.Watcher, _ string) error {
-		return removeErr
-	}
-	t.Cleanup(func() {
-		removeFSWatcherPath = oldRemoveFSWatcherPath
-	})
 
 	err := edm.cleanupFSWatchers()
 	if !errors.Is(err, removeErr) {
@@ -2249,17 +2243,18 @@ func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	viperNotifyCh := make(chan fsnotify.Event, 1)
+	ctx, cancel := testRunContext(t)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		configUpdater(viperNotifyCh, edm)
+		configUpdater(ctx, viperNotifyCh, edm)
 	}()
 
 	// Cancelling the context is sticky, so configUpdater observes it via its
 	// select regardless of whether the goroutine has reached the select yet.
-	edm.stop()
+	cancel()
 
 	done := make(chan struct{})
 	go func() {
@@ -2282,7 +2277,7 @@ func TestConfigUpdaterExitsOnChannelClose(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		configUpdater(viperNotifyCh, edm)
+		configUpdater(t.Context(), viperNotifyCh, edm)
 	}()
 
 	// Closing viperNotifyCh makes the receive return ok=false, which

@@ -75,17 +75,18 @@ func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
 		t.Fatalf("parse server URL: %s", err)
 	}
 
-	edm := &dnstapMinimiser{
+	edm := &DnstapMinimiser{
 		log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
+		deps:                defaultDependencies(),
 		httpClientCertStore: newCertStore(),
 	}
-	as, err := edm.newAggregateSender(aggrecURL, signingJWK, nil)
+	as, err := newAggregateSender(edm.log, aggrecURL, signingJWK, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
 
 	start := time.Date(2026, 4, 29, 12, 34, 45, 0, time.UTC)
-	err = as.send(t.Context(), file.Name(), start, 45*time.Second)
+	err = as.Send(t.Context(), file.Name(), start, 45*time.Second)
 	if err == nil {
 		t.Fatal("expected error from send when response body is truncated")
 	}
@@ -163,13 +164,13 @@ func TestAggregateSenderUsesExactIntervalHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse server URL: %s", err)
 	}
-	as, err := edm.newAggregateSender(aggrecURL, testJWK(t), nil)
+	as, err := newAggregateSender(edm.log, aggrecURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
 
 	start := time.Date(2026, 4, 29, 12, 34, 45, 0, time.UTC)
-	if err := as.send(t.Context(), fileName, start, 45*time.Second); err != nil {
+	if err := as.Send(t.Context(), fileName, start, 45*time.Second); err != nil {
 		t.Fatalf("send: %s", err)
 	}
 

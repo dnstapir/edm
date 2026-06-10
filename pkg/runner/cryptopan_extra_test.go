@@ -15,20 +15,20 @@ import (
 // previous key would silently leak through.
 func TestSetCryptopanBumpsGeneration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
-	// newDnstapMinimiser called setCryptopan once during construction; the
+	// NewDnstapMinimiser called setCryptopan once during construction; the
 	// generation we observe here is therefore the post-construction
 	// baseline, not zero. We only care about strict monotonic advancement
 	// per call, so capture the baseline and compare deltas.
 	baselineGen := edm.cryptopanGen.Load()
 	baselinePtr := edm.cryptopan.Load()
 	if baselinePtr == nil {
-		t.Fatalf("cryptopan pointer should be non-nil after newDnstapMinimiser")
+		t.Fatalf("cryptopan pointer should be non-nil after NewDnstapMinimiser")
 	}
 	prevPtr := baselinePtr
 
@@ -71,7 +71,7 @@ func TestSetCryptopanBumpsGeneration(t *testing.T) {
 // contention this design avoids, so we pin the contract here.
 func TestSetCryptopanCacheEntriesArgumentIgnored(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}

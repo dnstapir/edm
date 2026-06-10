@@ -50,13 +50,7 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 	pel.logger.Error(fmt.Sprintf(format, v...))
 }
 
-type mqttConnectionManager interface {
-	AwaitConnection(context.Context) error
-	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
-	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
-}
-
-func (edm *dnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
+func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
 	u, err := parseMQTTServerURL(server)
 	if err != nil {
 		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
@@ -122,7 +116,7 @@ func parseMQTTServerURL(server string) (*url.URL, error) {
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
 // sign workers parallelize CPU-bound JWS signing across cores while the lone
 // publisher preserves paho ConnectionManager's single-connection behavior.
-func (edm *dnstapMinimiser) startMQTTPipeline(cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
+func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm MQTTConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
 	if signWorkers <= 0 {
 		signWorkers = 1
 	}
@@ -142,7 +136,7 @@ func (edm *dnstapMinimiser) startMQTTPipeline(cm mqttConnectionManager, mqttJWK 
 	var signWg sync.WaitGroup
 	signWg.Add(signWorkers)
 	for i := 0; i < signWorkers; i++ {
-		go edm.mqttSignWorker(&signWg, mqttJWK)
+		go edm.mqttSignWorker(ctx, &signWg, mqttJWK)
 	}
 
 	edm.autopahoWg.Add(1)
@@ -153,12 +147,12 @@ func (edm *dnstapMinimiser) startMQTTPipeline(cm mqttConnectionManager, mqttJWK 
 	}()
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(cm, topic, usingFileQueue)
+	go edm.mqttPublishWorker(ctx, cm, topic, usingFileQueue)
 }
 
 // mqttSignWorker drains mqttPubCh, JWS-signs each message, and forwards to
 // mqttSignedCh. Exits when mqttPubCh is closed.
-func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) {
+func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGroup, mqttJWK jwk.Key) {
 	defer wg.Done()
 	for unsignedMsg := range edm.mqttPubCh {
 		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(mqttJWK.Algorithm(), mqttJWK))
@@ -168,7 +162,7 @@ func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) 
 		}
 		select {
 		case edm.mqttSignedCh <- signedMsg:
-		case <-edm.autopahoCtx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -177,7 +171,7 @@ func (edm *dnstapMinimiser) mqttSignWorker(wg *sync.WaitGroup, mqttJWK jwk.Key) 
 // mqttPublishWorker is the single goroutine that talks to paho. Single-writer
 // matches paho's ConnectionManager expectations; signing remains parallel
 // upstream while broker back-pressure is contained to this publisher.
-func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic string, usingFileQueue bool) {
+func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm MQTTConnectionManager, topic string, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
 	var (
@@ -189,7 +183,7 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 		// local queue. Otherwise we can just start appending messages
 		// to disk.
 		if !usingFileQueue {
-			err := cm.AwaitConnection(edm.autopahoCtx)
+			err := cm.AwaitConnection(ctx)
 			if err != nil { // Should only happen when context is cancelled
 				edm.log.Error("publisher done", "AwaitConnection", err)
 				return
@@ -202,13 +196,13 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 				edm.log.Info("mqttPublishWorker: signed queue closed, exiting")
 				return
 			}
-		case <-edm.autopahoCtx.Done():
+		case <-ctx.Done():
 			edm.log.Info("mqttPublishWorker: context cancelled, exiting")
 			return
 		}
 
 		if usingFileQueue {
-			err := cm.PublishViaQueue(edm.autopahoCtx, &autopaho.QueuePublish{
+			err := cm.PublishViaQueue(ctx, &autopaho.QueuePublish{
 				Publish: &paho.Publish{
 					QoS:     0,
 					Topic:   topic,
@@ -219,7 +213,7 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 				edm.log.Error("error writing message to queue", "error", err)
 			}
 		} else {
-			pr, err := cm.Publish(edm.autopahoCtx, &paho.Publish{
+			pr, err := cm.Publish(ctx, &paho.Publish{
 				QoS:     0,
 				Topic:   topic,
 				Payload: signedMsg,
@@ -237,7 +231,7 @@ func (edm *dnstapMinimiser) mqttPublishWorker(cm mqttConnectionManager, topic st
 		}
 
 		select {
-		case <-edm.autopahoCtx.Done():
+		case <-ctx.Done():
 			edm.log.Info("publisher done")
 			return
 		default:

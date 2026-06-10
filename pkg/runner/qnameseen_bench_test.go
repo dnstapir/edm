@@ -23,7 +23,7 @@ func BenchmarkQnameSeen(b *testing.B) {
 		b.Fatalf("lru.New: %s", err)
 	}
 	pdb := newTestPebble(b)
-	writeOpts := seenQnameWriteOptions(defaultTC.config)
+	store := &pebbleSeenQnameStore{db: pdb}
 
 	msgs := make([]*dns.Msg, nQnames)
 	for i := range msgs {
@@ -31,12 +31,12 @@ func BenchmarkQnameSeen(b *testing.B) {
 		m.SetQuestion("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
 		msgs[i] = m
 		// Record it so the benchmarked calls below all take the seen path.
-		edm.qnameSeen(m, cache, pdb, writeOpts)
+		edm.qnameSeen(m, cache, store, defaultTC.PebbleSync)
 	}
 
 	// Sanity check (in the benchmark goroutine, not the parallel workers): a
 	// seeded qname must report as already seen.
-	if !edm.qnameSeen(msgs[0], cache, pdb, writeOpts) {
+	if !edm.qnameSeen(msgs[0], cache, store, defaultTC.PebbleSync) {
 		b.Fatal("seeded qname should report as already seen")
 	}
 
@@ -45,7 +45,7 @@ func BenchmarkQnameSeen(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			edm.qnameSeen(msgs[i%nQnames], cache, pdb, writeOpts)
+			edm.qnameSeen(msgs[i%nQnames], cache, store, defaultTC.PebbleSync)
 			i++
 		}
 	})

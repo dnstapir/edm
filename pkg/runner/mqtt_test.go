@@ -45,10 +45,7 @@ func newTestMQTTJWK(t *testing.T) (priv jwk.Key, pub ed25519.PublicKey) {
 	return priv, pub
 }
 
-func cleanupMQTTTestMinimiser(edm *dnstapMinimiser) {
-	if edm.stop != nil {
-		edm.stop()
-	}
+func cleanupMQTTTestMinimiser(edm *DnstapMinimiser) {
 	if edm.fsWatcher != nil {
 		_ = edm.fsWatcher.Close()
 		edm.fsWatcher = nil
@@ -69,24 +66,23 @@ func cleanupMQTTTestMinimiser(edm *dnstapMinimiser) {
 // it.
 func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
-	// The worker ranges over mqttPubCh and selects on autopahoCtx.Done()
-	// for cancellation. Bind a fresh context so this test does not affect
-	// other tests and so we can guarantee cancellation on cleanup.
+	// The worker ranges over mqttPubCh and selects on ctx.Done() for
+	// cancellation. Bind a fresh context so this test does not affect other
+	// tests and so we can guarantee cancellation on cleanup.
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 	t.Cleanup(cancel)
 
 	priv, pub := newTestMQTTJWK(t)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.mqttSignWorker(&wg, priv)
+	go edm.mqttSignWorker(ctx, &wg, priv)
 
 	payload := []byte(`{"qname":"example.com.","time":"2026-01-02T03:04:05Z"}`)
 	edm.mqttPubCh <- payload
@@ -117,7 +113,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 // TestMqttSignWorkerExitsOnContextCancelWhenSignedFull demonstrates the
 // back-pressure escape hatch: if the publisher stalls and mqttSignedCh
 // fills, the sign worker must not deadlock - it must return when
-// autopahoCtx is cancelled. Without this, cancelling the run context
+// ctx is cancelled. Without this, cancelling the run context
 // would leave goroutines blocked on the channel send.
 //
 // Setup: replace mqttSignedCh with a *full* unbuffered-equivalent channel
@@ -125,14 +121,13 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 // context and observe that the worker exits.
 func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 
 	// Replace the default 1024-deep channel with a tiny pre-filled one so
 	// we can deterministically force the worker's send to block.
@@ -143,7 +138,7 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.mqttSignWorker(&wg, priv)
+	go edm.mqttSignWorker(ctx, &wg, priv)
 
 	// Hand the worker exactly one message; it will sign it and then block
 	// trying to enqueue on the (already full) signed channel.
@@ -176,14 +171,13 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 // design choice; this test pins it.
 func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 	t.Cleanup(cancel)
 
 	priv, pub := newTestMQTTJWK(t)
@@ -196,7 +190,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.mqttSignWorker(&wg, priv)
+	go edm.mqttSignWorker(ctx, &wg, priv)
 
 	// Push one "bad" message; the worker will fail to sign and continue.
 	edm.mqttPubCh <- []byte("bad-payload")
@@ -271,14 +265,13 @@ func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *p
 
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 	t.Cleanup(cancel)
 
 	edm.mqttSignedCh = make(chan []byte, 2)
@@ -288,7 +281,7 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	}
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(cm, "events/up/test/new_qname", false)
+	go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
 
 	edm.mqttSignedCh <- []byte("first")
 	select {
@@ -316,20 +309,19 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 }
 
 // TestMqttPublishWorkerExitsOnContextCancel verifies that mqttPublishWorker
-// exits when autopahoCtx is cancelled even if mqttSignedCh is empty. Without
+// exits when ctx is cancelled even if mqttSignedCh is empty. Without
 // the fix, the goroutine blocks on the channel receive and can only exit when
 // the channel is closed (the !ok path) or a message arrives, not on context
 // cancellation.
 func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 
 	edm.mqttSignedCh = make(chan []byte)
 
@@ -339,7 +331,7 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 	}
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(cm, "events/up/test/new_qname", false)
+	go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
 
 	time.Sleep(50 * time.Millisecond)
 
@@ -354,14 +346,13 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 	t.Cleanup(cancel)
 
 	edm.mqttSignedCh = make(chan []byte, 1)
@@ -371,7 +362,7 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 	}
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+	go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
 
 	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
 	select {
@@ -394,14 +385,13 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupMQTTTestMinimiser(edm) })
 
 	ctx, cancel := context.WithCancel(t.Context())
-	edm.autopahoCtx = ctx
 	t.Cleanup(cancel)
 
 	edm.mqttSignedCh = make(chan []byte, 1)
@@ -411,7 +401,7 @@ func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
 	}
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+	go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
 
 	edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
 	select {

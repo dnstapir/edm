@@ -25,7 +25,6 @@ func restoreCmdGlobals(t *testing.T) {
 	oldLogger := edmLogger
 	oldLoggerLevel := edmLoggerLevel
 	oldExitProcess := exitProcess
-	oldRunRunner := runRunner
 	oldUserHomeDir := userHomeDir
 	oldSetConfigFile := viperSetConfigFile
 	oldAddConfigPath := viperAddConfigPath
@@ -43,7 +42,6 @@ func restoreCmdGlobals(t *testing.T) {
 		edmLogger = oldLogger
 		edmLoggerLevel = oldLoggerLevel
 		exitProcess = oldExitProcess
-		runRunner = oldRunRunner
 		userHomeDir = oldUserHomeDir
 		viperSetConfigFile = oldSetConfigFile
 		viperAddConfigPath = oldAddConfigPath
@@ -150,22 +148,18 @@ func TestExecuteSuccessAndError(t *testing.T) {
 	}
 }
 
-func TestRunCommandUsesRunnerSeam(t *testing.T) {
+func TestRunCommandExitsOnInitError(t *testing.T) {
 	restoreCmdGlobals(t)
 	logger, level := testLogger()
 	edmLogger = logger
 	edmLoggerLevel = level
 
-	var gotLogger *slog.Logger
-	var gotLevel *slog.LevelVar
-	runRunner = func(logger *slog.Logger, loggerLevel *slog.LevelVar) {
-		gotLogger = logger
-		gotLevel = loggerLevel
-	}
+	var exitCode int
+	exitProcess = func(code int) { exitCode = code }
 
 	runCmd.Run(&cobra.Command{}, nil)
-	if gotLogger != logger || gotLevel != level {
-		t.Fatalf("runRunner called with logger %p/%p, want %p/%p", gotLogger, gotLevel, logger, level)
+	if exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1", exitCode)
 	}
 }
 

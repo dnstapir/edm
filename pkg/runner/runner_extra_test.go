@@ -249,7 +249,7 @@ func TestCertStore(t *testing.T) {
 	}
 
 	certPath, keyPath, _ := testCertFiles(t)
-	if err := store.loadCert(certPath, keyPath); err != nil {
+	if err := store.loadCert(realKeyMaterialLoader{fs: osFileSystem{}}, certPath, keyPath); err != nil {
 		t.Fatal(err)
 	}
 	cert, err := store.getClientCertificate(nil)
@@ -260,13 +260,13 @@ func TestCertStore(t *testing.T) {
 		t.Fatal("loaded certificate is empty")
 	}
 
-	if err := store.loadCert(certPath, keyPath+".missing"); err == nil {
+	if err := store.loadCert(realKeyMaterialLoader{fs: osFileSystem{}}, certPath, keyPath+".missing"); err == nil {
 		t.Fatal("loadCert with missing key succeeded")
 	}
 }
 
 func TestSetLabelsNilAndBoundedReverse(t *testing.T) {
-	edm := &dnstapMinimiser{}
+	edm := &DnstapMinimiser{}
 
 	labels := edm.reverseLabelsBounded(nil, 10)
 	if labels != nil {
@@ -880,10 +880,10 @@ func TestQnameSeen(t *testing.T) {
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("Example.COM.", dns.TypeA)
-	if edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
+	if edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qnameSeen call returned true")
 	}
-	if !edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
+	if !edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("second qnameSeen call returned false")
 	}
 
@@ -891,13 +891,13 @@ func TestQnameSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !edm.qnameSeen(msg, cache, db, seenQnameWriteOptions(defaultTC.config)) {
+	if !edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("qnameSeen did not find qname in pebble")
 	}
 
 	other := new(dns.Msg)
 	other.SetQuestion("other.example.", dns.TypeA)
-	_ = edm.qnameSeen(other, cache, db, seenQnameWriteOptions(defaultTC.config))
+	_ = edm.qnameSeen(other, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
 }
 
 func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
@@ -1143,7 +1143,7 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 
 	first := new(dns.Msg)
 	first.SetQuestion("a.example.", dns.TypeA)
-	if edm.qnameSeen(first, cache, db, seenQnameWriteOptions(defaultTC.config)) {
+	if edm.qnameSeen(first, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qname unexpectedly already-seen")
 	}
 
@@ -1151,7 +1151,7 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 	second.SetQuestion("b.example.", dns.TypeA)
 	// Adding the second distinct qname evicts the first from the LRU,
 	// exercising the evicted/promSeenQnameLRUEvicted.Inc() arm.
-	_ = edm.qnameSeen(second, cache, db, seenQnameWriteOptions(defaultTC.config))
+	_ = edm.qnameSeen(second, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
 	if cache.Len() != 1 {
 		t.Fatalf("cache len = %d, want 1 after eviction", cache.Len())
 	}
@@ -1162,6 +1162,8 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 
 func TestFSWatchersAndEventWatcher(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
+	watcher := newTestFileWatcher()
+	edm.fsWatcher = watcher
 	dir := t.TempDir()
 	watched := filepath.Join(dir, "watched.txt")
 	var calls atomic.Int32
@@ -1182,7 +1184,7 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go edm.fsEventWatcher(&wg)
-	edm.fsWatcher.Events <- fsnotifyEvent(watched)
+	watcher.events <- fsnotifyEvent(watched)
 	select {
 	case <-callbackDone:
 	case <-time.After(time.Second):
@@ -1195,6 +1197,53 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 		t.Fatal(err)
 	}
 	wg.Wait()
+}
+
+type testFileWatcher struct {
+	events    chan fsnotify.Event
+	errors    chan error
+	done      chan struct{}
+	watchList []string
+	removeErr error
+}
+
+func newTestFileWatcher() *testFileWatcher {
+	return &testFileWatcher{
+		events: make(chan fsnotify.Event, 1),
+		errors: make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+}
+
+func (tfw *testFileWatcher) Add(string) error {
+	return nil
+}
+
+func (tfw *testFileWatcher) Remove(string) error {
+	return tfw.removeErr
+}
+
+func (tfw *testFileWatcher) Close() error {
+	select {
+	case <-tfw.done:
+	default:
+		close(tfw.done)
+		close(tfw.events)
+		close(tfw.errors)
+	}
+	return nil
+}
+
+func (tfw *testFileWatcher) WatchList() []string {
+	return tfw.watchList
+}
+
+func (tfw *testFileWatcher) Events() <-chan fsnotify.Event {
+	return tfw.events
+}
+
+func (tfw *testFileWatcher) Errors() <-chan error {
+	return tfw.errors
 }
 
 func fsnotifyEvent(name string) fsnotify.Event {
@@ -1267,18 +1316,18 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := edm.newAggregateSender(u, testJWK(t), nil)
+	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.send(t.Context(), fileName, time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
+	if err := as.Send(t.Context(), fileName, time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if !sawRequest {
 		t.Fatal("server did not receive request")
 	}
 
-	if err := as.send(t.Context(), filepath.Join(t.TempDir(), "missing.parquet"), time.Now(), time.Minute); err == nil {
+	if err := as.Send(t.Context(), filepath.Join(t.TempDir(), "missing.parquet"), time.Now(), time.Minute); err == nil {
 		t.Fatal("sending missing file succeeded")
 	}
 
@@ -1290,7 +1339,7 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := edm.newAggregateSender(u, badKey, nil); err == nil {
+	if _, err := newAggregateSender(edm.log, u, badKey, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock); err == nil {
 		t.Fatal("newAggregateSender accepted non-Ed25519 key")
 	}
 }
@@ -1307,11 +1356,11 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := edm.newAggregateSender(statusURL, testJWK(t), nil)
+	as, err := newAggregateSender(edm.log, statusURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
+	if err := as.Send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
 		t.Fatal("unexpected status succeeded")
 	}
 
@@ -1325,22 +1374,15 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	as.aggrecURL = locationURL
-	if err := as.send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
+	if err := as.Send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
 		t.Fatal("bad Location succeeded")
 	}
 }
 
 func TestHistogramSender(t *testing.T) {
-	oldInterval := histogramSenderInterval
-	oldBackoff := histogramSenderBackoff
-	t.Cleanup(func() {
-		histogramSenderInterval = oldInterval
-		histogramSenderBackoff = oldBackoff
-	})
-	histogramSenderInterval = time.Millisecond
-	histogramSenderBackoff = time.Millisecond
-
 	edm := newTestDnstapMinimiser(t, defaultTC)
+	edm.deps.HistogramSenderInterval = time.Millisecond
+	edm.deps.HistogramSenderBackoff = time.Millisecond
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 	outboxDir := filepath.Join(t.TempDir(), "outbox")
 	sentDir := filepath.Join(t.TempDir(), "sent")
@@ -1361,24 +1403,25 @@ func TestHistogramSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := edm.newAggregateSender(u, testJWK(t), nil)
+	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	edm.aggregSender = as
 
+	ctx, cancel := testRunContext(t)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.histogramSender(outboxDir, sentDir, &wg)
+	go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
 	for range 200 {
 		if _, err := os.Stat(filepath.Join(sentDir, name)); err == nil {
-			edm.stop()
+			cancel()
 			wg.Wait()
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	edm.stop()
+	cancel()
 	wg.Wait()
 	t.Fatal("histogramSender did not move sent file")
 }
@@ -1389,25 +1432,23 @@ func TestHistogramSender(t *testing.T) {
 // the reload arm that flips DisableHistogramSender at runtime.
 func TestHistogramSenderBranches(t *testing.T) {
 	t.Run("disabled at startup skips ticks", func(t *testing.T) {
-		oldInterval := histogramSenderInterval
-		t.Cleanup(func() { histogramSenderInterval = oldInterval })
-		histogramSenderInterval = time.Millisecond
-
 		tc := defaultTC
 		tc.DisableHistogramSender = true
 		edm := newTestDnstapMinimiser(t, tc)
+		edm.deps.HistogramSenderInterval = time.Millisecond
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
 		buf := &syncBuf{}
 		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
+		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.histogramSender(t.TempDir(), t.TempDir(), &wg)
+		go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
 		// Let several ticks elapse; nothing happens because the
 		// DisableHistogramSender guard short-circuits.
 		time.Sleep(20 * time.Millisecond)
-		edm.stop()
+		cancel()
 		wg.Wait()
 
 		if !strings.Contains(buf.String(), `"state":"disabled"`) {
@@ -1416,11 +1457,8 @@ func TestHistogramSenderBranches(t *testing.T) {
 	})
 
 	t.Run("parse-error filename is logged and skipped", func(t *testing.T) {
-		oldInterval := histogramSenderInterval
-		t.Cleanup(func() { histogramSenderInterval = oldInterval })
-		histogramSenderInterval = time.Millisecond
-
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.HistogramSenderInterval = time.Millisecond
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 		outboxDir := t.TempDir()
 		sentDir := t.TempDir()
@@ -1434,9 +1472,10 @@ func TestHistogramSenderBranches(t *testing.T) {
 		buf := &syncBuf{}
 		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
+		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.histogramSender(outboxDir, sentDir, &wg)
+		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
@@ -1444,7 +1483,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		edm.stop()
+		cancel()
 		wg.Wait()
 
 		if !strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
@@ -1453,17 +1492,10 @@ func TestHistogramSenderBranches(t *testing.T) {
 	})
 
 	t.Run("send error triggers backoff log", func(t *testing.T) {
-		oldInterval := histogramSenderInterval
-		oldBackoff := histogramSenderBackoff
-		t.Cleanup(func() {
-			histogramSenderInterval = oldInterval
-			histogramSenderBackoff = oldBackoff
-		})
-		histogramSenderInterval = time.Millisecond
-		// Keep the backoff short so the test does not wait the real backoff.
-		histogramSenderBackoff = time.Millisecond
-
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.HistogramSenderInterval = time.Millisecond
+		// Keep the backoff short so the test does not wait the real backoff.
+		edm.deps.HistogramSenderBackoff = time.Millisecond
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 		outboxDir := t.TempDir()
 		sentDir := t.TempDir()
@@ -1477,7 +1509,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		as, err := edm.newAggregateSender(u, testJWK(t), nil)
+		as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1486,9 +1518,10 @@ func TestHistogramSenderBranches(t *testing.T) {
 		buf := &syncBuf{}
 		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
+		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.histogramSender(outboxDir, sentDir, &wg)
+		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if strings.Contains(buf.String(), "unable to send histogram file") {
@@ -1496,7 +1529,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		edm.stop()
+		cancel()
 		wg.Wait()
 
 		if !strings.Contains(buf.String(), "unable to send histogram file") {
@@ -1505,18 +1538,11 @@ func TestHistogramSenderBranches(t *testing.T) {
 	})
 
 	t.Run("backoff interrupted by stop", func(t *testing.T) {
-		oldInterval := histogramSenderInterval
-		oldBackoff := histogramSenderBackoff
-		t.Cleanup(func() {
-			histogramSenderInterval = oldInterval
-			histogramSenderBackoff = oldBackoff
-		})
-		histogramSenderInterval = time.Millisecond
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.HistogramSenderInterval = time.Millisecond
 		// A long backoff: a non-interruptible wait would block shutdown for the
 		// full minute, so exiting promptly proves stop() interrupts the backoff.
-		histogramSenderBackoff = time.Minute
-
-		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.HistogramSenderBackoff = time.Minute
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 		outboxDir := t.TempDir()
 		sentDir := t.TempDir()
@@ -1531,7 +1557,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		as, err := edm.newAggregateSender(u, testJWK(t), nil)
+		as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1540,9 +1566,10 @@ func TestHistogramSenderBranches(t *testing.T) {
 		buf := &syncBuf{}
 		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
+		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.histogramSender(outboxDir, sentDir, &wg)
+		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
 
 		// Wait until the send has failed and the sender is in its backoff.
 		deadline := time.Now().Add(2 * time.Second)
@@ -1558,26 +1585,24 @@ func TestHistogramSenderBranches(t *testing.T) {
 
 		// Cancel during the in-flight one-minute backoff; histogramSender must
 		// exit promptly instead of waiting it out.
-		edm.stop()
+		cancel()
 		waitOrFail(t, &wg, 2*time.Second, "histogramSender did not exit when cancelled during backoff")
 	})
 
 	t.Run("reload toggles enabled state", func(t *testing.T) {
-		oldInterval := histogramSenderInterval
-		t.Cleanup(func() { histogramSenderInterval = oldInterval })
-		histogramSenderInterval = time.Millisecond
-
 		tc := defaultTC
 		tc.DisableHistogramSender = true
 		edm := newTestDnstapMinimiser(t, tc)
+		edm.deps.HistogramSenderInterval = time.Millisecond
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
 		buf := &syncBuf{}
 		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
+		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.histogramSender(t.TempDir(), t.TempDir(), &wg)
+		go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
 
 		// Wait until the worker has read its startup conf before flipping
 		// edm.conf — otherwise we race the worker's edm.getConfig() at
@@ -1606,7 +1631,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		edm.stop()
+		cancel()
 		wg.Wait()
 
 		if !strings.Contains(buf.String(), "enabling histogram sender") {
@@ -1617,8 +1642,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 
 func TestMQTTConfigAndPublisher(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
-	t.Cleanup(edm.autopahoCancel)
+	ctx, _ := testRunContext(t)
 
 	cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30, nil)
 	if err != nil {
@@ -1638,7 +1662,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 
 	jwk := testJWK(t)
 	conn := &fakeAutoPahoConnection{}
-	edm.startMQTTPipeline(conn, jwk, true, 1)
+	edm.startMQTTPipeline(ctx, conn, jwk, true, 1)
 	edm.mqttPubCh <- []byte(`{"hello":"world"}`)
 	close(edm.mqttPubCh)
 	edm.autopahoWg.Wait()
@@ -1661,12 +1685,11 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 
 func TestMQTTPipelinePublishPath(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
-	t.Cleanup(edm.autopahoCancel)
+	ctx, _ := testRunContext(t)
 	jwk := testJWK(t)
 	conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-	edm.startMQTTPipeline(conn, jwk, false, 1)
+	edm.startMQTTPipeline(ctx, conn, jwk, false, 1)
 	edm.mqttPubCh <- []byte(`{"publish":"now"}`)
 	select {
 	case <-conn.publishedCh:
@@ -1686,12 +1709,10 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 
 func TestMQTTPublishWorkerAwaitError(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
-	t.Cleanup(edm.autopahoCancel)
 	conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
 	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(conn, "events/up/test/new_qname", false)
+	go edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
 	waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
 }
 
@@ -1747,13 +1768,13 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 
 func TestNewQnamePublisher(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.autopahoCtx, edm.autopahoCancel = context.WithCancel(t.Context())
+	ctx, _ := testRunContext(t)
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 	edm.mqttPubCh = make(chan []byte, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.newQnamePublisher(&wg)
+	go edm.newQnamePublisher(ctx, &wg)
 	event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
 	edm.newQnamePublisherCh <- &event
 	close(edm.newQnamePublisherCh)
@@ -1790,8 +1811,12 @@ func TestSetupHistogramSenderAndCertLoaders(t *testing.T) {
 	if err := edm.setupHistogramSender(); err != nil {
 		t.Fatal(err)
 	}
-	if edm.aggregSender.aggrecURL.String() != "https://example.test" {
-		t.Fatalf("aggregate URL = %s", edm.aggregSender.aggrecURL)
+	sender, ok := edm.aggregSender.(aggregateSender)
+	if !ok {
+		t.Fatalf("aggregate sender type = %T, want aggregateSender", edm.aggregSender)
+	}
+	if sender.aggrecURL.String() != "https://example.test" {
+		t.Fatalf("aggregate URL = %s", sender.aggrecURL)
 	}
 
 	edm.conf.HTTPURL = "://bad"
@@ -1834,14 +1859,18 @@ func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSender := edm.aggregSender
-	if oldSender.httpTransport == nil {
+	oldConcrete, ok := oldSender.(aggregateSender)
+	if !ok {
+		t.Fatalf("aggregate sender type = %T, want aggregateSender", oldSender)
+	}
+	if oldConcrete.httpTransport == nil {
 		t.Fatal("httpTransport was not retained on the aggregate sender")
 	}
 
 	// Make a request through the old transport so it holds an idle keep-alive
 	// connection that the reload is expected to close.
 	fileName := writeTempFile(t, "hist.parquet", []byte("payload"))
-	if err := oldSender.send(t.Context(), fileName, time.Now(), time.Minute); err != nil {
+	if err := oldSender.Send(t.Context(), fileName, time.Now(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	waitForConnState(t, connStateCh, http.StateIdle)
@@ -1851,7 +1880,11 @@ func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
 	if err := edm.setupHistogramSender(); err != nil {
 		t.Fatal(err)
 	}
-	if edm.aggregSender.httpTransport == oldSender.httpTransport {
+	newConcrete, ok := edm.aggregSender.(aggregateSender)
+	if !ok {
+		t.Fatalf("aggregate sender type = %T, want aggregateSender", edm.aggregSender)
+	}
+	if newConcrete.httpTransport == oldConcrete.httpTransport {
 		t.Fatal("reload did not create a new transport")
 	}
 	waitForConnState(t, connStateCh, http.StateClosed)
@@ -1875,19 +1908,29 @@ func waitForConnState(t testing.TB, ch <-chan http.ConnState, want http.ConnStat
 	}
 }
 
-func TestSetupMQTT(t *testing.T) {
-	oldNewAutoPahoConnection := newAutoPahoConnection
-	t.Cleanup(func() {
-		newAutoPahoConnection = oldNewAutoPahoConnection
-	})
+type testMQTTFactory struct {
+	MQTTFactory
+	newConnection func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error)
+}
 
+func (tmf testMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (MQTTConnectionManager, error) {
+	if tmf.newConnection != nil {
+		return tmf.newConnection(ctx, cfg)
+	}
+	return tmf.MQTTFactory.NewConnection(ctx, cfg)
+}
+
+func TestSetupMQTT(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
-		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
-			return conn, nil
-		}
 
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.MQTTFactory = testMQTTFactory{
+			MQTTFactory: edm.deps.MQTTFactory,
+			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+				return conn, nil
+			},
+		}
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.MQTTServer = "mqtts://example.test:8883"
@@ -1895,7 +1938,8 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DisableMQTTFilequeue = false
 		edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
 
-		if err := edm.setupMQTT(); err != nil {
+		ctx, _ := testRunContext(t)
+		if err := edm.setupMQTT(ctx); err != nil {
 			t.Fatalf("setupMQTT: %v", err)
 		}
 		// Drive the publish path so the fake connection manager is actually
@@ -1908,9 +1952,6 @@ func TestSetupMQTT(t *testing.T) {
 		}
 		close(edm.mqttPubCh)
 		edm.autopahoWg.Wait()
-		if edm.autopahoCancel == nil {
-			t.Fatal("autopaho cancel was not set")
-		}
 		conn.mu.Lock()
 		queued := len(conn.queued)
 		conn.mu.Unlock()
@@ -1923,7 +1964,7 @@ func TestSetupMQTT(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = filepath.Join(t.TempDir(), "missing.jwk")
-		err := edm.setupMQTT()
+		err := edm.setupMQTT(t.Context())
 		if !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("setupMQTT error = %v, want os.ErrNotExist", err)
 		}
@@ -1934,7 +1975,7 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.MQTTCAFile = writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
-		err := edm.setupMQTT()
+		err := edm.setupMQTT(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
 			t.Fatalf("setupMQTT error = %v, want CA cert pool failure", err)
 		}
@@ -1948,43 +1989,78 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DataDir = filepath.Join(blocker, "datadir")
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.DisableMQTTFilequeue = false
-		err := edm.setupMQTT()
+		err := edm.setupMQTT(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "queue dir") {
 			t.Fatalf("setupMQTT error = %v, want queue dir failure", err)
 		}
 	})
 
 	t.Run("connection manager failure", func(t *testing.T) {
-		oldConn := newAutoPahoConnection
-		t.Cleanup(func() { newAutoPahoConnection = oldConn })
 		errConnect := errors.New("connect boom")
-		newAutoPahoConnection = func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
-			return nil, errConnect
-		}
 		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.MQTTFactory = testMQTTFactory{
+			MQTTFactory: edm.deps.MQTTFactory,
+			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+				return nil, errConnect
+			},
+		}
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.MQTTServer = "mqtts://example.test:8883"
 		edm.conf.DisableMQTTFilequeue = true
-		err := edm.setupMQTT()
+		err := edm.setupMQTT(t.Context())
 		if !errors.Is(err, errConnect) {
 			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)
 		}
 	})
 }
 
+type testDnstapInputFactory struct {
+	DnstapInputFactory
+	newFromPath func(string) (DnstapInput, error)
+}
+
+func (tdif testDnstapInputFactory) NewFrameStreamSockInputFromPath(path string) (DnstapInput, error) {
+	if tdif.newFromPath != nil {
+		return tdif.newFromPath(path)
+	}
+	return tdif.DnstapInputFactory.NewFrameStreamSockInputFromPath(path)
+}
+
+type testListenerFactory struct {
+	ListenerFactory
+	listen    func(string, string) (net.Listener, error)
+	listenTLS func(string, string, *tls.Config) (net.Listener, error)
+}
+
+func (tlf testListenerFactory) Listen(network, address string) (net.Listener, error) {
+	if tlf.listen != nil {
+		return tlf.listen(network, address)
+	}
+	return tlf.ListenerFactory.Listen(network, address)
+}
+
+func (tlf testListenerFactory) ListenTLS(network, address string, cfg *tls.Config) (net.Listener, error) {
+	if tlf.listenTLS != nil {
+		return tlf.listenTLS(network, address, cfg)
+	}
+	return tlf.ListenerFactory.ListenTLS(network, address, cfg)
+}
+
 func TestSetupDnstapInput(t *testing.T) {
 	discardLog := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	t.Run("no input configured", func(t *testing.T) {
-		_, err := setupDnstapInput(discardLog, config{})
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		_, err := edm.setupDnstapInput(discardLog, Config{})
 		if !errors.Is(err, errNoInputConfigured) {
 			t.Fatalf("err = %v, want errNoInputConfigured", err)
 		}
 	})
 
 	t.Run("unix happy", func(t *testing.T) {
-		dti, err := setupDnstapInput(discardLog, config{
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		dti, err := edm.setupDnstapInput(discardLog, Config{
 			InputUnix: filepath.Join(t.TempDir(), "dnstap.sock"),
 		})
 		if err != nil {
@@ -1996,17 +2072,22 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("unix error", func(t *testing.T) {
-		swapSeam(t, &newFrameStreamSockInputFromPath, func(string) (*dnstap.FrameStreamSockInput, error) {
-			return nil, errInjected
-		})
-		_, err := setupDnstapInput(discardLog, config{InputUnix: "/tmp/x"})
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.DnstapInputFactory = testDnstapInputFactory{
+			DnstapInputFactory: edm.deps.DnstapInputFactory,
+			newFromPath: func(string) (DnstapInput, error) {
+				return nil, errInjected
+			},
+		}
+		_, err := edm.setupDnstapInput(discardLog, Config{InputUnix: "/tmp/x"})
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("err = %v, want errInjected", err)
 		}
 	})
 
 	t.Run("tcp happy", func(t *testing.T) {
-		dti, err := setupDnstapInput(discardLog, config{InputTCP: "127.0.0.1:0"})
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		dti, err := edm.setupDnstapInput(discardLog, Config{InputTCP: "127.0.0.1:0"})
 		if err != nil {
 			t.Fatalf("setupDnstapInput: %v", err)
 		}
@@ -2016,18 +2097,23 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("tcp listen error", func(t *testing.T) {
-		swapSeam(t, &listenNet, func(string, string) (net.Listener, error) {
-			return nil, errInjected
-		})
-		_, err := setupDnstapInput(discardLog, config{InputTCP: "127.0.0.1:0"})
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.ListenerFactory = testListenerFactory{
+			ListenerFactory: edm.deps.ListenerFactory,
+			listen: func(string, string) (net.Listener, error) {
+				return nil, errInjected
+			},
+		}
+		_, err := edm.setupDnstapInput(discardLog, Config{InputTCP: "127.0.0.1:0"})
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("err = %v, want errInjected", err)
 		}
 	})
 
 	t.Run("tls happy", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		certPath, keyPath, _ := testCertFiles(t)
-		dti, err := setupDnstapInput(discardLog, config{
+		dti, err := edm.setupDnstapInput(discardLog, Config{
 			InputTLS:         "127.0.0.1:0",
 			InputTLSCertFile: certPath,
 			InputTLSKeyFile:  keyPath,
@@ -2041,8 +2127,9 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("tls happy with client CA", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		certPath, keyPath, caPath := testCertFiles(t)
-		dti, err := setupDnstapInput(discardLog, config{
+		dti, err := edm.setupDnstapInput(discardLog, Config{
 			InputTLS:             "127.0.0.1:0",
 			InputTLSCertFile:     certPath,
 			InputTLSKeyFile:      keyPath,
@@ -2057,7 +2144,8 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("tls bad cert", func(t *testing.T) {
-		_, err := setupDnstapInput(discardLog, config{
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		_, err := edm.setupDnstapInput(discardLog, Config{
 			InputTLS:         "127.0.0.1:0",
 			InputTLSCertFile: filepath.Join(t.TempDir(), "missing.crt"),
 			InputTLSKeyFile:  filepath.Join(t.TempDir(), "missing.key"),
@@ -2068,9 +2156,10 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("tls bad client CA file", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		certPath, keyPath, _ := testCertFiles(t)
 		badCA := writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
-		_, err := setupDnstapInput(discardLog, config{
+		_, err := edm.setupDnstapInput(discardLog, Config{
 			InputTLS:             "127.0.0.1:0",
 			InputTLSCertFile:     certPath,
 			InputTLSKeyFile:      keyPath,
@@ -2082,11 +2171,15 @@ func TestSetupDnstapInput(t *testing.T) {
 	})
 
 	t.Run("tls listen error", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		certPath, keyPath, _ := testCertFiles(t)
-		swapSeam(t, &listenTLS, func(string, string, *tls.Config) (net.Listener, error) {
-			return nil, errInjected
-		})
-		_, err := setupDnstapInput(discardLog, config{
+		edm.deps.ListenerFactory = testListenerFactory{
+			ListenerFactory: edm.deps.ListenerFactory,
+			listenTLS: func(string, string, *tls.Config) (net.Listener, error) {
+				return nil, errInjected
+			},
+		}
+		_, err := edm.setupDnstapInput(discardLog, Config{
 			InputTLS:         "127.0.0.1:0",
 			InputTLSCertFile: certPath,
 			InputTLSKeyFile:  keyPath,
@@ -2098,14 +2191,14 @@ func TestSetupDnstapInput(t *testing.T) {
 }
 
 type sequenceConfiger struct {
-	configs []config
+	configs []Config
 	index   int
 	err     error
 }
 
-func (sc *sequenceConfiger) getConfig() (config, error) {
+func (sc *sequenceConfiger) GetConfig() (Config, error) {
 	if sc.err != nil {
-		return config{}, sc.err
+		return Config{}, sc.err
 	}
 	if sc.index >= len(sc.configs) {
 		return sc.configs[len(sc.configs)-1], nil
@@ -2116,29 +2209,25 @@ func (sc *sequenceConfiger) getConfig() (config, error) {
 }
 
 func TestConfigUpdater(t *testing.T) {
-	oldDebounce := configUpdateDebounce
-	t.Cleanup(func() {
-		configUpdateDebounce = oldDebounce
-	})
-	configUpdateDebounce = 10 * time.Millisecond
-
 	edm := newTestDnstapMinimiser(t, defaultTC)
+	edm.deps.ConfigUpdateDebounce = 10 * time.Millisecond
 	startConf := edm.getConfig()
 	nextConf := startConf
 	nextConf.CryptopanKey = "key2"
 	nextConf.DisableHistogramSender = true
 	nextConf.IgnoredClientIPsFile = ""
 	nextConf.IgnoredQuestionNamesFile = ""
-	sc := &sequenceConfiger{configs: []config{nextConf}}
+	sc := &sequenceConfiger{configs: []Config{nextConf}}
 	edm.configer = sc
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
 	events := make(chan fsnotify.Event)
+	ctx := t.Context()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		configUpdater(events, edm)
+		configUpdater(ctx, events, edm)
 	}()
 	events <- fsnotify.Event{Name: "config.toml", Op: fsnotify.Write}
 	for range 100 {
@@ -2189,21 +2278,20 @@ func (s *syncBuf) String() string {
 // shuts the goroutine down. log is wired to a syncBuf so subtests can
 // assert on the reload paths that have no other observable side-effect
 // without racing the worker on the log write.
-func runConfigUpdaterUntil(t *testing.T, edm *dnstapMinimiser, sc *sequenceConfiger, expect func() bool) {
+func runConfigUpdaterUntil(t *testing.T, edm *DnstapMinimiser, sc *sequenceConfiger, expect func() bool) {
 	t.Helper()
-	oldDebounce := configUpdateDebounce
-	t.Cleanup(func() { configUpdateDebounce = oldDebounce })
-	configUpdateDebounce = 5 * time.Millisecond
+	edm.deps.ConfigUpdateDebounce = 5 * time.Millisecond
 
 	edm.configer = sc
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
 	events := make(chan fsnotify.Event)
+	ctx := t.Context()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		configUpdater(events, edm)
+		configUpdater(ctx, events, edm)
 	}()
 	events <- fsnotify.Event{Name: "config.toml", Op: fsnotify.Write}
 	deadline := time.Now().Add(2 * time.Second)
@@ -2234,7 +2322,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 		// DataDir has no reload:"true" tag, so changing it triggers the
 		// "requires restart" warning.
 		next.DataDir = "/tmp/edm-changed"
-		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
 			return strings.Contains(buf.String(), "requires restart")
 		})
 	})
@@ -2256,7 +2344,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 
 		next := startConf
 		next.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
-		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
 			return strings.Contains(buf.String(), "loadHTTPClientCert")
 		})
 	})
@@ -2275,33 +2363,33 @@ func TestConfigUpdaterBranches(t *testing.T) {
 
 		next := startConf
 		next.MQTTClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
-		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []config{next}}, func() bool {
+		runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
 			return strings.Contains(buf.String(), "loadMQTTClientCert")
 		})
 	})
 }
 
-// TestDiskCleanerOsReadDirError covers the non-ENOENT osReadDir error
+// TestDiskCleanerOsReadDirError covers the non-ENOENT ReadDir error
 // branch: TestMonitorAndDiskCleaner exercises the success path and the
 // ENOENT-skip arm; here we inject a generic error and assert it is
 // logged as "unable to read sent dir".
 func TestDiskCleanerOsReadDirError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		swapSeam(t, &osReadDir, func(string) ([]os.DirEntry, error) { return nil, errInjected })
-
 		buf := &syncBuf{}
 		ctx, cancel := context.WithCancel(t.Context())
-		edm := &dnstapMinimiser{
-			ctx:  ctx,
-			stop: cancel,
+		deps := defaultDependencies()
+		deps.FileSystem = faultingFileSystem{FileSystem: deps.FileSystem, readDir: func(string) ([]os.DirEntry, error) { return nil, errInjected }}
+		deps.DiskCleanerInterval = time.Millisecond
+		edm := &DnstapMinimiser{
 			log:  slog.New(slog.NewJSONHandler(buf, nil)),
+			deps: deps,
 		}
 
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.diskCleaner(&wg, t.TempDir())
-		// Advance just past the diskCleanerInterval so a tick fires.
-		time.Sleep(diskCleanerInterval + time.Second)
+		go edm.diskCleaner(ctx, &wg, t.TempDir())
+		// Advance just past the disk-cleaner interval so a tick fires.
+		time.Sleep(time.Second)
 		cancel()
 		wg.Wait()
 
@@ -2326,10 +2414,12 @@ func TestAddFSWatchersErrorOnBadPath(t *testing.T) {
 func TestMonitorAndDiskCleaner(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
-		edm := &dnstapMinimiser{
-			ctx:                    ctx,
-			stop:                   cancel,
+		deps := defaultDependencies()
+		deps.MonitorChannelInterval = time.Millisecond
+		deps.DiskCleanerInterval = time.Millisecond
+		edm := &DnstapMinimiser{
 			log:                    slog.New(slog.NewTextHandler(io.Discard, nil)),
+			deps:                   deps,
 			promNewQnameChannelLen: prometheus.NewGauge(prometheus.GaugeOpts{Name: "test_gauge"}),
 			newQnamePublisherCh:    make(chan *protocols.NewQnameJSON, 3),
 		}
@@ -2338,9 +2428,9 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Add(1)
-		go edm.monitorChannelLen(&wg)
+		go edm.monitorChannelLen(ctx, &wg)
 		time.Sleep(time.Second)
-		edm.stop()
+		cancel()
 		wg.Wait()
 
 		sentDir := t.TempDir()
@@ -2353,11 +2443,12 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 		if err := os.Chtimes(oldFile, oldTime, oldTime); err != nil {
 			t.Fatal(err)
 		}
-		edm.ctx, edm.stop = context.WithCancel(t.Context())
+		ctx, cancel = context.WithCancel(t.Context())
+		t.Cleanup(cancel)
 		wg.Add(1)
-		go edm.diskCleaner(&wg, sentDir)
+		go edm.diskCleaner(ctx, &wg, sentDir)
 		time.Sleep(time.Minute)
-		edm.stop()
+		cancel()
 		wg.Wait()
 		if _, err := os.Stat(oldFile); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("old file still exists: %v", err)
@@ -2368,9 +2459,11 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 func TestDataCollector(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		tc := defaultTC
-		edm := &dnstapMinimiser{
-			conf:               config{HistogramHLLExplicitThreshold: tc.CryptopanAddressEntries},
+		deps := defaultDependencies()
+		edm := &DnstapMinimiser{
+			conf:               Config{HistogramHLLExplicitThreshold: tc.CryptopanAddressEntries},
 			log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+			deps:               deps,
 			sessionCollectorCh: make(chan *sessionData, 1),
 			sessionWriterCh:    make(chan *prevSessions, 1),
 			histogramWriterCh:  make(chan *wellKnownDomainsData, 1),
@@ -2427,9 +2520,10 @@ func TestRunMinimiserFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	ctx, cancel := testRunContext(t)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
+	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
 
 	queryFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess)))
 	edm.inputChannel <- queryFrame
@@ -2479,7 +2573,7 @@ func TestRunMinimiserFlows(t *testing.T) {
 	default:
 	}
 
-	edm.stop()
+	cancel()
 	wg.Wait()
 }
 
@@ -2506,9 +2600,10 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	ctx, cancel := testRunContext(t)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
+	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
 
 	tests := []struct {
 		family dnstap.SocketFamily
@@ -2534,7 +2629,7 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 		}
 	}
 
-	edm.stop()
+	cancel()
 	wg.Wait()
 }
 
@@ -2560,13 +2655,14 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	}
 	edm.ignoredClientsIPSet.Store(ipset)
 
+	ctx, cancel := testRunContext(t)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
+	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
 	edm.inputChannel <- []byte("not protobuf")
 	// Malformed frames are skipped, not fatal, so stop the minimiser
 	// explicitly to unblock the goroutine.
-	edm.stop()
+	cancel()
 	wg.Wait()
 
 	edm = newTestDnstapMinimiser(t, defaultTC)
@@ -2578,30 +2674,19 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		t.Fatal(err)
 	}
 	edm.ignoredClientsIPSet.Store(ipset)
+	ctx, cancel = testRunContext(t)
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, cache, db, nil, defaultLabelLimit, wkd)
+	go edm.runMinimiser(ctx, 0, &wg, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
 	edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))
 	time.Sleep(20 * time.Millisecond)
-	edm.stop()
+	cancel()
 	wg.Wait()
 }
 
 func TestRunWithDisabledSenders(t *testing.T) {
-	oldNotifyContext := notifyContext
-	oldListenAndServeHTTP := listenAndServeHTTP
-	t.Cleanup(func() {
-		notifyContext = oldNotifyContext
-		listenAndServeHTTP = oldListenAndServeHTTP
-		viper.Reset()
-	})
+	t.Cleanup(viper.Reset)
 
 	ctx, cancel := context.WithCancel(t.Context())
-	notifyContext = func(context.Context, ...os.Signal) (context.Context, context.CancelFunc) {
-		return ctx, cancel
-	}
-	listenAndServeHTTP = func(*http.Server) error {
-		return http.ErrServerClosed
-	}
 
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "edm.toml")
@@ -2629,10 +2714,20 @@ newqname-buffer = 1
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	level := new(slog.LevelVar)
+	deps := defaultDependencies()
+	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
+		return http.ErrServerClosed
+	})
+	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), WithDependencies(deps))
+	if err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Run(logger, level)
+		if err := edm.Run(ctx); err != nil {
+			t.Errorf("Run: %s", err)
+		}
 	}()
 
 	time.Sleep(100 * time.Millisecond)

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// errInjected is the sentinel failure injected through the file-op seams so
+// errInjected is the sentinel failure injected through fake dependencies so
 // the error-path assertions can confirm (via errors.Is) that the injected
 // failure is the one surfaced, rather than some unrelated error.
 var errInjected = errors.New("injected failure")
@@ -22,16 +22,63 @@ var errInjected = errors.New("injected failure")
 // discardEDM returns a minimal minimiser with a no-op logger. It intentionally
 // only sets the logger, which is all the file-operation helpers under test
 // touch; it deliberately does not go through newTestDnstapMinimiser.
-func discardEDM() *dnstapMinimiser {
-	return &dnstapMinimiser{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+func discardEDM() *DnstapMinimiser {
+	return &DnstapMinimiser{
+		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		deps: defaultDependencies(),
+	}
 }
 
-// swapSeam temporarily replaces a seam variable for the duration of the test.
-func swapSeam[T any](t *testing.T, target *T, replacement T) {
-	t.Helper()
-	old := *target
-	*target = replacement
-	t.Cleanup(func() { *target = old })
+type faultingFileSystem struct {
+	FileSystem
+	create   func(string) (File, error)
+	rename   func(string, string) error
+	remove   func(string) error
+	mkdirAll func(string, os.FileMode) error
+	stat     func(string) (os.FileInfo, error)
+	readDir  func(string) ([]os.DirEntry, error)
+}
+
+func (ffs faultingFileSystem) Create(name string) (File, error) {
+	if ffs.create != nil {
+		return ffs.create(name)
+	}
+	return ffs.FileSystem.Create(name)
+}
+
+func (ffs faultingFileSystem) Rename(oldpath, newpath string) error {
+	if ffs.rename != nil {
+		return ffs.rename(oldpath, newpath)
+	}
+	return ffs.FileSystem.Rename(oldpath, newpath)
+}
+
+func (ffs faultingFileSystem) Remove(name string) error {
+	if ffs.remove != nil {
+		return ffs.remove(name)
+	}
+	return ffs.FileSystem.Remove(name)
+}
+
+func (ffs faultingFileSystem) MkdirAll(path string, perm os.FileMode) error {
+	if ffs.mkdirAll != nil {
+		return ffs.mkdirAll(path, perm)
+	}
+	return ffs.FileSystem.MkdirAll(path, perm)
+}
+
+func (ffs faultingFileSystem) Stat(name string) (os.FileInfo, error) {
+	if ffs.stat != nil {
+		return ffs.stat(name)
+	}
+	return ffs.FileSystem.Stat(name)
+}
+
+func (ffs faultingFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
+	if ffs.readDir != nil {
+		return ffs.readDir(name)
+	}
+	return ffs.FileSystem.ReadDir(name)
 }
 
 func TestCreateFile(t *testing.T) {
@@ -53,7 +100,7 @@ func TestCreateFile(t *testing.T) {
 
 	t.Run("mkdir failure is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error { return errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, mkdirAll: func(string, os.FileMode) error { return errInjected }}
 		dst := filepath.Join(t.TempDir(), "missing", "out.parquet")
 		_, err := edm.createFile(dst)
 		if !errors.Is(err, errInjected) {
@@ -63,7 +110,7 @@ func TestCreateFile(t *testing.T) {
 
 	t.Run("non-ENOENT create error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
 		_, err := edm.createFile(filepath.Join(t.TempDir(), "out.parquet"))
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("createFile error = %v, want %v", err, errInjected)
@@ -88,14 +135,17 @@ func TestRenameFile(t *testing.T) {
 	t.Run("dest dir exists but rename fails", func(t *testing.T) {
 		edm := discardEDM()
 		// A real FileInfo (not (nil,nil)) so the stub matches os.Stat's
-		// contract; osStat returning a nil error breaks the retry loop and
+		// contract; Stat returning a nil error breaks the retry loop and
 		// makes renameFile surface the rename error (here fs.ErrNotExist).
 		info, statErr := os.Stat(t.TempDir())
 		if statErr != nil {
 			t.Fatal(statErr)
 		}
-		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
-		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return info, nil })
+		edm.deps.FileSystem = faultingFileSystem{
+			FileSystem: edm.deps.FileSystem,
+			rename:     func(string, string) error { return fs.ErrNotExist },
+			stat:       func(string) (os.FileInfo, error) { return info, nil },
+		}
 		err := edm.renameFile("src", "dst")
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("renameFile error = %v, want fs.ErrNotExist", err)
@@ -104,8 +154,11 @@ func TestRenameFile(t *testing.T) {
 
 	t.Run("stat error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
-		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return nil, errInjected })
+		edm.deps.FileSystem = faultingFileSystem{
+			FileSystem: edm.deps.FileSystem,
+			rename:     func(string, string) error { return fs.ErrNotExist },
+			stat:       func(string) (os.FileInfo, error) { return nil, errInjected },
+		}
 		err := edm.renameFile("src", "dst")
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
@@ -114,9 +167,12 @@ func TestRenameFile(t *testing.T) {
 
 	t.Run("mkdir failure is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osRename, func(string, string) error { return fs.ErrNotExist })
-		swapSeam(t, &osStat, func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist })
-		swapSeam(t, &osMkdirAll, func(string, os.FileMode) error { return errInjected })
+		edm.deps.FileSystem = faultingFileSystem{
+			FileSystem: edm.deps.FileSystem,
+			rename:     func(string, string) error { return fs.ErrNotExist },
+			stat:       func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist },
+			mkdirAll:   func(string, os.FileMode) error { return errInjected },
+		}
 		err := edm.renameFile("src", "dst")
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
@@ -125,7 +181,7 @@ func TestRenameFile(t *testing.T) {
 
 	t.Run("non-ENOENT rename error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osRename, func(string, string) error { return errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
 		err := edm.renameFile("src", "dst")
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
@@ -164,7 +220,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 
 	t.Run("createFile error", func(t *testing.T) {
 		edm := discardEDM()
-		swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
 		_, err := edm.writeRotatedParquet("test", filepath.Join(t.TempDir(), "x"), "y", func(io.Writer) error {
 			return nil
 		})
@@ -202,7 +258,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 		tmp := filepath.Join(dir, "data.tmp")
 		final := filepath.Join(dir, "data")
 
-		swapSeam(t, &osRemove, func(string) error { return errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, remove: func(string) error { return errInjected }}
 
 		_, err := edm.writeRotatedParquet("test", tmp, final, func(io.Writer) error {
 			return errInjected
@@ -265,7 +321,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 		tmp := filepath.Join(dir, "data.tmp")
 		final := filepath.Join(dir, "data")
 
-		swapSeam(t, &osRename, func(string, string) error { return errInjected })
+		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
 
 		_, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
 			_, err := w.Write([]byte("hello"))
@@ -274,8 +330,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("error = %v, want %v", err, errInjected)
 		}
-		// Rename failure intentionally leaves the temp file in place
-		// (matches the pre-refactor behavior).
+		// Rename failure intentionally leaves the temp file in place.
 		if _, err := os.Stat(tmp); err != nil {
 			t.Fatalf("tmp file should remain after rename error, stat err = %v", err)
 		}
@@ -286,14 +341,14 @@ func TestWriteRotatedParquet(t *testing.T) {
 }
 
 // TestSessionWriterLogsCreateError verifies the sessionWriter worker logs and
-// keeps running when createSessionFile fails. The failure is injected via the
-// osCreate seam so writeSessionParquet is never reached.
+// keeps running when createSessionFile fails. The failure is injected through
+// FileSystem.Create so writeSessionParquet is never reached.
 func TestSessionWriterLogsCreateError(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	var buf bytes.Buffer
 	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
 
-	swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+	edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
 
 	edm.sessionWriterCh <- &prevSessions{rotationTime: time.Now()}
 	close(edm.sessionWriterCh)
@@ -317,7 +372,7 @@ func TestHistogramWriterLogsCreateError(t *testing.T) {
 	var buf bytes.Buffer
 	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
 
-	swapSeam(t, &osCreate, func(string) (*os.File, error) { return nil, errInjected })
+	edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
 
 	edm.histogramWriterCh <- &wellKnownDomainsData{
 		rotationTime: time.Now(),

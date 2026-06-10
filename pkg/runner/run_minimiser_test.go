@@ -17,11 +17,11 @@ import (
 )
 
 func TestSeenQnameWriteOptions(t *testing.T) {
-	if got := seenQnameWriteOptions(config{}); got != pebble.NoSync {
+	if got := seenQnameWriteOptions(Config{}); got != pebble.NoSync {
 		t.Fatalf("default seen-qname write option = %p, want %p", got, pebble.NoSync)
 	}
 
-	if got := seenQnameWriteOptions(config{PebbleSync: true}); got != pebble.Sync {
+	if got := seenQnameWriteOptions(Config{PebbleSync: true}); got != pebble.Sync {
 		t.Fatalf("pebble-sync seen-qname write option = %p, want %p", got, pebble.Sync)
 	}
 }
@@ -49,7 +49,7 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			results <- edm.qnameSeen(msg, seenQnameLRU, pdb, seenQnameWriteOptions(defaultTC.config))
+			results <- edm.qnameSeen(msg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultTC.PebbleSync)
 		}()
 	}
 
@@ -77,10 +77,11 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 // publisher send lands in the buffer instead of being dropped by its default
 // case; receiving that event proves runMinimiser is past the publisher send and
 // into the (blocked) session send. With the send guarded by a select on
-// edm.ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
+// ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
 // send would deadlock and waitOrFail would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
+	ctx, cancel := testRunContext(t)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 	edm.sessionCollectorCh = make(chan *sessionData, 1)
@@ -98,7 +99,7 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, seenQnameLRU, pdb, nil, defaultLabelLimit, wkdTracker)
+	go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
 
 	frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
 	edm.inputChannel <- frame
@@ -111,18 +112,19 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 		t.Fatal("timed out waiting for new_qname event")
 	}
 
-	edm.stop()
+	cancel()
 	waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
 }
 
 func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 	edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "example.com.")
+	ctx, cancel := testRunContext(t)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	go edm.runMinimiser(0, &wg, seenQnameLRU, pdb, nil, defaultLabelLimit, wkdTracker)
+	go edm.runMinimiser(ctx, 0, &wg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
 	t.Cleanup(func() {
-		edm.stop()
+		cancel()
 		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit after stop")
 	})
 
@@ -162,15 +164,14 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 	}
 }
 
-func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*dnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
+func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
-	t.Cleanup(edm.stop)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 
 	seenQnameLRU, err := lru.New[string, struct{}](10)

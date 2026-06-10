@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -27,9 +26,11 @@ type aggregateSender struct {
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 	httpTransport     *http.Transport
+	fs                FileSystem
+	clock             Clock
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) {
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs FileSystem, clock Clock) (aggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
 	err := signingJwk.Raw(&signingKey)
@@ -47,7 +48,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 		ResponseHeaderTimeout: 10 * time.Second,
 		TLSClientConfig: &tls.Config{
 			RootCAs:              caCertPool,
-			GetClientCertificate: edm.httpClientCertStore.getClientCertificate,
+			GetClientCertificate: getClientCertificate,
 			MinVersion:           tls.VersionTLS13,
 		},
 	}
@@ -55,7 +56,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 		Transport: httpTransport,
 	}
 
-	edm.log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
+	log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
 
 	// Create signer and wrapped HTTP client
 	signer, err := httpsign.NewEd25519Signer(signingKey,
@@ -68,18 +69,29 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
 	return aggregateSender{
-		log:               edm.log,
+		log:               log,
 		aggrecURL:         aggrecURL,
 		caCertPool:        caCertPool,
 		signingHTTPClient: client,
 		httpTransport:     httpTransport,
+		fs:                fs,
+		clock:             clock,
 	}, nil
 }
 
-// Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
+// Send sends histogram data via signed HTTP message to aggregate-receiver.
+func (as aggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
+	fs := as.fs
+	if fs == nil {
+		fs = osFileSystem{}
+	}
+	clock := as.clock
+	if clock == nil {
+		clock = realClock{}
+	}
+
 	fileName = filepath.Clean(fileName)
-	file, err := os.Open(fileName)
+	file, err := fs.Open(fileName)
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
 	}
@@ -133,9 +145,9 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
 	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
 
 	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
-	startTime := now()
+	startTime := clock.Now()
 	res, err := as.signingHTTPClient.Do(req)
-	elapsedTime := time.Since(startTime)
+	elapsedTime := clock.Now().Sub(startTime)
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
 	}
@@ -167,6 +179,13 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
 	as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 
 	return nil
+}
+
+// CloseIdleConnections closes idle HTTP connections held by the sender.
+func (as aggregateSender) CloseIdleConnections() {
+	if as.httpTransport != nil {
+		as.httpTransport.CloseIdleConnections()
+	}
 }
 
 // iso8601Duration formats duration as an ISO 8601 duration string, e.g. "PT1H2M3S".

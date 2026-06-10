@@ -35,9 +35,9 @@ import (
 // or the CIDR count.
 func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
@@ -116,7 +116,7 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 // the DAWG-backed ignored-question set, which is stored in an
 // atomic.Pointer[dawgFinderHolder]. The wrapper exists because dawg.Finder
 // is an interface and atomic.Pointer wants a concrete type - see the
-// design note on the dnstapMinimiser struct in runner.go.
+// design note on the DnstapMinimiser struct in runner.go.
 //
 // As with the IP test the assertion is purely "no race, no panic". A
 // future change that, say, reintroduced ignoredQuestionsMutex without
@@ -124,9 +124,9 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 // (race detector would fail).
 func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
@@ -198,9 +198,9 @@ func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 // and that the final generation reflects every successful rotation.
 func TestConcurrentSetCryptopanReload(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
@@ -256,7 +256,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 	// After the writer has finished the generation must reflect every
 	// successful rotation - strictly monotonic, no skipped/dropped
 	// increments. The +1 accounts for the setCryptopan call inside
-	// newDnstapMinimiser.
+	// NewDnstapMinimiser.
 	wantGen := uint64(rotations + 1)
 	if got := edm.cryptopanGen.Load(); got != wantGen {
 		t.Fatalf("final cryptopanGen have: %d, want: %d", got, wantGen)
@@ -276,9 +276,9 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 // this test pins the behaviour.
 func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
@@ -354,9 +354,9 @@ func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 // QueryAddress through would defeat operator policy.
 func TestClientIPIsIgnoredEmptyQueryAddress(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
+	edm, err := NewDnstapMinimiser(defaultTC, logger)
 	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
+		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
 	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
