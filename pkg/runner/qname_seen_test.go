@@ -70,6 +70,59 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 	}
 }
 
+// fakeSeenQnameStore returns canned results so qnameSeen error paths can be
+// exercised without a pebble instance.
+type fakeSeenQnameStore struct {
+	hasSeen   bool
+	hasErr    error
+	markCalls int
+	markErr   error
+}
+
+func (f *fakeSeenQnameStore) Has(string) (bool, error) { return f.hasSeen, f.hasErr }
+
+func (f *fakeSeenQnameStore) MarkSeen(string, bool) error {
+	f.markCalls++
+	return f.markErr
+}
+
+func (f *fakeSeenQnameStore) Close() error { return nil }
+
+// TestQnameSeenStoreError verifies qnameSeen honors the lookup result when the
+// store reports an error: a qname found despite a resource-cleanup error stays
+// "seen" (no spurious new_qname event), while an unreadable store reports
+// "new" without recording anything.
+func TestQnameSeenStoreError(t *testing.T) {
+	tests := []struct {
+		name      string
+		store     *fakeSeenQnameStore
+		want      bool
+		wantMarks int
+	}{
+		{"found with cleanup error", &fakeSeenQnameStore{hasSeen: true, hasErr: errInjected}, true, 0},
+		{"lookup error", &fakeSeenQnameStore{hasErr: errInjected}, false, 0},
+		{"mark error is logged only", &fakeSeenQnameStore{markErr: errInjected}, false, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			cache, err := lru.New[string, struct{}](1)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			msg := new(dns.Msg)
+			msg.SetQuestion("example.com.", dns.TypeA)
+			if got := edm.qnameSeen(msg, cache, tt.store, defaultTC.PebbleSync); got != tt.want {
+				t.Fatalf("qnameSeen = %t, want %t", got, tt.want)
+			}
+			if tt.store.markCalls != tt.wantMarks {
+				t.Fatalf("MarkSeen calls = %d, want %d", tt.store.markCalls, tt.wantMarks)
+			}
+		})
+	}
+}
+
 func TestSeenQnameWriteOptions(t *testing.T) {
 	if got := seenQnameWriteOptions(Config{}); got != pebble.NoSync {
 		t.Fatalf("default seen-qname write option = %p, want %p", got, pebble.NoSync)

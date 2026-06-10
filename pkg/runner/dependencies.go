@@ -107,6 +107,9 @@ type DnstapInputFactory interface {
 
 // SeenQnameStore stores the persistent set of previously observed qnames.
 type SeenQnameStore interface {
+	// Has reports whether qname is recorded in the store. It may report
+	// true together with a non-nil error when the value was found but
+	// releasing lookup resources failed; callers should trust the bool.
 	Has(qname string) (bool, error)
 	MarkSeen(qname string, sync bool) error
 	Close() error

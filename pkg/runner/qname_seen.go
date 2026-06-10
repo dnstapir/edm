@@ -44,8 +44,13 @@ func (edm *DnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 
 	seen, err := store.Has(qname)
 	if err != nil {
+		// Has reports seen=true together with a non-nil error when the
+		// value was found but releasing its resources failed; honor the
+		// lookup result so an already-recorded qname is not republished
+		// as new. The insert is skipped either way: the qname is already
+		// recorded, or the store is in unknown shape.
 		edm.log.Error("unable to get key from seen-qname store", "error", err)
-		return false
+		return seen
 	}
 	if seen {
 		return true
