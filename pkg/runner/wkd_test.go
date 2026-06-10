@@ -2,8 +2,6 @@ package runner
 
 import (
 	"errors"
-	"io"
-	"log/slog"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -204,10 +202,7 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newWellKnownDomainsTracker: %s", err)
 	}
-	edm := &DnstapMinimiser{
-		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		deps: defaultDependencies(),
-	}
+	edm := discardEDM()
 
 	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %s", err)

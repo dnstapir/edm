@@ -414,6 +414,20 @@ func testJWK(t testing.TB) jwk.Key {
 	return key
 }
 
+// testJWKPair returns the shared test signing key together with its public
+// half, for tests that verify signed messages.
+func testJWKPair(t testing.TB) (priv, pub jwk.Key) {
+	t.Helper()
+
+	var err error
+	priv = testJWK(t)
+	pub, err = priv.PublicKey()
+	if err != nil {
+		t.Fatalf("derive public JWK: %s", err)
+	}
+	return priv, pub
+}
+
 func testJWKFile(t testing.TB) string {
 	t.Helper()
 

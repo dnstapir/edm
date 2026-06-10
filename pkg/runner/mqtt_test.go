@@ -3,8 +3,6 @@ package runner
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"crypto/rand"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -27,38 +25,6 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jws"
 )
 
-// newTestMQTTJWK builds an EdDSA jwk.Key suitable for the JWS pipeline.
-// The key's algorithm/key-id are populated the same way the production
-// key material loader does. Returned alongside the corresponding
-// public key so tests can verify signed messages.
-func newTestMQTTJWK(t *testing.T) (priv jwk.Key, pub ed25519.PublicKey) {
-	t.Helper()
-
-	pub, sk, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("ed25519.GenerateKey: %s", err)
-	}
-
-	priv, err = jwk.FromRaw(sk)
-	if err != nil {
-		t.Fatalf("jwk.FromRaw: %s", err)
-	}
-	if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
-		t.Fatalf("set Algorithm: %s", err)
-	}
-	if err := priv.Set(jwk.KeyIDKey, "test-mqtt-key"); err != nil {
-		t.Fatalf("set KeyID: %s", err)
-	}
-	return priv, pub
-}
-
-func cleanupMQTTTestMinimiser(edm *DnstapMinimiser) {
-	if edm.fsWatcher != nil {
-		_ = edm.fsWatcher.Close()
-		edm.fsWatcher = nil
-	}
-}
-
 // TestMqttSignWorkerSignsAndForwards covers the happy path: the worker
 // reads an unsigned payload from mqttPubCh, JWS-signs it with the supplied
 // JWK, and forwards the signed envelope on mqttSignedCh. We then verify
@@ -74,7 +40,7 @@ func cleanupMQTTTestMinimiser(edm *DnstapMinimiser) {
 func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		// The worker ranges over mqttPubCh and selects on ctx.Done() for
 		// cancellation. Bind a fresh context so this test does not affect other
@@ -82,7 +48,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		priv, pub := newTestMQTTJWK(t)
+		priv, pub := testJWKPair(t)
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -127,7 +93,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -137,7 +103,7 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 		edm.mqttSignedCh = make(chan []byte, 1)
 		edm.mqttSignedCh <- []byte("placeholder")
 
-		priv, _ := newTestMQTTJWK(t)
+		priv := testJWK(t)
 
 		var wg sync.WaitGroup
 		wg.Add(1)
@@ -171,12 +137,12 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		priv, pub := newTestMQTTJWK(t)
+		priv, pub := testJWKPair(t)
 
 		// Force a signing error by claiming the Ed25519 key uses RS256 - the
 		// jws library will refuse to sign.
@@ -261,7 +227,7 @@ func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *p
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -310,7 +276,7 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -341,7 +307,7 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&buf, nil))
 		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -379,7 +345,7 @@ func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&buf, nil))
 		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -505,7 +471,7 @@ func TestParseMQTTServerURL(t *testing.T) {
 func TestMQTTConfigAndPublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -552,7 +518,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 func TestMQTTPipelinePublishPath(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		jwk := testJWK(t)
@@ -580,7 +546,7 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 func TestMQTTPublishWorkerAwaitError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 		conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
 		edm.autopahoWg.Add(1)
@@ -642,7 +608,7 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 func TestNewQnamePublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupMQTTTestMinimiser(edm)
+		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
@@ -756,7 +722,7 @@ func TestSetupMQTT(t *testing.T) {
 			conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
 			edm := newSynctestDnstapMinimiser(t, defaultTC)
-			defer cleanupMQTTTestMinimiser(edm)
+			defer cleanupTestMinimiser(edm)
 			edm.deps.MQTTFactory = testMQTTFactory{
 				MQTTFactory: edm.deps.MQTTFactory,
 				newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
