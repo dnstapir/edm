@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/json"
@@ -32,6 +33,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
+	"github.com/yawning/cryptopan"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -166,10 +168,16 @@ func newDefaultTC() testConfiger {
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
+	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies())
+}
+
+func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps Dependencies) *DnstapMinimiser {
+	t.Helper()
+
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	edm, err := NewDnstapMinimiser(tc, logger)
+	edm, err := NewDnstapMinimiser(tc, logger, WithDependencies(deps))
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -185,6 +193,37 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	})
 
 	return edm
+}
+
+func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
+	t.Helper()
+
+	discardLogger := slog.NewTextHandler(io.Discard, nil)
+	logger := slog.New(discardLogger)
+
+	edm, err := NewDnstapMinimiser(tc, logger)
+	if err != nil {
+		t.Fatalf("unable to setup edm: %s", err)
+	}
+
+	t.Cleanup(func() {
+		cleanupTestMinimiser(edm)
+	})
+
+	return edm
+}
+
+func newTestDependencies() Dependencies {
+	deps := defaultDependencies()
+	deps.CryptopanFactory = fastTestCryptopanFactory{}
+	return deps
+}
+
+type fastTestCryptopanFactory struct{}
+
+func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error) {
+	sum := sha256.Sum256([]byte(key + "\x00" + salt))
+	return cryptopan.New(sum[:])
 }
 
 type testWatcherFactory struct {
@@ -214,7 +253,7 @@ func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser 
 func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
 	t.Helper()
 
-	deps := defaultDependencies()
+	deps := newTestDependencies()
 	deps.WatcherFactory = testWatcherFactory{}
 
 	edm, err := NewDnstapMinimiser(tc, logger, WithDependencies(deps))

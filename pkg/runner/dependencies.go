@@ -23,6 +23,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/smhanov/dawg"
+	"github.com/yawning/cryptopan"
 )
 
 // File is the file surface the runner needs. It is intentionally smaller than
@@ -156,6 +157,11 @@ type DawgLoader interface {
 	LoadDawgFile(fileName string) (dawg.Finder, time.Time, error)
 }
 
+// CryptopanFactory creates Crypto-PAn instances from configured key material.
+type CryptopanFactory interface {
+	NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error)
+}
+
 // Dependencies holds all external functionality used by DnstapMinimiser.
 // Zero-valued fields are filled with production implementations.
 type Dependencies struct {
@@ -170,6 +176,7 @@ type Dependencies struct {
 	MQTTFactory            MQTTFactory
 	KeyMaterialLoader      KeyMaterialLoader
 	DawgLoader             DawgLoader
+	CryptopanFactory       CryptopanFactory
 
 	ConfigUpdateDebounce    time.Duration
 	FSEventDebounce         time.Duration
@@ -218,6 +225,9 @@ func fillDependencies(deps Dependencies) Dependencies {
 	}
 	if deps.DawgLoader == nil {
 		deps.DawgLoader = realDawgLoader{fs: deps.FileSystem}
+	}
+	if deps.CryptopanFactory == nil {
+		deps.CryptopanFactory = realCryptopanFactory{}
 	}
 	if deps.ConfigUpdateDebounce == 0 {
 		deps.ConfigUpdateDebounce = 100 * time.Millisecond

@@ -24,6 +24,12 @@ func getCryptopanAESKey(key string, salt string) []byte {
 	return aesKey
 }
 
+type realCryptopanFactory struct{}
+
+func (realCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error) {
+	return createCryptopan(key, salt)
+}
+
 func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error {
 	// cacheEntries is the per-worker LRU size, validated here so a bad config
 	// value surfaces at load time instead of crashing a worker when it builds
@@ -36,7 +42,7 @@ func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
 		return fmt.Errorf("setCryptopan: invalid cache size %d", cacheEntries)
 	}
 
-	cpn, err := createCryptopan(key, salt)
+	cpn, err := edm.deps.CryptopanFactory.NewCryptopan(key, salt)
 	if err != nil {
 		return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
 	}

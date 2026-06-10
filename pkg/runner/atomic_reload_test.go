@@ -1,8 +1,6 @@
 package runner
 
 import (
-	"io"
-	"log/slog"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -34,12 +32,7 @@ import (
 // Run under -race to catch any unsynchronised access to the IPSet pointer
 // or the CIDR count.
 func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Prime the set so readers don't all hit the early-return nil path.
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
@@ -123,12 +116,7 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 // updating readers would either deadlock (test would time out) or race
 // (race detector would fail).
 func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Prime so readers exercise the non-nil snapshot branch initially.
 	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
@@ -197,12 +185,7 @@ func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 // do assert is that the cryptopan pointer is never observed nil mid-run,
 // and that the final generation reflects every successful rotation.
 func TestConcurrentSetCryptopanReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	var (
 		stop atomic.Bool
@@ -229,12 +212,11 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 		}()
 	}
 
-	// Rotate the cryptopan instance several times. setCryptopan is
-	// expensive (argon2 KDF, ~100–200ms per call) so we keep the count
-	// modest - the readers still spin tens of thousands of Loads in
-	// that window, which is plenty for the race detector to catch any
-	// regression. The salt stays constant; only the key changes so each
-	// call installs a distinct instance.
+	// Rotate the cryptopan instance several times. The test factory keeps this
+	// cheap while still returning a fresh instance for every rotation. The
+	// readers still spin thousands of Loads in that window, which is plenty
+	// for the race detector to catch any regression. The salt stays constant;
+	// only the key changes so each call installs a distinct instance.
 	const rotations = 20
 	for i := range rotations {
 		key := "rotation-key-"
@@ -275,12 +257,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 // recursors reject them, but the code intentionally handles the case;
 // this test pins the behaviour.
 func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
 	if err := edm.setIgnoredQuestionNames(); err != nil {
@@ -353,12 +330,7 @@ func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 // before any further parsing - silently allowing a packet with no
 // QueryAddress through would defeat operator policy.
 func TestClientIPIsIgnoredEmptyQueryAddress(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Active list - exercise the fail-closed path.
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"

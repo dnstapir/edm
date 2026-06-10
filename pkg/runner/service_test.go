@@ -29,7 +29,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	edm, err := NewDnstapMinimiser(
 		defaultTC, logger,
 		WithLoggerLevel(loggerLevel),
-		WithDependencies(Dependencies{PprofListenAddr: "127.0.0.1:0"}),
+		WithDependencies(Dependencies{PprofListenAddr: "127.0.0.1:0", CryptopanFactory: fastTestCryptopanFactory{}}),
 	)
 	if err != nil {
 		t.Fatalf("NewDnstapMinimiser: %s", err)
@@ -42,7 +42,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	if edm.deps.PprofListenAddr != "127.0.0.1:0" {
 		t.Fatalf("PprofListenAddr = %q, want custom value", edm.deps.PprofListenAddr)
 	}
-	if edm.deps.FileSystem == nil || edm.deps.Clock == nil || edm.deps.HTTPServerRunner == nil {
+	if edm.deps.FileSystem == nil || edm.deps.Clock == nil || edm.deps.HTTPServerRunner == nil || edm.deps.CryptopanFactory == nil {
 		t.Fatal("WithDependencies did not fill nil dependency fields")
 	}
 }
@@ -98,6 +98,7 @@ newqname-buffer = 1
 	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
 		return http.ErrServerClosed
 	})
+	deps.CryptopanFactory = fastTestCryptopanFactory{}
 	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), WithDependencies(deps))
 	if err != nil {
 		t.Fatal(err)

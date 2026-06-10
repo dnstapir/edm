@@ -2,14 +2,14 @@ package runner
 
 import (
 	"bytes"
-	"io"
-	"log/slog"
+	"errors"
 	"net/netip"
 	"testing"
 
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/spaolacci/murmur3"
+	"github.com/yawning/cryptopan"
 )
 
 func TestPseudonymiseDnstap(t *testing.T) {
@@ -43,7 +43,7 @@ func TestPseudonymiseDnstap(t *testing.T) {
 		},
 	}
 
-	edm := newTestDnstapMinimiser(t, defaultTC)
+	edm := newRealCryptopanTestDnstapMinimiser(t, defaultTC)
 
 	if edm.testCryptopanCache() != nil {
 		if edm.testCryptopanCache().Len() != 0 {
@@ -340,7 +340,7 @@ func BenchmarkPseudonymiseDnstapWithCache4(b *testing.B) {
 	origQueryAddr4 := netip.MustParseAddr("198.51.100.20")
 	origRespAddr4 := netip.MustParseAddr("198.51.100.30")
 
-	edm := newTestDnstapMinimiser(b, defaultTC)
+	edm := newRealCryptopanTestDnstapMinimiser(b, defaultTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -364,7 +364,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache4(b *testing.B) {
 	uncachedTC := defaultTC
 	uncachedTC.CryptopanAddressEntries = 0
 
-	edm := newTestDnstapMinimiser(b, uncachedTC)
+	edm := newRealCryptopanTestDnstapMinimiser(b, uncachedTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -385,7 +385,7 @@ func BenchmarkPseudonymiseDnstapWithCache6(b *testing.B) {
 	origQueryAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 	origRespAddr6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:ddee")
 
-	edm := newTestDnstapMinimiser(b, defaultTC)
+	edm := newRealCryptopanTestDnstapMinimiser(b, defaultTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -409,7 +409,7 @@ func BenchmarkPseudonymiseDnstapWithoutCache6(b *testing.B) {
 	uncachedTC := defaultTC
 	uncachedTC.CryptopanAddressEntries = 0
 
-	edm := newTestDnstapMinimiser(b, uncachedTC)
+	edm := newRealCryptopanTestDnstapMinimiser(b, uncachedTC)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -471,6 +471,38 @@ func TestSetCryptopanInvalidCacheSize(t *testing.T) {
 	if err := edm.setCryptopan("key", "salt", -1); err == nil {
 		t.Fatal("setCryptopan accepted negative cache size")
 	}
+}
+
+func TestSetCryptopanFactoryErrorDoesNotAdvanceGeneration(t *testing.T) {
+	factory := &secondCallErrorCryptopanFactory{}
+	deps := newTestDependencies()
+	deps.CryptopanFactory = factory
+	edm := newTestDnstapMinimiserWithDependencies(t, defaultTC, deps)
+	gen := edm.cryptopanGen.Load()
+	cpn := edm.cryptopan.Load()
+
+	err := edm.setCryptopan("key2", defaultTC.CryptopanKeySalt, defaultTC.CryptopanAddressEntries)
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("setCryptopan error = %v, want errInjected", err)
+	}
+	if got := edm.cryptopanGen.Load(); got != gen {
+		t.Fatalf("cryptopanGen after failed setCryptopan = %d, want %d", got, gen)
+	}
+	if got := edm.cryptopan.Load(); got != cpn {
+		t.Fatal("cryptopan pointer changed after failed setCryptopan")
+	}
+}
+
+type secondCallErrorCryptopanFactory struct {
+	calls int
+}
+
+func (factory *secondCallErrorCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error) {
+	factory.calls++
+	if factory.calls > 1 {
+		return nil, errInjected
+	}
+	return fastTestCryptopanFactory{}.NewCryptopan(key, salt)
 }
 
 // TestPseudonymiseIPCacheBranches covers the three pseudonymiseIP cache
@@ -580,12 +612,7 @@ func TestIPConversionErrorsAndPseudonymiseInvalid(t *testing.T) {
 // didn't strictly advance on each rotation, stale entries from the
 // previous key would silently leak through.
 func TestSetCryptopanBumpsGeneration(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// NewDnstapMinimiser called setCryptopan once during construction; the
 	// generation we observe here is therefore the post-construction
@@ -636,12 +663,7 @@ func TestSetCryptopanBumpsGeneration(t *testing.T) {
 // re-introduced shared cache state on setCryptopan it would re-introduce the
 // contention this design avoids, so we pin the contract here.
 func TestSetCryptopanCacheEntriesArgumentIgnored(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Wildly different cacheEntries values - including 0 (the sentinel that
 	// disables the per-worker cache) and a very large value - must all behave

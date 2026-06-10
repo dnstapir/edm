@@ -137,12 +137,7 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *wellKnownDomainsTracker) {
 	t.Helper()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	dBuilder := dawg.New()
 	for _, domain := range knownDomains {

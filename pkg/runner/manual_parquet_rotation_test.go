@@ -2,8 +2,6 @@ package runner
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -253,18 +251,7 @@ func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*Dnst
 func newManualParquetRotationTestMinimiser(t *testing.T) *DnstapMinimiser {
 	t.Helper()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := NewDnstapMinimiser(defaultTC, logger)
-	if err != nil {
-		t.Fatalf("NewDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() {
-		if edm.fsWatcher != nil {
-			_ = edm.fsWatcher.Close()
-		}
-	})
-
-	return edm
+	return newTestDnstapMinimiser(t, defaultTC)
 }
 
 func writeManualParquetRotationTestDawgFile(t *testing.T, domains ...string) (string, dawg.Finder) {
