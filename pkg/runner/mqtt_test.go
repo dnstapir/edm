@@ -8,6 +8,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -662,6 +664,78 @@ func TestNewQnamePublisher(t *testing.T) {
 			t.Fatal("mqttPubCh was not closed")
 		}
 	})
+}
+
+// TestRunMQTTPipelineOutlivesRunCtx verifies the MQTT pipeline context is
+// detached from Run's context: cancelling Run must not cancel the MQTT
+// pipeline before the shutdown path has drained the minimisers and closed
+// newQnamePublisherCh, so buffered new_qname events can still be signed and
+// queued during shutdown (the load-bearing shutdown ordering in Run).
+func TestRunMQTTPipelineOutlivesRunCtx(t *testing.T) {
+	runCoreCleanup(t)
+	tc := runCoreTC(t)
+	tc.DisableMQTT = false
+	certPath, keyPath, _ := testCertFiles(t)
+	tc.MQTTClientCertFile = certPath
+	tc.MQTTClientKeyFile = keyPath
+	tc.MQTTSigningKeyFile = testJWKFile(t)
+	tc.MQTTServer = "mqtts://example.test:8883"
+
+	input := newBlockingTestDnstapInput()
+	input.cancelSeen = make(chan struct{})
+	input.release = make(chan struct{})
+
+	deps := newTestDependencies()
+	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
+		return http.ErrServerClosed
+	})
+	listener := newTestNetListener("unix", tc.InputUnix)
+	deps.ListenerFactory = testListenerFactory{
+		ListenerFactory: deps.ListenerFactory,
+		listen: func(_, _ string) (net.Listener, error) {
+			return listener, nil
+		},
+	}
+	deps.DnstapInputFactory = testDnstapInputFactory{
+		DnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) DnstapInput {
+			return input
+		},
+	}
+	mqttCtxCh := make(chan context.Context, 1)
+	conn := &fakeAutoPahoConnection{}
+	deps.MQTTFactory = testMQTTFactory{
+		MQTTFactory: deps.MQTTFactory,
+		newConnection: func(ctx context.Context, _ autopaho.ClientConfig) (MQTTConnectionManager, error) {
+			mqttCtxCh <- ctx
+			return conn, nil
+		},
+	}
+	edm := newTestDnstapMinimiserWithDependencies(t, tc, deps)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- edm.Run(ctx)
+	}()
+
+	<-input.ready
+	mqttCtx := <-mqttCtxCh
+	cancel()
+	<-input.cancelSeen
+	// ReadInto is now blocked on input.release, holding Run at
+	// dnstapInputWg.Wait() — before the shutdown path closes
+	// newQnamePublisherCh and calls mqttCancel.
+	if err := mqttCtx.Err(); err != nil {
+		t.Fatalf("MQTT pipeline context cancelled by Run ctx cancel: %v", err)
+	}
+	close(input.release)
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run err = %v, want nil", err)
+	}
+	if mqttCtx.Err() == nil {
+		t.Fatal("MQTT pipeline context not cancelled after Run returned")
+	}
 }
 
 type testMQTTFactory struct {

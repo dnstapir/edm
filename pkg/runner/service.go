@@ -182,7 +182,13 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 			return fmt.Errorf("unable to load x509 mqtt client cert: %w", err)
 		}
 
-		mqttCtx, mqttCancel = context.WithCancel(ctx)
+		// The MQTT pipeline context is deliberately detached from Run's
+		// ctx: cancelling Run must not kill the publisher before the
+		// minimisers have drained and newQnamePublisherCh has been closed
+		// (see the shutdown ordering above). The pipeline is stopped by the
+		// explicit mqttCancel() on the shutdown path below; the deferred
+		// mqttCancel() covers the error returns in between.
+		mqttCtx, mqttCancel = context.WithCancel(context.Background())
 		if err := edm.setupMQTT(mqttCtx); err != nil {
 			mqttCancel()
 			return fmt.Errorf("unable to setup mqtt: %w", err)

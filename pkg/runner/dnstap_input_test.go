@@ -110,9 +110,15 @@ func (listener *testNetListener) isClosed() bool {
 }
 
 type testDnstapInput struct {
-	ready     chan struct{}
-	done      chan struct{}
-	err       error
+	ready chan struct{}
+	done  chan struct{}
+	err   error
+	// cancelSeen, if non-nil, is closed once ReadInto has observed ctx
+	// cancellation, letting tests synchronize with Run's shutdown path.
+	cancelSeen chan struct{}
+	// release, if non-nil, blocks ReadInto's return after ctx cancellation
+	// until the test closes it, holding Run at dnstapInputWg.Wait().
+	release   chan struct{}
 	readyOnce sync.Once
 	doneOnce  sync.Once
 }
@@ -131,6 +137,12 @@ func (input *testDnstapInput) ReadInto(ctx context.Context, _ chan<- []byte) err
 		return input.err
 	}
 	<-ctx.Done()
+	if input.cancelSeen != nil {
+		close(input.cancelSeen)
+	}
+	if input.release != nil {
+		<-input.release
+	}
 	return nil
 }
 
