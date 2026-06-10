@@ -527,12 +527,20 @@ func discardEDM() *DnstapMinimiser {
 
 type faultingFileSystem struct {
 	FileSystem
+	readFile func(string) ([]byte, error)
 	create   func(string) (File, error)
 	rename   func(string, string) error
 	remove   func(string) error
 	mkdirAll func(string, os.FileMode) error
 	stat     func(string) (os.FileInfo, error)
 	readDir  func(string) ([]os.DirEntry, error)
+}
+
+func (ffs faultingFileSystem) ReadFile(name string) ([]byte, error) {
+	if ffs.readFile != nil {
+		return ffs.readFile(name)
+	}
+	return ffs.FileSystem.ReadFile(name)
 }
 
 func (ffs faultingFileSystem) Create(name string) (File, error) {

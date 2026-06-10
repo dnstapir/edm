@@ -10,7 +10,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-// The tests in this file exercise the lock-free reload paths in runner.go:
+// The tests in this file exercise the lock-free reload paths across the
+// runner subsystems:
 // ignored-IP and ignored-question lookups read
 // atomic.Pointer snapshots on the hot path with no mutex, and reload
 // writers atomic.Store fresh values. They are designed to fail under
@@ -109,7 +110,7 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 // the DAWG-backed ignored-question set, which is stored in an
 // atomic.Pointer[dawgFinderHolder]. The wrapper exists because dawg.Finder
 // is an interface and atomic.Pointer wants a concrete type - see the
-// design note on the DnstapMinimiser struct in runner.go.
+// design note on the DnstapMinimiser struct.
 //
 // As with the IP test the assertion is purely "no race, no panic". A
 // future change that, say, reintroduced ignoredQuestionsMutex without
@@ -247,7 +248,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 
 // TestQuestionIsIgnoredMultipleQuestions documents the explicit "any
 // matches" policy in questionIsIgnored when a DNS message carries more
-// than one question. The runner.go comment states: "if there happens to
+// than one question. The minimiser code states: "if there happens to
 // be multiple questions in the packet we consider the message ignored if
 // any of them matches" - but no existing test exercises a multi-question
 // message, so a future refactor that, say, only inspected msg.Question[0]

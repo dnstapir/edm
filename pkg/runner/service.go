@@ -83,7 +83,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		stop()
 		if edm.fsWatcher != nil {
 			if err := edm.fsWatcher.Close(); err != nil {
-				edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
+				if !errors.Is(err, fsnotify.ErrClosed) {
+					edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
+				}
 			}
 		}
 		edm.running.Store(false)
@@ -350,7 +352,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
 	// wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
 	if err := edm.fsWatcher.Close(); err != nil {
-		edm.log.Error("Run: fsWatcher.Close error", "error", err)
+		if !errors.Is(err, fsnotify.ErrClosed) {
+			edm.log.Error("Run: fsWatcher.Close error", "error", err)
+		}
 	}
 
 	// Wait for all workers to exit. The HTTP servers are shut down by the

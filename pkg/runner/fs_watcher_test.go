@@ -86,6 +86,41 @@ func TestFSWatchersAndEventWatcher(t *testing.T) {
 	})
 }
 
+func TestFSEventWatcherStopsPendingTimersOnClose(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		watcher := newTestFileWatcher()
+		edm.fsWatcher = watcher
+		watched := filepath.Join(t.TempDir(), "watched.txt")
+		var calls atomic.Int32
+		edm.fsWatcherFuncs = map[string][]func() error{
+			watched: {
+				func() error {
+					calls.Add(1)
+					return nil
+				},
+			},
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.fsEventWatcher(&wg)
+
+		watcher.events <- fsnotifyEvent(watched)
+		synctest.Wait()
+		if err := edm.fsWatcher.Close(); err != nil {
+			t.Fatal(err)
+		}
+		wg.Wait()
+
+		time.Sleep(edm.deps.FSEventDebounce)
+		synctest.Wait()
+		if calls.Load() != 0 {
+			t.Fatalf("watcher callback ran after close: calls = %d", calls.Load())
+		}
+	})
+}
+
 type testFileWatcher struct {
 	events    chan fsnotify.Event
 	errors    chan error

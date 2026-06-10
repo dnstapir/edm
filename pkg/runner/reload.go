@@ -33,9 +33,13 @@ func configUpdater(ctx context.Context, viperNotifyCh chan fsnotify.Event, edm *
 
 	// Start with creating a timer that will call the update function in the
 	// future but stop it so it never runs by default.
-	var e fsnotify.Event
+	var eventMutex sync.Mutex
+	var event fsnotify.Event
 	t := edm.deps.Clock.AfterFunc(math.MaxInt64, func() {
-		edm.log.Info("configUpdater: config file was modified", "filename", e.Name)
+		eventMutex.Lock()
+		eventName := event.Name
+		eventMutex.Unlock()
+		edm.log.Info("configUpdater: config file was modified", "filename", eventName)
 
 		oldConf := edm.getConfig()
 
@@ -163,14 +167,16 @@ func configUpdater(ctx context.Context, viperNotifyCh chan fsnotify.Event, edm *
 
 	for {
 		select {
-		case event, ok := <-viperNotifyCh:
+		case ev, ok := <-viperNotifyCh:
 			if !ok {
 				// Mirror the ctx.Done() branch: stop the debounce timer so a
 				// pending callback cannot fire after configUpdater returns.
 				t.Stop()
 				return
 			}
-			e = event
+			eventMutex.Lock()
+			event = ev
+			eventMutex.Unlock()
 			// If an event has been received this means we now want to
 			// enable the timer so the function will be called "soon", but
 			// if more events occur we will reset it again. This allows us
@@ -191,6 +197,13 @@ func (edm *DnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) {
 	// we keep a timer per registered filename
 	timers := map[string]Timer{}
 	timersMutex := new(sync.Mutex)
+	defer func() {
+		timersMutex.Lock()
+		defer timersMutex.Unlock()
+		for _, t := range timers {
+			t.Stop()
+		}
+	}()
 
 	callbackHandler := func(callbacks []func() error, name string) func() {
 		return func() {

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -429,7 +430,23 @@ type realKeyMaterialLoader struct {
 }
 
 func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Certificate, error) {
-	return tls.LoadX509KeyPair(certPath, keyPath)
+	certPath = filepath.Clean(certPath)
+	keyPath = filepath.Clean(keyPath)
+
+	certPEMBlock, err := rkl.fs.ReadFile(certPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("read cert file %q: %w", certPath, err)
+	}
+	keyPEMBlock, err := rkl.fs.ReadFile(keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("read key file %q: %w", keyPath, err)
+	}
+
+	cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("parse key pair %q/%q: %w", certPath, keyPath, err)
+	}
+	return cert, nil
 }
 
 func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) {

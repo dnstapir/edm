@@ -23,13 +23,35 @@ func TestDefaultDependenciesFillCryptopanFactory(t *testing.T) {
 func TestCertPoolAndJWKFiles(t *testing.T) {
 	loader := realKeyMaterialLoader{fs: osFileSystem{}}
 
-	_, _, caPath := testCertFiles(t)
+	certPath, tlsKeyPath, caPath := testCertFiles(t)
 	pool, err := loader.LoadCertPool(caPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pool.Equal(x509.NewCertPool()) {
 		t.Fatal("cert pool has no certificates")
+	}
+
+	cert, err := loader.LoadKeyPair(certPath, tlsKeyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cert.Certificate) == 0 {
+		t.Fatal("TLS key pair has no certificates")
+	}
+	if _, err := loader.LoadKeyPair(certPath, filepath.Join(t.TempDir(), "missing-key.pem")); err == nil {
+		t.Fatal("missing TLS key file succeeded")
+	}
+	faultingLoader := realKeyMaterialLoader{
+		fs: faultingFileSystem{
+			FileSystem: osFileSystem{},
+			readFile: func(string) ([]byte, error) {
+				return nil, errInjected
+			},
+		},
+	}
+	if _, err := faultingLoader.LoadKeyPair(certPath, tlsKeyPath); !errors.Is(err, errInjected) {
+		t.Fatalf("faulting LoadKeyPair error = %v, want errInjected", err)
 	}
 
 	if _, err := loader.LoadCertPool(writeTempFile(t, "bad-ca.pem", []byte("not pem"))); err == nil {
@@ -39,8 +61,8 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 		t.Fatal("missing CA file succeeded")
 	}
 
-	keyPath := testJWKFile(t)
-	key, err := loader.LoadEdDSAJWK(keyPath)
+	jwkPath := testJWKFile(t)
+	key, err := loader.LoadEdDSAJWK(jwkPath)
 	if err != nil {
 		t.Fatal(err)
 	}
