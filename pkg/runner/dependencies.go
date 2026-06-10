@@ -260,19 +260,19 @@ func fillDependencies(deps Dependencies) Dependencies {
 type osFileSystem struct{}
 
 func (osFileSystem) Open(name string) (File, error) {
-	return os.Open(name)
+	return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }
 
 func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
-	return os.OpenFile(name, flag, perm)
+	return os.OpenFile(name, flag, perm) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }
 
 func (osFileSystem) Create(name string) (File, error) {
-	return os.Create(name)
+	return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
 }
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name)
+	return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }
 
 func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
