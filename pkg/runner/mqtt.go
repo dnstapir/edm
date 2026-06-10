@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -122,7 +125,8 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm MQTTConnec
 	}
 	topic := "events/up/" + mqttJWK.KeyID() + "/new_qname"
 
-	edm.log.Info("starting signing MQTT publisher",
+	edm.log.Info(
+		"starting signing MQTT publisher",
 		"jwk_id", mqttJWK.KeyID(),
 		"jwk_alg", mqttJWK.Algorithm(),
 		"topic", topic,
@@ -237,4 +241,90 @@ func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm MQTTConnec
 		default:
 		}
 	}
+}
+
+// setupMQTT prepares the MQTT signing/publish pipeline from the current
+// config and starts it. It returns an error for any setup failure; callers
+// decide how to react (Run terminates the process). This mirrors the
+// error-returning style of setupHistogramSender.
+func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
+	conf := edm.getConfig()
+
+	mqttJWK, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.MQTTSigningKeyFile)
+	if err != nil {
+		return fmt.Errorf("setupMQTT: unable to parse jwk from 'mqtt-signing-key-file': %w", err)
+	}
+
+	// Leaving these nil will use the OS default CA certs
+	var mqttCACertPool *x509.CertPool
+
+	if conf.MQTTCAFile != "" {
+		// Setup CA cert for validating the MQTT connection
+		mqttCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.MQTTCAFile)
+		if err != nil {
+			return fmt.Errorf("setupMQTT: failed to create CA cert pool for '--mqtt-ca-file': %w", err)
+		}
+	}
+
+	var mqttFileQueue *file.Queue
+	if !conf.DisableMQTTFilequeue {
+		mqttQueueDir := filepath.Join(conf.DataDir, "mqtt", "queue")
+
+		err = edm.deps.FileSystem.MkdirAll(mqttQueueDir, 0o750)
+		if err != nil {
+			return fmt.Errorf("setupMQTT: unable to create MQTT queue dir %q: %w", mqttQueueDir, err)
+		}
+
+		mqttFileQueue, err = edm.deps.MQTTFactory.NewFileQueue(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
+		if err != nil {
+			return fmt.Errorf("setupMQTT: unable to init MQTT queue file based queue: %w", err)
+		}
+	}
+
+	mqttClientID := mqttJWK.KeyID() + "-edm"
+
+	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
+
+	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
+	if err != nil {
+		return fmt.Errorf("setupMQTT: unable to create autopaho config: %w", err)
+	}
+
+	autopahoCm, err := edm.deps.MQTTFactory.NewConnection(ctx, autopahoConfig)
+	if err != nil {
+		return fmt.Errorf("setupMQTT: unable to create autopaho connection manager: %w", err)
+	}
+
+	// Connect to the broker - this will return immediately after initiating the connection process.
+	signWorkers := conf.MQTTSignWorkers
+	if signWorkers <= 0 {
+		signWorkers = runtime.GOMAXPROCS(0)
+	}
+	edm.startMQTTPipeline(ctx, autopahoCm, mqttJWK, mqttFileQueue != nil, signWorkers)
+
+	return nil
+}
+
+func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	edm.log.Info("newQnamePublisher: starting")
+
+	for newQname := range edm.newQnamePublisherCh {
+		newQnameJSON, err := json.Marshal(newQname)
+		if err != nil {
+			edm.log.Error("unable to create json for new_qname event", "error", err)
+			continue
+		}
+
+		select {
+		case edm.mqttPubCh <- newQnameJSON:
+		case <-ctx.Done():
+			edm.log.Info("newQnamePublisher: the MQTT connection is shutting down, stop writing")
+			// No need to break out of for loop here because
+			// edm.newQnamePublisherCh is already closed in Run()
+		}
+	}
+	close(edm.mqttPubCh)
+	edm.log.Info("newQnamePublisher: exiting loop")
 }

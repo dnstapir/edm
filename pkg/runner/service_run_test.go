@@ -194,15 +194,15 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("loadDawgFile error", func(t *testing.T) {
+	t.Run("DawgLoader.LoadDawgFile error", func(t *testing.T) {
 		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.WellKnownDomainsFile = filepath.Join(t.TempDir(), "missing.dawg")
 		edm := newTestDnstapMinimiser(t, tc)
 		pinHTTPServersToEphemeral(t, edm)
 		err := edm.Run(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "loadDawgFile") {
-			t.Fatalf("err = %v, want loadDawgFile failure", err)
+		if err == nil || !strings.Contains(err.Error(), "DawgLoader.LoadDawgFile") {
+			t.Fatalf("err = %v, want DawgLoader.LoadDawgFile failure", err)
 		}
 	})
 

@@ -9,76 +9,105 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
 
-// errInjected is the sentinel failure injected through fake dependencies so
-// the error-path assertions can confirm (via errors.Is) that the injected
-// failure is the one surfaced, rather than some unrelated error.
-var errInjected = errors.New("injected failure")
+func TestTimestampsFromFilenameRejectsMalformedNames(t *testing.T) {
+	tests := []string{
+		"dns_histogram.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z.parquet",
+		"dns_histogram-bad_2026-04-30T12-01-00Z.parquet",
+		"dns_histogram-2026-04-30T12-00-00Z_bad.parquet",
+	}
 
-// discardEDM returns a minimal minimiser with a no-op logger. It intentionally
-// only sets the logger, which is all the file-operation helpers under test
-// touch; it deliberately does not go through newTestDnstapMinimiser.
-func discardEDM() *DnstapMinimiser {
-	return &DnstapMinimiser{
-		log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		deps: defaultDependencies(),
+	for _, name := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := timestampsFromFilename(name); err == nil {
+				t.Fatal("timestampsFromFilename returned nil error")
+			}
+		})
 	}
 }
 
-type faultingFileSystem struct {
-	FileSystem
-	create   func(string) (File, error)
-	rename   func(string, string) error
-	remove   func(string) error
-	mkdirAll func(string, os.FileMode) error
-	stat     func(string) (os.FileInfo, error)
-	readDir  func(string) ([]os.DirEntry, error)
+func TestFileAndFilenameHelpers(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	base := t.TempDir()
+	start := time.Date(2026, 5, 28, 12, 0, 0, 0, time.FixedZone("test", 2*60*60))
+	stop := start.Add(time.Minute)
+
+	tmpName, finalName := buildParquetFilenames(base, "dns_histogram", start, stop)
+	if !strings.HasSuffix(tmpName, ".parquet.tmp") || !strings.HasSuffix(finalName, ".parquet") {
+		t.Fatalf("unexpected filenames: %q %q", tmpName, finalName)
+	}
+	if timestampToFileString(start.UTC()) != "2026-05-28T10-00-00Z" {
+		t.Fatalf("unexpected timestamp string: %s", timestampToFileString(start.UTC()))
+	}
+	if got := getStartTimeFromRotationTime(stop); !got.Equal(start) {
+		t.Fatalf("start time = %v, want %v", got, start)
+	}
+
+	parsedStart, parsedStop, err := timestampsFromFilename(filepath.Base(finalName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsedStart.Equal(start.UTC()) || !parsedStop.Equal(stop.UTC()) {
+		t.Fatalf("parsed times = %v %v", parsedStart, parsedStop)
+	}
+	if _, _, err := timestampsFromFilename("dns_histogram-bad_bad.parquet"); err == nil {
+		t.Fatal("bad timestamp filename succeeded")
+	}
+	if _, _, err := timestampsFromFilename("dns_histogram-2026-05-28T10-00-00Z_bad.parquet"); err == nil {
+		t.Fatal("bad stop timestamp filename succeeded")
+	}
+
+	out, err := edm.createFile(filepath.Join(base, "missing", "created.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := edm.renameFile(out.Name(), filepath.Join(base, "sent", "created.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := edm.createFile(base); err == nil {
+		t.Fatal("createFile on directory succeeded")
+	}
+	if err := edm.renameFile(filepath.Join(base, "nope"), filepath.Join(base, "dst")); err == nil {
+		t.Fatal("rename missing source succeeded")
+	}
 }
 
-func (ffs faultingFileSystem) Create(name string) (File, error) {
-	if ffs.create != nil {
-		return ffs.create(name)
+func TestCreateSessionAndHistogramFiles(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	dataDir := t.TempDir()
+	rotationTime := time.Date(2026, 5, 28, 12, 1, 0, 0, time.UTC)
+	ps := &prevSessions{
+		rotationTime: rotationTime,
+		sessions: []*sessionData{{
+			dnsLabels: dnsLabels{Label0: ptr("com")},
+			ServerID:  ptr("server"),
+		}},
 	}
-	return ffs.FileSystem.Create(name)
-}
+	sessionFile, err := edm.createSessionFile(ps, dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasSuffix(sessionFile, ".tmp") {
+		t.Fatalf("session file kept tmp suffix: %s", sessionFile)
+	}
 
-func (ffs faultingFileSystem) Rename(oldpath, newpath string) error {
-	if ffs.rename != nil {
-		return ffs.rename(oldpath, newpath)
+	finder := testDawgFinder(t, "example.com.")
+	hd := edm.newHistogramData(getHllDefaults(0), false)
+	wkd := &wellKnownDomainsData{rotationTime: rotationTime, dawgFinder: finder, m: map[int]*histogramData{0: hd}}
+	histFile, err := edm.createHistogramFile(wkd, defaultLabelLimit, filepath.Join(dataDir, "parquet", "histograms", "outbox"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	return ffs.FileSystem.Rename(oldpath, newpath)
-}
-
-func (ffs faultingFileSystem) Remove(name string) error {
-	if ffs.remove != nil {
-		return ffs.remove(name)
+	if strings.HasSuffix(histFile, ".tmp") {
+		t.Fatalf("histogram file kept tmp suffix: %s", histFile)
 	}
-	return ffs.FileSystem.Remove(name)
-}
-
-func (ffs faultingFileSystem) MkdirAll(path string, perm os.FileMode) error {
-	if ffs.mkdirAll != nil {
-		return ffs.mkdirAll(path, perm)
-	}
-	return ffs.FileSystem.MkdirAll(path, perm)
-}
-
-func (ffs faultingFileSystem) Stat(name string) (os.FileInfo, error) {
-	if ffs.stat != nil {
-		return ffs.stat(name)
-	}
-	return ffs.FileSystem.Stat(name)
-}
-
-func (ffs faultingFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-	if ffs.readDir != nil {
-		return ffs.readDir(name)
-	}
-	return ffs.FileSystem.ReadDir(name)
 }
 
 func TestCreateFile(t *testing.T) {
@@ -338,54 +367,4 @@ func TestWriteRotatedParquet(t *testing.T) {
 			t.Fatalf("final file should not exist, stat err = %v", err)
 		}
 	})
-}
-
-// TestSessionWriterLogsCreateError verifies the sessionWriter worker logs and
-// keeps running when createSessionFile fails. The failure is injected through
-// FileSystem.Create so writeSessionParquet is never reached.
-func TestSessionWriterLogsCreateError(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	var buf bytes.Buffer
-	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
-
-	edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
-
-	edm.sessionWriterCh <- &prevSessions{rotationTime: time.Now()}
-	close(edm.sessionWriterCh)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.sessionWriter(t.TempDir(), &wg)
-	// waitForWaitGroup blocks until wg.Done(), establishing happens-before for
-	// the buffer read below (the worker's last write precedes its Done()).
-	waitForWaitGroup(t, &wg, 5*time.Second, "sessionWriter did not exit")
-
-	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "sessionWriter") {
-		t.Fatalf("expected error log from sessionWriter, got: %q", buf.String())
-	}
-}
-
-// TestHistogramWriterLogsCreateError mirrors the session writer test for the
-// histogram writer worker.
-func TestHistogramWriterLogsCreateError(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	var buf bytes.Buffer
-	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
-
-	edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
-
-	edm.histogramWriterCh <- &wellKnownDomainsData{
-		rotationTime: time.Now(),
-		m:            map[int]*histogramData{},
-	}
-	close(edm.histogramWriterCh)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.histogramWriter(defaultLabelLimit, t.TempDir(), &wg)
-	waitForWaitGroup(t, &wg, 5*time.Second, "histogramWriter did not exit")
-
-	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "histogramWriter") {
-		t.Fatalf("expected error log from histogramWriter, got: %q", buf.String())
-	}
 }

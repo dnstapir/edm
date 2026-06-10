@@ -5,14 +5,19 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/dnstapir/edm/pkg/protocols"
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
 	"github.com/lestrrat-go/jwx/v2/jwa"
@@ -22,7 +27,7 @@ import (
 
 // newTestMQTTJWK builds an EdDSA jwk.Key suitable for the JWS pipeline.
 // The key's algorithm/key-id are populated the same way the production
-// loader (edDsaJWKFromFile) does. Returned alongside the corresponding
+// key material loader does. Returned alongside the corresponding
 // public key so tests can verify signed messages.
 func newTestMQTTJWK(t *testing.T) (priv jwk.Key, pub ed25519.PublicKey) {
 	t.Helper()
@@ -509,4 +514,260 @@ func TestParseMQTTServerURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMQTTConfigAndPublisher(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	ctx, _ := testRunContext(t)
+
+	cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ClientID != "client-id" || cfg.KeepAlive != 30 || cfg.TlsCfg.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("unexpected MQTT config: %#v", cfg)
+	}
+	cfg.OnConnectionUp(nil, nil)
+	cfg.OnConnectError(errors.New("connect"))
+	cfg.OnClientError(errors.New("client"))
+	cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
+	cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
+	if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30, nil); err == nil {
+		t.Fatal("bad MQTT URL succeeded")
+	}
+
+	jwk := testJWK(t)
+	conn := &fakeAutoPahoConnection{}
+	edm.startMQTTPipeline(ctx, conn, jwk, true, 1)
+	edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+	close(edm.mqttPubCh)
+	edm.autopahoWg.Wait()
+	conn.mu.Lock()
+	queued := len(conn.queued)
+	conn.mu.Unlock()
+	if queued != 1 {
+		t.Fatalf("queued messages = %d, want 1", queued)
+	}
+
+	var buf bytes.Buffer
+	pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "debug")
+	pahoDebugLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "debug")
+	pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Printf("hello %s", "error")
+	pahoErrorLogger{logger: slog.New(slog.NewTextHandler(&buf, nil))}.Println("hello", "error")
+	if !strings.Contains(buf.String(), "hello") {
+		t.Fatalf("logger output = %q", buf.String())
+	}
+}
+
+func TestMQTTPipelinePublishPath(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	ctx, _ := testRunContext(t)
+	jwk := testJWK(t)
+	conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+
+	edm.startMQTTPipeline(ctx, conn, jwk, false, 1)
+	edm.mqttPubCh <- []byte(`{"publish":"now"}`)
+	select {
+	case <-conn.publishedCh:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for publish")
+	}
+	close(edm.mqttPubCh)
+	edm.autopahoWg.Wait()
+
+	conn.mu.Lock()
+	published := len(conn.published)
+	conn.mu.Unlock()
+	if published != 1 {
+		t.Fatalf("published messages = %d, want 1", published)
+	}
+}
+
+func TestMQTTPublishWorkerAwaitError(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
+
+	edm.autopahoWg.Add(1)
+	go edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
+	waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
+}
+
+type fakeAutoPahoConnection struct {
+	mu          sync.Mutex
+	queued      []*autopaho.QueuePublish
+	published   []*paho.Publish
+	awaitErr    error
+	publishedCh chan struct{}
+	// publishErr, if non-nil, is returned from Publish so the
+	// mqttPublishWorker's error log branch can be exercised.
+	publishErr error
+	// publishResp, if non-nil, is returned from Publish; otherwise
+	// Publish returns &paho.PublishResponse{} (ReasonCode 0).
+	publishResp *paho.PublishResponse
+}
+
+func (f *fakeAutoPahoConnection) AwaitConnection(context.Context) error {
+	return f.awaitErr
+}
+
+func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*paho.PublishResponse, error) {
+	f.mu.Lock()
+	f.published = append(f.published, p)
+	f.mu.Unlock()
+	if f.publishedCh != nil {
+		select {
+		case f.publishedCh <- struct{}{}:
+		default:
+		}
+	}
+	if f.publishErr != nil {
+		return nil, f.publishErr
+	}
+	if f.publishResp != nil {
+		return f.publishResp, nil
+	}
+	return &paho.PublishResponse{}, nil
+}
+
+func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.QueuePublish) error {
+	f.mu.Lock()
+	f.queued = append(f.queued, p)
+	f.mu.Unlock()
+	if f.publishedCh != nil {
+		select {
+		case f.publishedCh <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
+
+func TestNewQnamePublisher(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	ctx, _ := testRunContext(t)
+	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+	edm.mqttPubCh = make(chan []byte, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go edm.newQnamePublisher(ctx, &wg)
+	event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
+	edm.newQnamePublisherCh <- &event
+	close(edm.newQnamePublisherCh)
+	wg.Wait()
+
+	msg := <-edm.mqttPubCh
+	if !strings.Contains(string(msg), "example.com.") {
+		t.Fatalf("MQTT payload = %s", msg)
+	}
+	if _, ok := <-edm.mqttPubCh; ok {
+		t.Fatal("mqttPubCh was not closed")
+	}
+}
+
+type testMQTTFactory struct {
+	MQTTFactory
+	newConnection func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error)
+}
+
+func (tmf testMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (MQTTConnectionManager, error) {
+	if tmf.newConnection != nil {
+		return tmf.newConnection(ctx, cfg)
+	}
+	return tmf.MQTTFactory.NewConnection(ctx, cfg)
+}
+
+func TestSetupMQTT(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
+
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.MQTTFactory = testMQTTFactory{
+			MQTTFactory: edm.deps.MQTTFactory,
+			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+				return conn, nil
+			},
+		}
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTServer = "mqtts://example.test:8883"
+		edm.conf.MQTTKeepalive = 30
+		edm.conf.DisableMQTTFilequeue = false
+		edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
+
+		ctx, _ := testRunContext(t)
+		if err := edm.setupMQTT(ctx); err != nil {
+			t.Fatalf("setupMQTT: %v", err)
+		}
+		// Drive the publish path so the fake connection manager is actually
+		// exercised; otherwise the worker would exit before touching cm.
+		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
+		select {
+		case <-conn.publishedCh:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for publish")
+		}
+		close(edm.mqttPubCh)
+		edm.autopahoWg.Wait()
+		conn.mu.Lock()
+		queued := len(conn.queued)
+		conn.mu.Unlock()
+		if queued != 1 {
+			t.Fatalf("queued messages = %d, want 1", queued)
+		}
+	})
+
+	t.Run("missing signing key", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = filepath.Join(t.TempDir(), "missing.jwk")
+		err := edm.setupMQTT(t.Context())
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("setupMQTT error = %v, want os.ErrNotExist", err)
+		}
+	})
+
+	t.Run("bad CA file", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTCAFile = writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
+		err := edm.setupMQTT(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
+			t.Fatalf("setupMQTT error = %v, want CA cert pool failure", err)
+		}
+	})
+
+	t.Run("queue dir creation failure", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		// Point DataDir below a regular file so MkdirAll fails with ENOTDIR
+		// regardless of the uid the tests run as.
+		blocker := writeTempFile(t, "blocker", []byte("x"))
+		edm.conf.DataDir = filepath.Join(blocker, "datadir")
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.DisableMQTTFilequeue = false
+		err := edm.setupMQTT(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "queue dir") {
+			t.Fatalf("setupMQTT error = %v, want queue dir failure", err)
+		}
+	})
+
+	t.Run("connection manager failure", func(t *testing.T) {
+		errConnect := errors.New("connect boom")
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.MQTTFactory = testMQTTFactory{
+			MQTTFactory: edm.deps.MQTTFactory,
+			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+				return nil, errConnect
+			},
+		}
+		edm.conf.DataDir = t.TempDir()
+		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
+		edm.conf.MQTTServer = "mqtts://example.test:8883"
+		edm.conf.DisableMQTTFilequeue = true
+		err := edm.setupMQTT(t.Context())
+		if !errors.Is(err, errConnect) {
+			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)
+		}
+	})
 }

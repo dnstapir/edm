@@ -224,3 +224,46 @@ func iso8601Duration(duration time.Duration) string {
 
 	return res
 }
+
+func (edm *DnstapMinimiser) setupHistogramSender() error {
+	conf := edm.getConfig()
+
+	httpURL, err := url.Parse(conf.HTTPURL)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to parse 'http-url' setting: %w", err)
+	}
+
+	httpSigningJwk, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.HTTPSigningKeyFile)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
+	}
+
+	// Leaving these nil will use the OS default CA certs
+	var httpCACertPool *x509.CertPool
+
+	if conf.HTTPCAFile != "" {
+		// Setup CA cert for validating the aggregate-receiver connection
+		httpCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.HTTPCAFile)
+		if err != nil {
+			return fmt.Errorf("setupHistogramSender: failed to create CA cert pool for '-http-ca-file': %w", err)
+		}
+	}
+
+	// Build the new sender first so a failed rebuild leaves the existing
+	// working sender in place instead of zeroing it.
+	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
+	}
+
+	edm.aggregSenderMutex.Lock()
+	oldAggregSender := edm.aggregSender
+	edm.aggregSender = newAggregSender
+	edm.aggregSenderMutex.Unlock()
+
+	if oldAggregSender != nil {
+		oldAggregSender.CloseIdleConnections()
+	}
+
+	return nil
+}

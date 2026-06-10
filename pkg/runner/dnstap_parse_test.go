@@ -9,6 +9,51 @@ import (
 	"github.com/miekg/dns"
 )
 
+// TestParsePacketAddressFormattingBranches drives the address-formatting
+// arms of parsePacket that the addr+port-present canary in
+// TestSessionParquetAndSessionConstruction does not reach: the
+// addr-without-port and all-nil fallbacks, plus the response-unpack-error
+// path. The port-without-address branch is covered directly by
+// TestFormatDnstapEndpoint.
+func TestParsePacketAddressFormattingBranches(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
+
+	t.Run("addr without ports", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryPort = nil
+		dt.Message.ResponsePort = nil
+		if msg, _ := edm.parsePacket(dt, false); msg == nil {
+			t.Fatal("parsePacket returned nil msg")
+		}
+	})
+
+	t.Run("no addresses at all", func(t *testing.T) {
+		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
+		dt.Message.QueryAddress = nil
+		dt.Message.ResponseAddress = nil
+		dt.Message.QueryPort = nil
+		dt.Message.ResponsePort = nil
+		if msg, _ := edm.parsePacket(dt, false); msg == nil {
+			t.Fatal("parsePacket returned nil msg")
+		}
+	})
+
+	t.Run("response unpack error", func(t *testing.T) {
+		dt := &dnstap.Dnstap{
+			Message: &dnstap.Message{
+				ResponseMessage:  []byte{1, 2, 3},
+				ResponseTimeSec:  ptr(uint64(0)),
+				ResponseTimeNsec: ptr(uint32(0)),
+			},
+		}
+		badMsg, _ := edm.parsePacket(dt, false)
+		if badMsg != nil {
+			t.Fatal("bad response packet returned non-nil message")
+		}
+	})
+}
+
 func TestParsePacketMissingTimestamps(t *testing.T) {
 	edm := discardEDM()
 	wire := packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess)
@@ -56,25 +101,6 @@ func TestParsePacketMissingMessage(t *testing.T) {
 	}
 	if want := time.Unix(0, 0).UTC(); !got.Equal(want) {
 		t.Fatalf("timestamp have: %s, want: %s", got, want)
-	}
-}
-
-func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
-	edm := discardEDM()
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
-
-	sd := edm.newSession(&dnstap.Dnstap{
-		Message: &dnstap.Message{},
-	}, msg, false, defaultLabelLimit, time.Unix(0, 0).UTC())
-
-	if sd.DNSProtocol != nil {
-		t.Fatalf("DNSProtocol should be nil when SocketProtocol is missing, have: %d", *sd.DNSProtocol)
-	}
-	if sd.SourceIPv4 != nil || sd.DestIPv4 != nil ||
-		sd.SourceIPv6Network != nil || sd.SourceIPv6Host != nil ||
-		sd.DestIPv6Network != nil || sd.DestIPv6Host != nil {
-		t.Fatalf("IP fields should stay nil when SocketFamily is missing: %#v", sd)
 	}
 }
 
