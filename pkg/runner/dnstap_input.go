@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
@@ -138,6 +139,7 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []by
 
 	var wg sync.WaitGroup
 	var connID uint64
+	var acceptDelay time.Duration
 	for {
 		conn, err := input.listener.Accept()
 		if err != nil {
@@ -145,12 +147,32 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []by
 				wg.Wait()
 				return nil
 			}
+			if isTransientAcceptError(err) {
+				// Back off and keep accepting, net/http.Server.Serve
+				// style: a transient resource error must not take
+				// down the long-running dnstap collector.
+				if acceptDelay == 0 {
+					acceptDelay = 5 * time.Millisecond
+				} else {
+					acceptDelay *= 2
+				}
+				if acceptDelay > time.Second {
+					acceptDelay = time.Second
+				}
+				input.log.Printf("%s: accept dnstap connection failed, retrying in %v: %v", input.listener.Addr(), acceptDelay, err)
+				select {
+				case <-time.After(acceptDelay):
+				case <-ctx.Done():
+				}
+				continue
+			}
 			if closeErr := input.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
 				input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), closeErr)
 			}
 			wg.Wait()
 			return fmt.Errorf("%s: accept dnstap connection: %w", input.listener.Addr(), err)
 		}
+		acceptDelay = 0
 
 		input.trackConn(conn)
 		if ctx.Err() != nil {
@@ -186,6 +208,22 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []by
 			input.log.Printf("%s: closed connection %d%s", conn.LocalAddr(), id, origin)
 		}()
 	}
+}
+
+// isTransientAcceptError reports whether an Accept error is worth retrying
+// rather than tearing down the listener.
+//
+// It mirrors [net/http.Server.Serve]'s retry policy ([net.Error] timeouts)
+// and additionally treats the descriptor-exhaustion errnos (EMFILE/ENFILE)
+// and ECONNABORTED as transient, since those clear once load drops.
+func isTransientAcceptError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE)
 }
 
 func (input *socketDnstapInput) trackConn(conn net.Conn) {

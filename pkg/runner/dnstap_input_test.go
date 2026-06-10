@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -427,5 +429,72 @@ func TestSocketDnstapInputReadIntoReturnsAcceptError(t *testing.T) {
 	err := input.ReadInto(t.Context(), make(chan []byte))
 	if !errors.Is(err, errInjected) {
 		t.Fatalf("ReadInto err = %v, want errInjected", err)
+	}
+}
+
+func TestSocketDnstapInputReadIntoRetriesTransientAcceptError(t *testing.T) {
+	listener := newTestNetListener("tcp", "127.0.0.1:0")
+	var acceptCalls atomic.Int64
+	retried := make(chan struct{})
+	listener.accept = func() (net.Conn, error) {
+		switch acceptCalls.Add(1) {
+		case 1:
+			return nil, &net.OpError{Op: "accept", Net: "tcp", Err: syscall.EMFILE}
+		case 2:
+			close(retried)
+		}
+		<-listener.closed
+		return nil, net.ErrClosed
+	}
+	input := newSocketDnstapInput(listener)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- input.ReadInto(ctx, make(chan []byte))
+	}()
+
+	select {
+	case <-retried:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadInto did not keep accepting after a transient accept error")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("ReadInto err = %v, want nil", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ReadInto did not exit after context cancellation")
+	}
+}
+
+type timeoutNetError struct{}
+
+func (timeoutNetError) Error() string   { return "i/o timeout" }
+func (timeoutNetError) Timeout() bool   { return true }
+func (timeoutNetError) Temporary() bool { return false }
+
+func TestIsTransientAcceptError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"net.Error timeout", &net.OpError{Op: "accept", Net: "tcp", Err: timeoutNetError{}}, true},
+		{"ECONNABORTED", &net.OpError{Op: "accept", Net: "tcp", Err: syscall.ECONNABORTED}, true},
+		{"EMFILE", &net.OpError{Op: "accept", Net: "tcp", Err: syscall.EMFILE}, true},
+		{"ENFILE", &net.OpError{Op: "accept", Net: "tcp", Err: syscall.ENFILE}, true},
+		{"closed listener", net.ErrClosed, false},
+		{"unrecognized", errInjected, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isTransientAcceptError(tt.err); got != tt.want {
+				t.Fatalf("isTransientAcceptError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
 	}
 }
