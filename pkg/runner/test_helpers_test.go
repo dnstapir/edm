@@ -94,6 +94,15 @@ var (
 	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
 	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in a temporary directory")
 	defaultTC    = newDefaultTC()
+
+	testJWKJSONOnce sync.Once
+	testJWKJSONData []byte
+	testJWKJSONErr  error
+
+	testCertMaterialOnce sync.Once
+	testCertPEM          []byte
+	testCertKeyPEM       []byte
+	testCertMaterialErr  error
 )
 
 // testConfiger is a ConfigProvider backed by a complete Config value. Tests
@@ -322,21 +331,45 @@ func marshaledDnstap(t testing.TB, dt *dnstap.Dnstap) []byte {
 	return data
 }
 
-func testJWK(t testing.TB) jwk.Key {
-	t.Helper()
-
+func cacheTestJWKJSON() {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		t.Fatal(err)
+		testJWKJSONErr = err
+		return
 	}
 	key, err := jwk.FromRaw(priv)
 	if err != nil {
-		t.Fatal(err)
+		testJWKJSONErr = err
+		return
 	}
 	if err := key.Set(jwk.KeyIDKey, "test-key"); err != nil {
-		t.Fatal(err)
+		testJWKJSONErr = err
+		return
 	}
 	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+		testJWKJSONErr = err
+		return
+	}
+	testJWKJSONData, testJWKJSONErr = json.Marshal(key)
+}
+
+func testJWKJSON(t testing.TB) []byte {
+	t.Helper()
+
+	testJWKJSONOnce.Do(func() {
+		cacheTestJWKJSON()
+	})
+	if testJWKJSONErr != nil {
+		t.Fatal(testJWKJSONErr)
+	}
+	return bytes.Clone(testJWKJSONData)
+}
+
+func testJWK(t testing.TB) jwk.Key {
+	t.Helper()
+
+	key, err := jwk.ParseKey(testJWKJSON(t))
+	if err != nil {
 		t.Fatal(err)
 	}
 	return key
@@ -345,35 +378,47 @@ func testJWK(t testing.TB) jwk.Key {
 func testJWKFile(t testing.TB) string {
 	t.Helper()
 
-	data, err := json.Marshal(testJWK(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return writeTempFile(t, "key.jwk", data)
+	return writeTempFile(t, "key.jwk", testJWKJSON(t))
 }
 
-func testCertFiles(t testing.TB) (string, string, string) {
-	t.Helper()
-
+func cachedTestCertMaterial() {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatal(err)
+		testCertMaterialErr = err
+		return
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject:      pkix.Name{CommonName: "localhost"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotBefore:    time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC),
+		NotAfter:     time.Date(2120, 1, 1, 0, 0, 0, 0, time.UTC),
 		KeyUsage:     x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		IsCA:         true,
 		DNSNames:     []string{"localhost"},
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
-		t.Fatal(err)
+		testCertMaterialErr = err
+		return
 	}
-	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	testCertPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	testCertKeyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+}
+
+func testCertMaterial(t testing.TB) (certPEM []byte, keyPEM []byte) {
+	t.Helper()
+
+	testCertMaterialOnce.Do(cachedTestCertMaterial)
+	if testCertMaterialErr != nil {
+		t.Fatal(testCertMaterialErr)
+	}
+	return bytes.Clone(testCertPEM), bytes.Clone(testCertKeyPEM)
+}
+
+func testCertFiles(t testing.TB) (string, string, string) {
+	t.Helper()
+
+	certPEM, keyPEM := testCertMaterial(t)
 
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "cert.pem")
