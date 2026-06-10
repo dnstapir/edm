@@ -77,6 +77,14 @@ func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Conf
 	return dti, nil
 }
 
+// socketDnstapInput accepts framestream connections on a listener and pumps
+// dnstap frames into an output channel.
+//
+// It deliberately replaces [dnstap.FrameStreamSockInput]: the library's
+// ReadInto offers no stop/close mechanism (its accept loop and per-connection
+// goroutines are untrackable), while this implementation honors context
+// cancellation, tracks live connections so Close tears them down, and lets
+// Run wait for a fully drained input on shutdown.
 type socketDnstapInput struct {
 	listener net.Listener
 	timeout  time.Duration
@@ -108,6 +116,8 @@ func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) {
 	input.log = logger
 }
 
+// Close closes the listener and every tracked connection. It is idempotent
+// and safe to call concurrently with ReadInto.
 func (input *socketDnstapInput) Close() error {
 	input.closeOnce.Do(func() {
 		input.closeErr = input.listener.Close()
@@ -123,6 +133,10 @@ func (input *socketDnstapInput) Close() error {
 	return input.closeErr
 }
 
+// ReadInto accepts connections and forwards their dnstap frames to output
+// until ctx is cancelled or the listener fails. Transient accept errors are
+// retried with backoff; cancellation closes the listener and all live
+// connections, and ReadInto returns once every connection reader has exited.
 func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []byte) error {
 	done := make(chan struct{})
 	defer close(done)

@@ -4,7 +4,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/cockroachdb/pebble"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
 )
@@ -120,16 +119,6 @@ func TestQnameSeenStoreError(t *testing.T) {
 				t.Fatalf("MarkSeen calls = %d, want %d", tt.store.markCalls, tt.wantMarks)
 			}
 		})
-	}
-}
-
-func TestSeenQnameWriteOptions(t *testing.T) {
-	if got := seenQnameWriteOptions(Config{}); got != pebble.NoSync {
-		t.Fatalf("default seen-qname write option = %p, want %p", got, pebble.NoSync)
-	}
-
-	if got := seenQnameWriteOptions(Config{PebbleSync: true}); got != pebble.Sync {
-		t.Fatalf("pebble-sync seen-qname write option = %p, want %p", got, pebble.Sync)
 	}
 }
 

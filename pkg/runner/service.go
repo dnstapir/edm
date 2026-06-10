@@ -44,6 +44,15 @@ var (
 	errAppendCertsFromPEM  = errors.New("failed to append certs from PEM")
 )
 
+// Run lifecycle states tracked in DnstapMinimiser.state. The only
+// transitions are idle → running (Run's entry CAS) and running → done
+// (Run's exit), encoding the single-use contract in one atomic word.
+const (
+	runStateIdle int32 = iota
+	runStateRunning
+	runStateDone
+)
+
 // DnstapMinimiserOption customizes a [DnstapMinimiser] at construction time.
 type DnstapMinimiserOption func(*dnstapMinimiserOptions)
 
@@ -78,18 +87,10 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return ErrNilRunContext
 	}
 
-	if edm.started.Load() {
-		if edm.running.Load() {
+	if !edm.state.CompareAndSwap(runStateIdle, runStateRunning) {
+		if edm.state.Load() == runStateRunning {
 			return ErrDnstapMinimiserRunning
 		}
-		return ErrDnstapMinimiserAlreadyRun
-	}
-
-	if !edm.running.CompareAndSwap(false, true) {
-		return ErrDnstapMinimiserRunning
-	}
-	if !edm.started.CompareAndSwap(false, true) {
-		edm.running.Store(false)
 		return ErrDnstapMinimiserAlreadyRun
 	}
 
@@ -98,19 +99,14 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	defer func() {
 		stop()
 		configUpdaterWg.Wait()
-		if edm.fsWatcher != nil {
-			if err := edm.fsWatcher.Close(); err != nil {
-				if !errors.Is(err, fsnotify.ErrClosed) {
-					edm.log.Error("Run: deferred fsWatcher.Close error", "error", err)
-				}
-			}
-		}
-		edm.running.Store(false)
+		edm.closeFSWatcher("Run: deferred fsWatcher.Close error")
+		edm.state.Store(runStateDone)
 	}()
 
 	// Shutdown ordering is load-bearing:
 	// minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
-	// (if MQTT) mqttCancel → wg.Wait → (if MQTT) autopahoWg.Wait.
+	// (if MQTT) mqttCancel → configUpdater exits → fsWatcher close →
+	// wg.Wait → (if MQTT) autopahoWg.Wait.
 
 	// Create startConf for some initial setup. Other edm methods that need
 	// to read the config should call edm.getConfig() internally so they
@@ -376,16 +372,16 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
-	dnstapInputErrCh := make(chan error, 1)
+	// The single producer goroutine below is synchronized by
+	// dnstapInputWg.Wait(), which makes its dnstapInputErr write visible
+	// before the error is read on the shutdown path.
+	var dnstapInputErr error
 	var dnstapInputWg sync.WaitGroup
 	dnstapInputWg.Add(1)
 	go func() {
 		defer dnstapInputWg.Done()
 		if err := dti.ReadInto(ctx, edm.inputChannel); err != nil {
-			select {
-			case dnstapInputErrCh <- err:
-			default:
-			}
+			dnstapInputErr = err
 			stop()
 		}
 	}()
@@ -393,11 +389,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// Wait here until all instances of runMinimiser() is done
 	minimiserWg.Wait()
 	dnstapInputWg.Wait()
-	var dnstapInputErr error
-	select {
-	case dnstapInputErr = <-dnstapInputErrCh:
-	default:
-	}
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
@@ -411,19 +402,8 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		mqttCancel()
 	}
 
-	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
-	// wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
-	if err := edm.fsWatcher.Close(); err != nil {
-		if !errors.Is(err, fsnotify.ErrClosed) {
-			edm.log.Error("Run: fsWatcher.Close error", "error", err)
-		}
-	}
-
-	// Wait for all workers to exit. The HTTP servers are shut down by the
-	// deferred cleanup registered when they were started.
-	edm.log.Info("Run: waiting for other workers to exit")
-	wg.Wait()
-
+	// Wait out any in-flight config update before closing the fsWatcher,
+	// so applyUpdate never reconfigures watches on a closed watcher.
 	configUpdaterWg.Wait()
 	// viperNotifyCh is deliberately left open: viper's config watcher
 	// started by WatchConfig outlives run and keeps invoking the
@@ -431,6 +411,15 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// config change panic on a send to a closed channel. The buffered channel
 	// plus the callback's non-blocking send keep that callback from blocking
 	// once configUpdater has stopped.
+
+	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
+	// wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
+	edm.closeFSWatcher("Run: fsWatcher.Close error")
+
+	// Wait for all workers to exit. The HTTP servers are shut down by the
+	// deferred cleanup registered when they were started.
+	edm.log.Info("Run: waiting for other workers to exit")
+	wg.Wait()
 
 	// Wait for graceful disconnection from MQTT bus
 	if !startConf.DisableMQTT {
@@ -446,6 +435,18 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	return nil
 }
 
+// closeFSWatcher closes the fsnotify watcher, tolerating a nil and an
+// already-closed watcher so it is safe to call from both Run's shutdown path
+// and its deferred cleanup. Any other close error is logged with logMsg.
+func (edm *DnstapMinimiser) closeFSWatcher(logMsg string) {
+	if edm.fsWatcher == nil {
+		return
+	}
+	if err := edm.fsWatcher.Close(); err != nil && !errors.Is(err, fsnotify.ErrClosed) {
+		edm.log.Error(logMsg, "error", err)
+	}
+}
+
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.
 //
 // Construct instances with [NewDnstapMinimiser]. A DnstapMinimiser is
@@ -458,8 +459,7 @@ type DnstapMinimiser struct {
 	confMutex    sync.RWMutex
 	deps         Dependencies
 	loggerLevel  *slog.LevelVar
-	started      atomic.Bool
-	running      atomic.Bool
+	state        atomic.Int32 // run lifecycle: runStateIdle → runStateRunning → runStateDone
 	inputChannel chan []byte  // the channel passed to DNSTAP input readers
 	log          *slog.Logger // any information logging is sent here
 
@@ -530,9 +530,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 		return nil, ErrNilLogger
 	}
 
-	options := dnstapMinimiserOptions{
-		deps: defaultDependencies(),
-	}
+	var options dnstapMinimiserOptions
 	for _, opt := range opts {
 		opt(&options)
 	}

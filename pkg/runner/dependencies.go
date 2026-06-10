@@ -358,6 +358,9 @@ func (netListenerFactory) ListenTLS(network, address string, config *tls.Config)
 
 type dnstapInputFactory struct{}
 
+// NewFrameStreamSockInput mirrors the name of the dnstap library API it
+// supersedes but returns the runner's own [socketDnstapInput], which adds
+// context cancellation and graceful close on top of the library behavior.
 func (dnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) DnstapInput {
 	return newSocketDnstapInput(listener)
 }

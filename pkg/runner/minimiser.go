@@ -45,9 +45,6 @@ func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, w
 
 	// conf is meant to be dynamically modified if the config changes at runtime
 	conf := edm.getConfig()
-	// Derived from conf once here (and re-derived on reload below) so the
-	// qnameSeen hot path takes a pointer instead of copying the whole config.
-	syncWrites := conf.PebbleSync
 
 minimiserLoop:
 	for {
@@ -156,7 +153,7 @@ minimiserLoop:
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, seenStore, syncWrites) {
+			if !edm.qnameSeen(msg, seenQnameLRU, seenStore, conf.PebbleSync) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 
@@ -189,7 +186,6 @@ minimiserLoop:
 			}
 
 			conf = newConf
-			syncWrites = conf.PebbleSync
 		case <-ctx.Done():
 			break minimiserLoop
 		}

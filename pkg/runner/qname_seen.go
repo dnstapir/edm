@@ -3,26 +3,13 @@ package runner
 import (
 	"strings"
 
-	"github.com/cockroachdb/pebble"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
 )
 
-// seenQnameWriteOptions selects the pebble write options for seen-qname inserts.
-//
-// It returns [pebble.Sync] when conf.PebbleSync is set so writes are fsynced,
-// and [pebble.NoSync] otherwise.
-func seenQnameWriteOptions(conf Config) *pebble.WriteOptions {
-	if conf.PebbleSync {
-		return pebble.Sync
-	}
-	return pebble.NoSync
-}
-
-// qnameSeen reports whether qname has been seen since startup, recording it (in
-// the in-memory LRU and in pebble) on first sight. writeOpts is the pebble write
-// option for the insert (see [seenQnameWriteOptions]); the caller derives it
-// once per config rather than passing the whole config down this hot path.
+// qnameSeen reports whether qname has been seen since startup, recording it
+// (in the in-memory LRU and in the store) on first sight. syncWrites selects
+// fsynced store inserts and mirrors [Config.PebbleSync].
 //
 // The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
 // workers report any given qname as new at most once.
