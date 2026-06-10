@@ -50,8 +50,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 func TestDnstapMinimiserRunGuards(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 
-	//lint:ignore SA1012 this guard verifies Run rejects a nil context
-	if err := edm.Run(nil); !errors.Is(err, ErrNilRunContext) {
+	if err := edm.Run(nil); !errors.Is(err, ErrNilRunContext) { //nolint:staticcheck // this guard verifies Run rejects a nil context
 		t.Fatalf("Run(nil) err = %v, want %v", err, ErrNilRunContext)
 	}
 
