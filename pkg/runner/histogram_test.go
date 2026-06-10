@@ -795,7 +795,7 @@ func TestHistogramWriterLogsCreateError(t *testing.T) {
 	var buf bytes.Buffer
 	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
 
-	edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
+	edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, create: func(string) (fsFile, error) { return nil, errInjected }}
 
 	edm.histogramWriterCh <- &wellKnownDomainsData{
 		rotationTime: time.Now(),

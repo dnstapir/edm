@@ -119,7 +119,7 @@ func parseMQTTServerURL(server string) (*url.URL, error) {
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
 // sign workers parallelize CPU-bound JWS signing across cores while the lone
 // publisher preserves paho ConnectionManager's single-connection behavior.
-func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm MQTTConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
+func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
 	if signWorkers <= 0 {
 		signWorkers = 1
 	}
@@ -175,7 +175,7 @@ func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGro
 // mqttPublishWorker is the single goroutine that talks to paho. Single-writer
 // matches paho's ConnectionManager expectations; signing remains parallel
 // upstream while broker back-pressure is contained to this publisher.
-func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm MQTTConnectionManager, topic string, usingFileQueue bool) {
+func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string, usingFileQueue bool) {
 	defer edm.autopahoWg.Done()
 
 	var (

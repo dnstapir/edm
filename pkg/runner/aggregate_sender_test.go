@@ -305,7 +305,7 @@ func TestSetupHistogramSenderAndCertLoaders(t *testing.T) {
 	if err := edm.setupHistogramSender(); err != nil {
 		t.Fatal(err)
 	}
-	sender, ok := edm.aggregSender.(aggregateSender)
+	sender, ok := edm.aggregSender.(realAggregateSender)
 	if !ok {
 		t.Fatalf("aggregate sender type = %T, want aggregateSender", edm.aggregSender)
 	}
@@ -353,7 +353,7 @@ func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldSender := edm.aggregSender
-	oldConcrete, ok := oldSender.(aggregateSender)
+	oldConcrete, ok := oldSender.(realAggregateSender)
 	if !ok {
 		t.Fatalf("aggregate sender type = %T, want aggregateSender", oldSender)
 	}
@@ -374,7 +374,7 @@ func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
 	if err := edm.setupHistogramSender(); err != nil {
 		t.Fatal(err)
 	}
-	newConcrete, ok := edm.aggregSender.(aggregateSender)
+	newConcrete, ok := edm.aggregSender.(realAggregateSender)
 	if !ok {
 		t.Fatalf("aggregate sender type = %T, want aggregateSender", edm.aggregSender)
 	}

@@ -22,8 +22,8 @@ import (
 // it returns errNoInputConfigured rather than letting Run dereference a nil
 // *FrameStreamSockInput. On TLS, InputTLSClientCAFile (when set) enables
 // required-and-verify client mTLS via tls.RequireAndVerifyClientCert.
-func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Config) (DnstapInput, error) {
-	var dti DnstapInput
+func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Config) (dnstapInput, error) {
+	var dti dnstapInput
 	switch {
 	case startConf.InputUnix != "":
 		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)

@@ -188,7 +188,7 @@ func (edm *DnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) {
 	// Like in
 	// https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
 	// we keep a timer per registered filename
-	timers := map[string]Timer{}
+	timers := map[string]timer{}
 	timersMutex := new(sync.Mutex)
 	defer func() {
 		timersMutex.Lock()

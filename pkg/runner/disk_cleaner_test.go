@@ -44,7 +44,7 @@ func TestDiskCleanerOsReadDirError(t *testing.T) {
 		buf := &syncBuf{}
 		ctx, cancel := context.WithCancel(t.Context())
 		deps := defaultDependencies()
-		deps.FileSystem = faultingFileSystem{FileSystem: deps.FileSystem, readDir: func(string) ([]os.DirEntry, error) { return nil, errInjected }}
+		deps.FileSystem = faultingFileSystem{fileSystem: deps.FileSystem, readDir: func(string) ([]os.DirEntry, error) { return nil, errInjected }}
 		deps.DiskCleanerInterval = time.Millisecond
 		edm := &DnstapMinimiser{
 			log:  slog.New(slog.NewJSONHandler(buf, nil)),

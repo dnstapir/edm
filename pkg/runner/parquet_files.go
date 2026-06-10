@@ -94,7 +94,7 @@ func (edm *DnstapMinimiser) renameFile(src string, dst string) error {
 	}
 }
 
-func (edm *DnstapMinimiser) createFile(dst string) (File, error) {
+func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) {
 	dstDir := filepath.Dir(dst)
 
 	// Make gosec happy

@@ -20,22 +20,22 @@ import (
 	"github.com/yaronf/httpsign"
 )
 
-type aggregateSender struct {
+type realAggregateSender struct {
 	log               *slog.Logger
 	aggrecURL         *url.URL
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 	httpTransport     *http.Transport
-	fs                FileSystem
-	clock             Clock
+	fs                fileSystem
+	clock             clock
 }
 
-func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs FileSystem, clock Clock) (aggregateSender, error) {
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (realAggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
 	err := signingJwk.Raw(&signingKey)
 	if err != nil {
-		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
+		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 	}
 
 	// Create HTTP handler for sending aggregate files to aggrec
@@ -63,12 +63,12 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 		httpsign.NewSignConfig().SetKeyID(signingJwk.KeyID()),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
 	if err != nil {
-		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
+		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
 	}
 
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
-	return aggregateSender{
+	return realAggregateSender{
 		log:               log,
 		aggrecURL:         aggrecURL,
 		caCertPool:        caCertPool,
@@ -80,7 +80,7 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 }
 
 // Send sends histogram data via signed HTTP message to aggregate-receiver.
-func (as aggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
+func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
 	fs := as.fs
 	if fs == nil {
 		fs = osFileSystem{}
@@ -182,7 +182,7 @@ func (as aggregateSender) Send(ctx context.Context, fileName string, ts time.Tim
 }
 
 // CloseIdleConnections closes idle HTTP connections held by the sender.
-func (as aggregateSender) CloseIdleConnections() {
+func (as realAggregateSender) CloseIdleConnections() {
 	if as.httpTransport != nil {
 		as.httpTransport.CloseIdleConnections()
 	}

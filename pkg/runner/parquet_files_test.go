@@ -129,7 +129,7 @@ func TestCreateFile(t *testing.T) {
 
 	t.Run("mkdir failure is reported", func(t *testing.T) {
 		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, mkdirAll: func(string, os.FileMode) error { return errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, mkdirAll: func(string, os.FileMode) error { return errInjected }}
 		dst := filepath.Join(t.TempDir(), "missing", "out.parquet")
 		_, err := edm.createFile(dst)
 		if !errors.Is(err, errInjected) {
@@ -139,7 +139,7 @@ func TestCreateFile(t *testing.T) {
 
 	t.Run("non-ENOENT create error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, create: func(string) (fsFile, error) { return nil, errInjected }}
 		_, err := edm.createFile(filepath.Join(t.TempDir(), "out.parquet"))
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("createFile error = %v, want %v", err, errInjected)
@@ -171,7 +171,7 @@ func TestRenameFile(t *testing.T) {
 			t.Fatal(statErr)
 		}
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			rename:     func(string, string) error { return fs.ErrNotExist },
 			stat:       func(string) (os.FileInfo, error) { return info, nil },
 		}
@@ -184,7 +184,7 @@ func TestRenameFile(t *testing.T) {
 	t.Run("stat error is reported", func(t *testing.T) {
 		edm := discardEDM()
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			rename:     func(string, string) error { return fs.ErrNotExist },
 			stat:       func(string) (os.FileInfo, error) { return nil, errInjected },
 		}
@@ -197,7 +197,7 @@ func TestRenameFile(t *testing.T) {
 	t.Run("mkdir failure is reported", func(t *testing.T) {
 		edm := discardEDM()
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			rename:     func(string, string) error { return fs.ErrNotExist },
 			stat:       func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist },
 			mkdirAll:   func(string, os.FileMode) error { return errInjected },
@@ -210,7 +210,7 @@ func TestRenameFile(t *testing.T) {
 
 	t.Run("non-ENOENT rename error is reported", func(t *testing.T) {
 		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
 		err := edm.renameFile("src", "dst")
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
@@ -249,7 +249,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 
 	t.Run("createFile error", func(t *testing.T) {
 		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, create: func(string) (File, error) { return nil, errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, create: func(string) (fsFile, error) { return nil, errInjected }}
 		_, err := edm.writeRotatedParquet("test", filepath.Join(t.TempDir(), "x"), "y", func(io.Writer) error {
 			return nil
 		})
@@ -287,7 +287,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 		tmp := filepath.Join(dir, "data.tmp")
 		final := filepath.Join(dir, "data")
 
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, remove: func(string) error { return errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, remove: func(string) error { return errInjected }}
 
 		_, err := edm.writeRotatedParquet("test", tmp, final, func(io.Writer) error {
 			return errInjected
@@ -350,7 +350,7 @@ func TestWriteRotatedParquet(t *testing.T) {
 		tmp := filepath.Join(dir, "data.tmp")
 		final := filepath.Join(dir, "data")
 
-		edm.deps.FileSystem = faultingFileSystem{FileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
+		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
 
 		_, err := edm.writeRotatedParquet("test", tmp, final, func(w io.Writer) error {
 			_, err := w.Write([]byte("hello"))

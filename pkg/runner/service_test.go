@@ -30,7 +30,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	edm, err := NewDnstapMinimiser(
 		defaultTC, logger,
 		WithLoggerLevel(loggerLevel),
-		WithDependencies(Dependencies{PprofListenAddr: "127.0.0.1:0", CryptopanFactory: fastTestCryptopanFactory{}}),
+		withDependencies(dependencies{PprofListenAddr: "127.0.0.1:0", CryptopanFactory: fastTestCryptopanFactory{}}),
 	)
 	if err != nil {
 		t.Fatalf("NewDnstapMinimiser: %s", err)
@@ -122,7 +122,7 @@ newqname-buffer = 1
 	listener := newTestNetListener("unix", socketPath)
 	listenCall := make(chan [2]string, 1)
 	deps.ListenerFactory = testListenerFactory{
-		ListenerFactory: deps.ListenerFactory,
+		listenerFactory: deps.ListenerFactory,
 		listen: func(network, address string) (net.Listener, error) {
 			select {
 			case listenCall <- [2]string{network, address}:
@@ -132,12 +132,12 @@ newqname-buffer = 1
 		},
 	}
 	deps.DnstapInputFactory = testDnstapInputFactory{
-		DnstapInputFactory: deps.DnstapInputFactory,
-		newFromListener: func(net.Listener) DnstapInput {
+		dnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) dnstapInput {
 			return input
 		},
 	}
-	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), WithDependencies(deps))
+	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), withDependencies(deps))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,14 +189,14 @@ func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapM
 	})
 	listener := newTestNetListener("unix", tc.InputUnix)
 	deps.ListenerFactory = testListenerFactory{
-		ListenerFactory: deps.ListenerFactory,
+		listenerFactory: deps.ListenerFactory,
 		listen: func(_, _ string) (net.Listener, error) {
 			return listener, nil
 		},
 	}
 	deps.DnstapInputFactory = testDnstapInputFactory{
-		DnstapInputFactory: deps.DnstapInputFactory,
-		newFromListener: func(net.Listener) DnstapInput {
+		dnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) dnstapInput {
 			return input
 		},
 	}

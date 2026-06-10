@@ -23,7 +23,7 @@ import (
 // cryptopanCache is the worker-private Crypto-PAn LRU (nil disables
 // caching); Run creates it so a creation failure surfaces as a startup
 // error instead of a silently dead worker.
-func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, wg *sync.WaitGroup, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore SeenQnameStore, debugDnstapFile File, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, wg *sync.WaitGroup, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, debugDnstapFile fsFile, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	defer wg.Done()
 
 	dt := &dnstap.Dnstap{}

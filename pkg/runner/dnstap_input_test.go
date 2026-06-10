@@ -20,19 +20,19 @@ import (
 )
 
 type testDnstapInputFactory struct {
-	DnstapInputFactory
-	newFromListener func(net.Listener) DnstapInput
+	dnstapInputFactory
+	newFromListener func(net.Listener) dnstapInput
 }
 
-func (tdif testDnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) DnstapInput {
+func (tdif testDnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) dnstapInput {
 	if tdif.newFromListener != nil {
 		return tdif.newFromListener(listener)
 	}
-	return tdif.DnstapInputFactory.NewFrameStreamSockInput(listener)
+	return tdif.dnstapInputFactory.NewFrameStreamSockInput(listener)
 }
 
 type testListenerFactory struct {
-	ListenerFactory
+	listenerFactory
 	listen    func(string, string) (net.Listener, error)
 	listenTLS func(string, string, *tls.Config) (net.Listener, error)
 }
@@ -41,14 +41,14 @@ func (tlf testListenerFactory) Listen(network, address string) (net.Listener, er
 	if tlf.listen != nil {
 		return tlf.listen(network, address)
 	}
-	return tlf.ListenerFactory.Listen(network, address)
+	return tlf.listenerFactory.Listen(network, address)
 }
 
 func (tlf testListenerFactory) ListenTLS(network, address string, cfg *tls.Config) (net.Listener, error) {
 	if tlf.listenTLS != nil {
 		return tlf.listenTLS(network, address, cfg)
 	}
-	return tlf.ListenerFactory.ListenTLS(network, address, cfg)
+	return tlf.listenerFactory.ListenTLS(network, address, cfg)
 }
 
 type testNetAddr struct {
@@ -195,14 +195,14 @@ func TestSetupDnstapInput(t *testing.T) {
 		var listenedAddress string
 		var factoryListener net.Listener
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			remove: func(name string) error {
 				removed = name
 				return fs.ErrNotExist
 			},
 		}
 		edm.deps.ListenerFactory = testListenerFactory{
-			ListenerFactory: edm.deps.ListenerFactory,
+			listenerFactory: edm.deps.ListenerFactory,
 			listen: func(network, address string) (net.Listener, error) {
 				listenedNetwork = network
 				listenedAddress = address
@@ -210,8 +210,8 @@ func TestSetupDnstapInput(t *testing.T) {
 			},
 		}
 		edm.deps.DnstapInputFactory = testDnstapInputFactory{
-			DnstapInputFactory: edm.deps.DnstapInputFactory,
-			newFromListener: func(l net.Listener) DnstapInput {
+			dnstapInputFactory: edm.deps.DnstapInputFactory,
+			newFromListener: func(l net.Listener) dnstapInput {
 				factoryListener = l
 				return &testDnstapInput{}
 			},
@@ -244,7 +244,7 @@ func TestSetupDnstapInput(t *testing.T) {
 	t.Run("unix remove error", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			remove: func(string) error {
 				return errInjected
 			},
@@ -258,13 +258,13 @@ func TestSetupDnstapInput(t *testing.T) {
 	t.Run("unix listen error", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.deps.FileSystem = faultingFileSystem{
-			FileSystem: edm.deps.FileSystem,
+			fileSystem: edm.deps.FileSystem,
 			remove: func(string) error {
 				return nil
 			},
 		}
 		edm.deps.ListenerFactory = testListenerFactory{
-			ListenerFactory: edm.deps.ListenerFactory,
+			listenerFactory: edm.deps.ListenerFactory,
 			listen: func(string, string) (net.Listener, error) {
 				return nil, errInjected
 			},
@@ -294,7 +294,7 @@ func TestSetupDnstapInput(t *testing.T) {
 	t.Run("tcp listen error", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.deps.ListenerFactory = testListenerFactory{
-			ListenerFactory: edm.deps.ListenerFactory,
+			listenerFactory: edm.deps.ListenerFactory,
 			listen: func(string, string) (net.Listener, error) {
 				return nil, errInjected
 			},
@@ -379,7 +379,7 @@ func TestSetupDnstapInput(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		certPath, keyPath, _ := testCertFiles(t)
 		edm.deps.ListenerFactory = testListenerFactory{
-			ListenerFactory: edm.deps.ListenerFactory,
+			listenerFactory: edm.deps.ListenerFactory,
 			listenTLS: func(string, string, *tls.Config) (net.Listener, error) {
 				return nil, errInjected
 			},

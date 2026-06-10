@@ -46,9 +46,9 @@ func (fn httpServerRunnerFunc) ListenAndServeHTTP(server *http.Server) error {
 	return fn(server)
 }
 
-type seenQnameStoreFactoryFunc func(string) (SeenQnameStore, error)
+type seenQnameStoreFactoryFunc func(string) (seenQnameStore, error)
 
-func (fn seenQnameStoreFactoryFunc) OpenSeenQnameStore(path string) (SeenQnameStore, error) {
+func (fn seenQnameStoreFactoryFunc) OpenSeenQnameStore(path string) (seenQnameStore, error) {
 	return fn(path)
 }
 
@@ -108,7 +108,7 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		edm := newTestDnstapMinimiser(t, tc)
-		edm.deps.SeenQnameStoreFactory = seenQnameStoreFactoryFunc(func(string) (SeenQnameStore, error) {
+		edm.deps.SeenQnameStoreFactory = seenQnameStoreFactoryFunc(func(string) (seenQnameStore, error) {
 			return nil, errInjected
 		})
 		err := edm.Run(t.Context())

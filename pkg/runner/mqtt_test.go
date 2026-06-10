@@ -657,22 +657,22 @@ func TestRunMQTTPipelineOutlivesRunCtx(t *testing.T) {
 	})
 	listener := newTestNetListener("unix", tc.InputUnix)
 	deps.ListenerFactory = testListenerFactory{
-		ListenerFactory: deps.ListenerFactory,
+		listenerFactory: deps.ListenerFactory,
 		listen: func(_, _ string) (net.Listener, error) {
 			return listener, nil
 		},
 	}
 	deps.DnstapInputFactory = testDnstapInputFactory{
-		DnstapInputFactory: deps.DnstapInputFactory,
-		newFromListener: func(net.Listener) DnstapInput {
+		dnstapInputFactory: deps.DnstapInputFactory,
+		newFromListener: func(net.Listener) dnstapInput {
 			return input
 		},
 	}
 	mqttCtxCh := make(chan context.Context, 1)
 	conn := &fakeAutoPahoConnection{}
 	deps.MQTTFactory = testMQTTFactory{
-		MQTTFactory: deps.MQTTFactory,
-		newConnection: func(ctx context.Context, _ autopaho.ClientConfig) (MQTTConnectionManager, error) {
+		mqttFactory: deps.MQTTFactory,
+		newConnection: func(ctx context.Context, _ autopaho.ClientConfig) (mqttConnectionManager, error) {
 			mqttCtxCh <- ctx
 			return conn, nil
 		},
@@ -705,15 +705,15 @@ func TestRunMQTTPipelineOutlivesRunCtx(t *testing.T) {
 }
 
 type testMQTTFactory struct {
-	MQTTFactory
-	newConnection func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error)
+	mqttFactory
+	newConnection func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error)
 }
 
-func (tmf testMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (MQTTConnectionManager, error) {
+func (tmf testMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
 	if tmf.newConnection != nil {
 		return tmf.newConnection(ctx, cfg)
 	}
-	return tmf.MQTTFactory.NewConnection(ctx, cfg)
+	return tmf.mqttFactory.NewConnection(ctx, cfg)
 }
 
 func TestSetupMQTT(t *testing.T) {
@@ -724,8 +724,8 @@ func TestSetupMQTT(t *testing.T) {
 			edm := newSynctestDnstapMinimiser(t, defaultTC)
 			defer cleanupTestMinimiser(edm)
 			edm.deps.MQTTFactory = testMQTTFactory{
-				MQTTFactory: edm.deps.MQTTFactory,
-				newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+				mqttFactory: edm.deps.MQTTFactory,
+				newConnection: func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
 					return conn, nil
 				},
 			}
@@ -799,8 +799,8 @@ func TestSetupMQTT(t *testing.T) {
 		errConnect := errors.New("connect boom")
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.deps.MQTTFactory = testMQTTFactory{
-			MQTTFactory: edm.deps.MQTTFactory,
-			newConnection: func(context.Context, autopaho.ClientConfig) (MQTTConnectionManager, error) {
+			mqttFactory: edm.deps.MQTTFactory,
+			newConnection: func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
 				return nil, errConnect
 			},
 		}

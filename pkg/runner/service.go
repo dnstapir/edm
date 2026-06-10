@@ -57,7 +57,7 @@ const (
 type DnstapMinimiserOption func(*dnstapMinimiserOptions)
 
 type dnstapMinimiserOptions struct {
-	deps        Dependencies
+	deps        dependencies
 	loggerLevel *slog.LevelVar
 }
 
@@ -68,10 +68,10 @@ func WithLoggerLevel(loggerLevel *slog.LevelVar) DnstapMinimiserOption {
 	}
 }
 
-// WithDependencies replaces external runner functionality.
+// withDependencies replaces external runner functionality.
 //
 // Nil fields in deps are filled with production implementations.
-func WithDependencies(deps Dependencies) DnstapMinimiserOption {
+func withDependencies(deps dependencies) DnstapMinimiserOption {
 	return func(options *dnstapMinimiserOptions) {
 		options.deps = deps
 	}
@@ -313,7 +313,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// unbuffered and more "reactive". Otherwise it is hard to be sure if
 	// you are not seeing anything in the log because packets are being
 	// missed, or you are just waiting on the buffer to be flushed.
-	var debugDnstapFile File
+	var debugDnstapFile fsFile
 	if debugDnstapFilename != "" {
 		// Make gosec happy
 		debugDnstapFilename := filepath.Clean(debugDnstapFilename)
@@ -457,7 +457,7 @@ type DnstapMinimiser struct {
 	configer     ConfigProvider
 	conf         Config
 	confMutex    sync.RWMutex
-	deps         Dependencies
+	deps         dependencies
 	loggerLevel  *slog.LevelVar
 	state        atomic.Int32 // run lifecycle: runStateIdle → runStateRunning → runStateDone
 	inputChannel chan []byte  // the channel passed to DNSTAP input readers
@@ -490,7 +490,7 @@ type DnstapMinimiser struct {
 	newQnamePublisherCh       chan *protocols.NewQnameJSON
 	sessionCollectorCh        chan *sessionData
 	aggregSenderMutex         sync.RWMutex
-	aggregSender              AggregateSender
+	aggregSender              aggregateSender
 	mqttPubCh                 chan []byte
 	mqttSignedCh              chan []byte
 	autopahoWg                sync.WaitGroup
@@ -506,7 +506,7 @@ type DnstapMinimiser struct {
 	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
 	ignoredClientCIDRsParsed      atomic.Uint64
 	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
-	fsWatcher                     FileWatcher
+	fsWatcher                     fileWatcher
 	fsWatcherFuncs                map[string][]func() error
 	fsWatcherMutex                sync.RWMutex
 	httpClientCertStore           *certStore // client cert/key for mTLS authentication
@@ -520,8 +520,7 @@ type DnstapMinimiser struct {
 // NewDnstapMinimiser constructs a DnstapMinimiser.
 //
 // The returned service is ready to run but has no active run context until
-// [DnstapMinimiser.Run] is called. Nil dependency fields supplied via
-// [WithDependencies] are filled with production implementations.
+// [DnstapMinimiser.Run] is called.
 func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...DnstapMinimiserOption) (*DnstapMinimiser, error) {
 	if provider == nil {
 		return nil, ErrNilConfigProvider

@@ -23,7 +23,7 @@ func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Cer
 	return cs.cert, nil
 }
 
-func (cs *certStore) loadCert(loader KeyMaterialLoader, certPath string, keyPath string) error {
+func (cs *certStore) loadCert(loader keyMaterialLoader, certPath string, keyPath string) error {
 	cert, err := loader.LoadKeyPair(certPath, keyPath)
 	if err != nil {
 		return fmt.Errorf("unable to load x509 cert: %w", err)

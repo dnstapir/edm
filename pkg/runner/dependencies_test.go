@@ -11,7 +11,7 @@ import (
 )
 
 func TestDefaultDependenciesFillCryptopanFactory(t *testing.T) {
-	deps := fillDependencies(Dependencies{})
+	deps := fillDependencies(dependencies{})
 	if deps.CryptopanFactory == nil {
 		t.Fatal("CryptopanFactory was not filled")
 	}
@@ -44,7 +44,7 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	}
 	faultingLoader := realKeyMaterialLoader{
 		fs: faultingFileSystem{
-			FileSystem: osFileSystem{},
+			fileSystem: osFileSystem{},
 			readFile: func(string) ([]byte, error) {
 				return nil, errInjected
 			},

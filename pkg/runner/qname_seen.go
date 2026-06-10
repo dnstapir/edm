@@ -13,7 +13,7 @@ import (
 //
 // The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
 // workers report any given qname as new at most once.
-func (edm *DnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], store SeenQnameStore, syncWrites bool) bool {
+func (edm *DnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], store seenQnameStore, syncWrites bool) bool {
 	qname := strings.ToLower(msg.Question[0].Name)
 	edm.seenQnameMutex.Lock()
 	defer edm.seenQnameMutex.Unlock()

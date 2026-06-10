@@ -171,13 +171,13 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies())
 }
 
-func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps Dependencies) *DnstapMinimiser {
+func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
 	t.Helper()
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
-	edm, err := NewDnstapMinimiser(tc, logger, WithDependencies(deps))
+	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -213,7 +213,7 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	return edm
 }
 
-func newTestDependencies() Dependencies {
+func newTestDependencies() dependencies {
 	deps := defaultDependencies()
 	deps.CryptopanFactory = fastTestCryptopanFactory{}
 	return deps
@@ -227,11 +227,11 @@ func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Crypt
 }
 
 type testWatcherFactory struct {
-	watcher FileWatcher
+	watcher fileWatcher
 	err     error
 }
 
-func (twf testWatcherFactory) NewWatcher() (FileWatcher, error) {
+func (twf testWatcherFactory) NewWatcher() (fileWatcher, error) {
 	if twf.err != nil {
 		return nil, twf.err
 	}
@@ -256,7 +256,7 @@ func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger 
 	deps := newTestDependencies()
 	deps.WatcherFactory = testWatcherFactory{}
 
-	edm, err := NewDnstapMinimiser(tc, logger, WithDependencies(deps))
+	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
@@ -540,9 +540,9 @@ func discardEDM() *DnstapMinimiser {
 }
 
 type faultingFileSystem struct {
-	FileSystem
+	fileSystem
 	readFile func(string) ([]byte, error)
-	create   func(string) (File, error)
+	create   func(string) (fsFile, error)
 	rename   func(string, string) error
 	remove   func(string) error
 	mkdirAll func(string, os.FileMode) error
@@ -554,47 +554,47 @@ func (ffs faultingFileSystem) ReadFile(name string) ([]byte, error) {
 	if ffs.readFile != nil {
 		return ffs.readFile(name)
 	}
-	return ffs.FileSystem.ReadFile(name)
+	return ffs.fileSystem.ReadFile(name)
 }
 
-func (ffs faultingFileSystem) Create(name string) (File, error) {
+func (ffs faultingFileSystem) Create(name string) (fsFile, error) {
 	if ffs.create != nil {
 		return ffs.create(name)
 	}
-	return ffs.FileSystem.Create(name)
+	return ffs.fileSystem.Create(name)
 }
 
 func (ffs faultingFileSystem) Rename(oldpath, newpath string) error {
 	if ffs.rename != nil {
 		return ffs.rename(oldpath, newpath)
 	}
-	return ffs.FileSystem.Rename(oldpath, newpath)
+	return ffs.fileSystem.Rename(oldpath, newpath)
 }
 
 func (ffs faultingFileSystem) Remove(name string) error {
 	if ffs.remove != nil {
 		return ffs.remove(name)
 	}
-	return ffs.FileSystem.Remove(name)
+	return ffs.fileSystem.Remove(name)
 }
 
 func (ffs faultingFileSystem) MkdirAll(path string, perm os.FileMode) error {
 	if ffs.mkdirAll != nil {
 		return ffs.mkdirAll(path, perm)
 	}
-	return ffs.FileSystem.MkdirAll(path, perm)
+	return ffs.fileSystem.MkdirAll(path, perm)
 }
 
 func (ffs faultingFileSystem) Stat(name string) (os.FileInfo, error) {
 	if ffs.stat != nil {
 		return ffs.stat(name)
 	}
-	return ffs.FileSystem.Stat(name)
+	return ffs.fileSystem.Stat(name)
 }
 
 func (ffs faultingFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
 	if ffs.readDir != nil {
 		return ffs.readDir(name)
 	}
-	return ffs.FileSystem.ReadDir(name)
+	return ffs.fileSystem.ReadDir(name)
 }

@@ -27,9 +27,9 @@ import (
 	"github.com/yawning/cryptopan"
 )
 
-// File is the file surface the runner needs. It is intentionally smaller than
-// *os.File so tests can use lightweight fakes.
-type File interface {
+// fsFile is the file surface the runner needs. It is intentionally smaller
+// than [*os.File] so tests can use lightweight fakes.
+type fsFile interface {
 	io.Reader
 	io.Writer
 	io.Closer
@@ -37,11 +37,11 @@ type File interface {
 	Name() string
 }
 
-// FileSystem contains filesystem operations used by the runner.
-type FileSystem interface {
-	Open(name string) (File, error)
-	OpenFile(name string, flag int, perm os.FileMode) (File, error)
-	Create(name string) (File, error)
+// fileSystem contains filesystem operations used by the runner.
+type fileSystem interface {
+	Open(name string) (fsFile, error)
+	OpenFile(name string, flag int, perm os.FileMode) (fsFile, error)
+	Create(name string) (fsFile, error)
 	ReadFile(name string) ([]byte, error)
 	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
@@ -50,29 +50,29 @@ type FileSystem interface {
 	Remove(name string) error
 }
 
-// Timer is the clock timer surface used by debounce code.
-type Timer interface {
+// timer is the clock timer surface used by debounce code.
+type timer interface {
 	Stop() bool
 	Reset(time.Duration) bool
 }
 
-// Ticker is the clock ticker surface used by background workers.
-type Ticker interface {
+// ticker is the clock ticker surface used by background workers.
+type ticker interface {
 	C() <-chan time.Time
 	Stop()
 	Reset(time.Duration)
 }
 
-// Clock contains time operations used by the runner.
-type Clock interface {
+// clock contains time operations used by the runner.
+type clock interface {
 	Now() time.Time
 	After(time.Duration) <-chan time.Time
-	AfterFunc(time.Duration, func()) Timer
-	NewTicker(time.Duration) Ticker
+	AfterFunc(time.Duration, func()) timer
+	NewTicker(time.Duration) ticker
 }
 
-// FileWatcher is the fsnotify surface used by the runner.
-type FileWatcher interface {
+// fileWatcher is the fsnotify surface used by the runner.
+type fileWatcher interface {
 	Add(name string) error
 	Remove(name string) error
 	Close() error
@@ -81,32 +81,32 @@ type FileWatcher interface {
 	Errors() <-chan error
 }
 
-// WatcherFactory creates file watchers.
-type WatcherFactory interface {
-	NewWatcher() (FileWatcher, error)
+// watcherFactory creates file watchers.
+type watcherFactory interface {
+	NewWatcher() (fileWatcher, error)
 }
 
-// ListenerFactory creates plaintext and TLS listeners.
-type ListenerFactory interface {
+// listenerFactory creates plaintext and TLS listeners.
+type listenerFactory interface {
 	Listen(network, address string) (net.Listener, error)
 	ListenTLS(network, address string, config *tls.Config) (net.Listener, error)
 }
 
-// DnstapInput is the DNSTAP input surface used by Run.
-type DnstapInput interface {
+// dnstapInput is the DNSTAP input surface used by Run.
+type dnstapInput interface {
 	ReadInto(context.Context, chan<- []byte) error
 	SetTimeout(time.Duration)
 	SetLogger(dnstap.Logger)
 	Close() error
 }
 
-// DnstapInputFactory creates DNSTAP frame stream inputs.
-type DnstapInputFactory interface {
-	NewFrameStreamSockInput(listener net.Listener) DnstapInput
+// dnstapInputFactory creates DNSTAP frame stream inputs.
+type dnstapInputFactory interface {
+	NewFrameStreamSockInput(listener net.Listener) dnstapInput
 }
 
-// SeenQnameStore stores the persistent set of previously observed qnames.
-type SeenQnameStore interface {
+// seenQnameStore stores the persistent set of previously observed qnames.
+type seenQnameStore interface {
 	// Has reports whether qname is recorded in the store. It may report
 	// true together with a non-nil error when the value was found but
 	// releasing lookup resources failed; callers should trust the bool.
@@ -115,72 +115,72 @@ type SeenQnameStore interface {
 	Close() error
 }
 
-// SeenQnameStoreFactory opens SeenQnameStore instances.
-type SeenQnameStoreFactory interface {
-	OpenSeenQnameStore(path string) (SeenQnameStore, error)
+// seenQnameStoreFactory opens SeenQnameStore instances.
+type seenQnameStoreFactory interface {
+	OpenSeenQnameStore(path string) (seenQnameStore, error)
 }
 
-// HTTPServerRunner starts an HTTP server.
-type HTTPServerRunner interface {
+// httpServerRunner starts an HTTP server.
+type httpServerRunner interface {
 	ListenAndServeHTTP(server *http.Server) error
 }
 
-// AggregateSender sends histogram parquet files to aggregate-receiver.
-type AggregateSender interface {
+// aggregateSender sends histogram parquet files to aggregate-receiver.
+type aggregateSender interface {
 	Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error
 	CloseIdleConnections()
 }
 
-// AggregateSenderFactory creates AggregateSender instances.
-type AggregateSenderFactory interface {
-	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs FileSystem, clock Clock) (AggregateSender, error)
+// aggregateSenderFactory creates AggregateSender instances.
+type aggregateSenderFactory interface {
+	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error)
 }
 
-// MQTTConnectionManager is the MQTT connection surface used by the publisher.
-type MQTTConnectionManager interface {
+// mqttConnectionManager is the MQTT connection surface used by the publisher.
+type mqttConnectionManager interface {
 	AwaitConnection(context.Context) error
 	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
 	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
 }
 
-// MQTTFactory creates MQTT file queues and connection managers.
-type MQTTFactory interface {
+// mqttFactory creates MQTT file queues and connection managers.
+type mqttFactory interface {
 	NewFileQueue(path, prefix, extension string) (*file.Queue, error)
-	NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (MQTTConnectionManager, error)
+	NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error)
 }
 
-// KeyMaterialLoader loads certificates, CA pools and signing keys.
-type KeyMaterialLoader interface {
+// keyMaterialLoader loads certificates, CA pools and signing keys.
+type keyMaterialLoader interface {
 	LoadKeyPair(certPath, keyPath string) (tls.Certificate, error)
 	LoadEdDSAJWK(fileName string) (jwk.Key, error)
 	LoadCertPool(fileName string) (*x509.CertPool, error)
 }
 
-// DawgLoader loads DAWG files.
-type DawgLoader interface {
+// dawgLoader loads DAWG files.
+type dawgLoader interface {
 	LoadDawgFile(fileName string) (dawg.Finder, time.Time, error)
 }
 
-// CryptopanFactory creates Crypto-PAn instances from configured key material.
-type CryptopanFactory interface {
+// cryptopanFactory creates Crypto-PAn instances from configured key material.
+type cryptopanFactory interface {
 	NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error)
 }
 
-// Dependencies holds all external functionality used by DnstapMinimiser.
+// dependencies holds all external functionality used by DnstapMinimiser.
 // Zero-valued fields are filled with production implementations.
-type Dependencies struct {
-	FileSystem             FileSystem
-	Clock                  Clock
-	WatcherFactory         WatcherFactory
-	ListenerFactory        ListenerFactory
-	DnstapInputFactory     DnstapInputFactory
-	SeenQnameStoreFactory  SeenQnameStoreFactory
-	HTTPServerRunner       HTTPServerRunner
-	AggregateSenderFactory AggregateSenderFactory
-	MQTTFactory            MQTTFactory
-	KeyMaterialLoader      KeyMaterialLoader
-	DawgLoader             DawgLoader
-	CryptopanFactory       CryptopanFactory
+type dependencies struct {
+	FileSystem             fileSystem
+	Clock                  clock
+	WatcherFactory         watcherFactory
+	ListenerFactory        listenerFactory
+	DnstapInputFactory     dnstapInputFactory
+	SeenQnameStoreFactory  seenQnameStoreFactory
+	HTTPServerRunner       httpServerRunner
+	AggregateSenderFactory aggregateSenderFactory
+	MQTTFactory            mqttFactory
+	KeyMaterialLoader      keyMaterialLoader
+	DawgLoader             dawgLoader
+	CryptopanFactory       cryptopanFactory
 
 	ConfigUpdateDebounce    time.Duration
 	FSEventDebounce         time.Duration
@@ -192,11 +192,11 @@ type Dependencies struct {
 	MetricsListenAddr       string
 }
 
-func defaultDependencies() Dependencies {
-	return fillDependencies(Dependencies{})
+func defaultDependencies() dependencies {
+	return fillDependencies(dependencies{})
 }
 
-func fillDependencies(deps Dependencies) Dependencies {
+func fillDependencies(deps dependencies) dependencies {
 	if deps.FileSystem == nil {
 		deps.FileSystem = osFileSystem{}
 	}
@@ -210,19 +210,19 @@ func fillDependencies(deps Dependencies) Dependencies {
 		deps.ListenerFactory = netListenerFactory{}
 	}
 	if deps.DnstapInputFactory == nil {
-		deps.DnstapInputFactory = dnstapInputFactory{}
+		deps.DnstapInputFactory = realDnstapInputFactory{}
 	}
 	if deps.SeenQnameStoreFactory == nil {
 		deps.SeenQnameStoreFactory = pebbleSeenQnameStoreFactory{}
 	}
 	if deps.HTTPServerRunner == nil {
-		deps.HTTPServerRunner = httpServerRunner{}
+		deps.HTTPServerRunner = realHTTPServerRunner{}
 	}
 	if deps.AggregateSenderFactory == nil {
-		deps.AggregateSenderFactory = aggregateSenderFactory{}
+		deps.AggregateSenderFactory = realAggregateSenderFactory{}
 	}
 	if deps.MQTTFactory == nil {
-		deps.MQTTFactory = mqttFactory{}
+		deps.MQTTFactory = realMQTTFactory{}
 	}
 	if deps.KeyMaterialLoader == nil {
 		deps.KeyMaterialLoader = realKeyMaterialLoader{fs: deps.FileSystem}
@@ -262,15 +262,15 @@ func fillDependencies(deps Dependencies) Dependencies {
 
 type osFileSystem struct{}
 
-func (osFileSystem) Open(name string) (File, error) {
+func (osFileSystem) Open(name string) (fsFile, error) {
 	return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }
 
-func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (File, error) {
+func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (fsFile, error) {
 	return os.OpenFile(name, flag, perm) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }
 
-func (osFileSystem) Create(name string) (File, error) {
+func (osFileSystem) Create(name string) (fsFile, error) {
 	return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
 }
 
@@ -308,11 +308,11 @@ func (realClock) After(d time.Duration) <-chan time.Time {
 	return time.After(d)
 }
 
-func (realClock) AfterFunc(d time.Duration, f func()) Timer {
+func (realClock) AfterFunc(d time.Duration, f func()) timer {
 	return time.AfterFunc(d, f)
 }
 
-func (realClock) NewTicker(d time.Duration) Ticker {
+func (realClock) NewTicker(d time.Duration) ticker {
 	return realTicker{Ticker: time.NewTicker(d)}
 }
 
@@ -326,7 +326,7 @@ func (rt realTicker) C() <-chan time.Time {
 
 type fsnotifyWatcherFactory struct{}
 
-func (fsnotifyWatcherFactory) NewWatcher() (FileWatcher, error) {
+func (fsnotifyWatcherFactory) NewWatcher() (fileWatcher, error) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return nil, err
@@ -356,18 +356,18 @@ func (netListenerFactory) ListenTLS(network, address string, config *tls.Config)
 	return tls.Listen(network, address, config)
 }
 
-type dnstapInputFactory struct{}
+type realDnstapInputFactory struct{}
 
 // NewFrameStreamSockInput mirrors the name of the dnstap library API it
 // supersedes but returns the runner's own [socketDnstapInput], which adds
 // context cancellation and graceful close on top of the library behavior.
-func (dnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) DnstapInput {
+func (realDnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) dnstapInput {
 	return newSocketDnstapInput(listener)
 }
 
 type pebbleSeenQnameStoreFactory struct{}
 
-func (pebbleSeenQnameStoreFactory) OpenSeenQnameStore(path string) (SeenQnameStore, error) {
+func (pebbleSeenQnameStoreFactory) OpenSeenQnameStore(path string) (seenQnameStore, error) {
 	db, err := pebble.Open(path, &pebble.Options{})
 	if err != nil {
 		return nil, err
@@ -405,30 +405,30 @@ func (ps *pebbleSeenQnameStore) Close() error {
 	return ps.db.Close()
 }
 
-type httpServerRunner struct{}
+type realHTTPServerRunner struct{}
 
-func (httpServerRunner) ListenAndServeHTTP(server *http.Server) error {
+func (realHTTPServerRunner) ListenAndServeHTTP(server *http.Server) error {
 	return server.ListenAndServe()
 }
 
-type aggregateSenderFactory struct{}
+type realAggregateSenderFactory struct{}
 
-func (aggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs FileSystem, clock Clock) (AggregateSender, error) {
+func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error) {
 	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, fs, clock)
 }
 
-type mqttFactory struct{}
+type realMQTTFactory struct{}
 
-func (mqttFactory) NewFileQueue(path, prefix, extension string) (*file.Queue, error) {
+func (realMQTTFactory) NewFileQueue(path, prefix, extension string) (*file.Queue, error) {
 	return file.New(path, prefix, extension)
 }
 
-func (mqttFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (MQTTConnectionManager, error) {
+func (realMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
 	return autopaho.NewConnection(ctx, cfg)
 }
 
 type realKeyMaterialLoader struct {
-	fs FileSystem
+	fs fileSystem
 }
 
 func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Certificate, error) {
@@ -484,7 +484,7 @@ func (rkl realKeyMaterialLoader) LoadCertPool(fileName string) (*x509.CertPool, 
 }
 
 type realDawgLoader struct {
-	fs FileSystem
+	fs fileSystem
 }
 
 func (rdl realDawgLoader) LoadDawgFile(dawgFile string) (dawg.Finder, time.Time, error) {
