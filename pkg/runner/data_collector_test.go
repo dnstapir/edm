@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/miekg/dns"
@@ -63,9 +64,10 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	if len(prevWKD.m) != 1 {
 		t.Fatalf("flushed histogram domains have: %d, want: 1", len(prevWKD.m))
 	}
-	got := prevWKD.m[dawgIndex]
-	if got == nil {
+	got, ok := prevWKD.m[dawgIndex]
+	if !ok || got == nil {
 		t.Fatalf("flushed histogram missing DAWG index %d", dawgIndex)
+		return
 	}
 	if got.ACount != 1 || got.OKCount != 1 {
 		t.Fatalf("flushed histogram counts have A=%d OK=%d, want A=1 OK=1", got.ACount, got.OKCount)
@@ -133,15 +135,10 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 	}
 }
 
-func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*dnstapMinimiser, *wellKnownDomainsTracker) {
+func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *wellKnownDomainsTracker) {
 	t.Helper()
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	dBuilder := dawg.New()
 	for _, domain := range knownDomains {
@@ -153,4 +150,52 @@ func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*dnstapM
 	}
 
 	return edm, wkdTracker
+}
+
+func TestDataCollector(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		tc := defaultTC
+		deps := defaultDependencies()
+		edm := &DnstapMinimiser{
+			conf:               Config{HistogramHLLExplicitThreshold: tc.CryptopanAddressEntries},
+			log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+			deps:               deps,
+			sessionCollectorCh: make(chan *sessionData, 1),
+			sessionWriterCh:    make(chan *prevSessions, 1),
+			histogramWriterCh:  make(chan *wellKnownDomainsData, 1),
+		}
+
+		path := testDawgFile(t, "example.com.")
+		finder, modTime, err := (realDawgLoader{fs: osFileSystem{}}).LoadDawgFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wkd, err := newWellKnownDomainsTracker(finder, modTime)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.dataCollector(&wg, wkd, path)
+
+		edm.sessionCollectorCh <- &sessionData{ServerID: ptr("server")}
+		wkd.updateCh <- wkdUpdate{
+			histogramData: histogramData{ACount: 1, OKCount: 1},
+			dawgIndex:     0,
+			dawgModTime:   modTime,
+			ip:            netip.MustParseAddr("198.51.100.20"),
+			hllHash:       1,
+		}
+		time.Sleep(timeUntilNextMinute())
+		close(wkd.stop)
+		wg.Wait()
+
+		if _, ok := <-edm.sessionWriterCh; !ok {
+			t.Fatal("sessionWriterCh closed before queued session could be read")
+		}
+		if _, ok := <-edm.histogramWriterCh; !ok {
+			t.Fatal("histogramWriterCh closed before queued histogram could be read")
+		}
+	})
 }

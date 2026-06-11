@@ -29,7 +29,7 @@ func TestNewPprofServer(t *testing.T) {
 func TestNewMetricsServer(t *testing.T) {
 	t.Run("metrics endpoint responds", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
-		s := edm.newMetricsServer("127.0.0.1:0", false)
+		s := edm.newMetricsServer(t.Context(), "127.0.0.1:0", false)
 		req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
 		rec := httptest.NewRecorder()
 		s.Handler.ServeHTTP(rec, req)
@@ -46,7 +46,7 @@ func TestNewMetricsServer(t *testing.T) {
 
 	t.Run("rotate-parquet absent when disabled", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
-		s := edm.newMetricsServer("127.0.0.1:0", false)
+		s := edm.newMetricsServer(t.Context(), "127.0.0.1:0", false)
 		req := httptest.NewRequest(http.MethodPost, "/debug/rotate-parquet", nil)
 		rec := httptest.NewRecorder()
 		s.Handler.ServeHTTP(rec, req)
@@ -57,7 +57,7 @@ func TestNewMetricsServer(t *testing.T) {
 
 	t.Run("rotate-parquet present when enabled", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
-		s := edm.newMetricsServer("127.0.0.1:0", true)
+		s := edm.newMetricsServer(t.Context(), "127.0.0.1:0", true)
 		// A GET should be rejected with 405 by manualParquetRotationHandler's
 		// method-check, proving the route is wired without involving the
 		// (unstarted) rotation worker that a POST would block on.

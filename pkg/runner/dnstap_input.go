@@ -1,0 +1,297 @@
+package runner
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"log/slog"
+	"net"
+	"sync"
+	"syscall"
+	"time"
+
+	dnstap "github.com/dnstap/golang-dnstap"
+)
+
+// setupDnstapInput constructs the dnstap socket input selected by startConf.
+// Exactly one of InputUnix/InputTCP/InputTLS must be set: none returns
+// errNoInputConfigured and more than one returns errMultipleInputsConfigured,
+// so the contract holds even for a [ConfigProvider] that bypasses the
+// [Config] validate tags. On TLS, InputTLSClientCAFile (when set) enables
+// required-and-verify client mTLS via tls.RequireAndVerifyClientCert.
+func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Config) (dnstapInput, error) {
+	configuredInputs := 0
+	for _, configured := range []bool{startConf.InputUnix != "", startConf.InputTCP != "", startConf.InputTLS != ""} {
+		if configured {
+			configuredInputs++
+		}
+	}
+	if configuredInputs > 1 {
+		return nil, errMultipleInputsConfigured
+	}
+
+	var dti dnstapInput
+	switch {
+	case startConf.InputUnix != "":
+		logger.Info("creating dnstap unix socket", "socket", startConf.InputUnix)
+		if err := edm.deps.FileSystem.Remove(startConf.InputUnix); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("unable to remove stale dnstap unix socket: %w", err)
+		}
+		l, err := edm.deps.ListenerFactory.Listen("unix", startConf.InputUnix)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create dnstap unix socket: %w", err)
+		}
+		dti = edm.deps.DnstapInputFactory.NewFrameStreamSockInput(l)
+	case startConf.InputTCP != "":
+		logger.Info("creating plaintext dnstap TCP socket", "socket", startConf.InputTCP)
+		l, err := edm.deps.ListenerFactory.Listen("tcp", startConf.InputTCP)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create plaintext dnstap TCP socket: %w", err)
+		}
+		dti = edm.deps.DnstapInputFactory.NewFrameStreamSockInput(l)
+	case startConf.InputTLS != "":
+		logger.Info("creating encrypted dnstap TLS socket", "socket", startConf.InputTLS)
+		dnstapInputCert, err := edm.deps.KeyMaterialLoader.LoadKeyPair(startConf.InputTLSCertFile, startConf.InputTLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("unable to load x509 dnstap listener cert: %w", err)
+		}
+		dnstapTLSConfig := &tls.Config{
+			Certificates: []tls.Certificate{dnstapInputCert},
+			MinVersion:   tls.VersionTLS13,
+		}
+
+		// Enable client mTLS (client cert auth) if a CA file was passed.
+		if startConf.InputTLSClientCAFile != "" {
+			logger.Info("dnstap socket requiring valid client certs", "ca-file", startConf.InputTLSClientCAFile)
+			inputTLSClientCACertPool, err := edm.deps.KeyMaterialLoader.LoadCertPool(startConf.InputTLSClientCAFile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create CA cert pool for '-input-tls-client-ca-file': %w", err)
+			}
+			dnstapTLSConfig.ClientAuth = tls.RequireAndVerifyClientCert
+			dnstapTLSConfig.ClientCAs = inputTLSClientCACertPool
+		}
+
+		l, err := edm.deps.ListenerFactory.ListenTLS("tcp", startConf.InputTLS, dnstapTLSConfig)
+		if err != nil {
+			return nil, fmt.Errorf("unable to create TCP listener: %w", err)
+		}
+		dti = edm.deps.DnstapInputFactory.NewFrameStreamSockInput(l)
+	default:
+		return nil, errNoInputConfigured
+	}
+	dti.SetTimeout(time.Second * 5)
+	dti.SetLogger(log.Default())
+	return dti, nil
+}
+
+// socketDnstapInput accepts framestream connections on a listener and pumps
+// dnstap frames into an output channel.
+//
+// It deliberately replaces [dnstap.FrameStreamSockInput]: the library's
+// ReadInto offers no stop/close mechanism (its accept loop and per-connection
+// goroutines are untrackable), while this implementation honors context
+// cancellation, tracks live connections so Close tears them down, and lets
+// Run wait for a fully drained input on shutdown.
+type socketDnstapInput struct {
+	listener net.Listener
+	timeout  time.Duration
+	log      dnstap.Logger
+
+	closeOnce sync.Once
+	closeErr  error
+	connMutex sync.Mutex
+	conns     map[net.Conn]struct{}
+}
+
+func newSocketDnstapInput(listener net.Listener) *socketDnstapInput {
+	return &socketDnstapInput{
+		listener: listener,
+		log:      noOpDnstapLogger{},
+		conns:    map[net.Conn]struct{}{},
+	}
+}
+
+func (input *socketDnstapInput) SetTimeout(timeout time.Duration) {
+	input.timeout = timeout
+}
+
+func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) {
+	if logger == nil {
+		input.log = noOpDnstapLogger{}
+		return
+	}
+	input.log = logger
+}
+
+// Close closes the listener and every tracked connection. It is idempotent
+// and safe to call concurrently with ReadInto.
+func (input *socketDnstapInput) Close() error {
+	input.closeOnce.Do(func() {
+		input.closeErr = input.listener.Close()
+
+		input.connMutex.Lock()
+		defer input.connMutex.Unlock()
+		for conn := range input.conns {
+			if err := conn.Close(); err != nil {
+				input.log.Printf("%s: close connection failed: %v", conn.LocalAddr(), err)
+			}
+		}
+	})
+	return input.closeErr
+}
+
+// ReadInto accepts connections and forwards their dnstap frames to output
+// until ctx is cancelled or the listener fails. Transient accept errors are
+// retried with backoff; cancellation closes the listener and all live
+// connections, and ReadInto returns once every connection reader has exited.
+func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []byte) error {
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		select {
+		case <-ctx.Done():
+			if err := input.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+				input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), err)
+			}
+		case <-done:
+		}
+	}()
+
+	var wg sync.WaitGroup
+	var connID uint64
+	var acceptDelay time.Duration
+	for {
+		conn, err := input.listener.Accept()
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				wg.Wait()
+				return nil
+			}
+			if isTransientAcceptError(err) {
+				// Back off and keep accepting, net/http.Server.Serve
+				// style: a transient resource error must not take
+				// down the long-running dnstap collector.
+				if acceptDelay == 0 {
+					acceptDelay = 5 * time.Millisecond
+				} else {
+					acceptDelay *= 2
+				}
+				if acceptDelay > time.Second {
+					acceptDelay = time.Second
+				}
+				input.log.Printf("%s: accept dnstap connection failed, retrying in %v: %v", input.listener.Addr(), acceptDelay, err)
+				select {
+				case <-time.After(acceptDelay):
+				case <-ctx.Done():
+				}
+				continue
+			}
+			if closeErr := input.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
+				input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), closeErr)
+			}
+			wg.Wait()
+			return fmt.Errorf("%s: accept dnstap connection: %w", input.listener.Addr(), err)
+		}
+		acceptDelay = 0
+
+		input.trackConn(conn)
+		if ctx.Err() != nil {
+			input.untrackConn(conn)
+			if err := conn.Close(); err != nil {
+				input.log.Printf("%s: close canceled connection failed: %v", conn.LocalAddr(), err)
+			}
+			continue
+		}
+
+		connID++
+		id := connID
+		origin := ""
+		switch conn.RemoteAddr().Network() {
+		case "tcp", "tcp4", "tcp6":
+			origin = fmt.Sprintf(" from %s", conn.RemoteAddr())
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer input.untrackConn(conn)
+			defer func() {
+				if err := conn.Close(); err != nil && ctx.Err() == nil {
+					input.log.Printf("%s: close connection %d%s failed: %v", conn.LocalAddr(), id, origin, err)
+				}
+			}()
+
+			input.log.Printf("%s: accepted connection %d%s", conn.LocalAddr(), id, origin)
+			if err := input.readConn(ctx, conn, output); err != nil && ctx.Err() == nil {
+				input.log.Printf("%s: connection %d%s read failed: %v", conn.LocalAddr(), id, origin, err)
+			}
+			input.log.Printf("%s: closed connection %d%s", conn.LocalAddr(), id, origin)
+		}()
+	}
+}
+
+// isTransientAcceptError reports whether an Accept error is worth retrying
+// rather than tearing down the listener.
+//
+// It mirrors [net/http.Server.Serve]'s retry policy ([net.Error] timeouts)
+// and additionally treats the descriptor-exhaustion errnos (EMFILE/ENFILE)
+// and ECONNABORTED as transient, since those clear once load drops.
+func isTransientAcceptError(err error) bool {
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE)
+}
+
+func (input *socketDnstapInput) trackConn(conn net.Conn) {
+	input.connMutex.Lock()
+	defer input.connMutex.Unlock()
+	input.conns[conn] = struct{}{}
+}
+
+func (input *socketDnstapInput) untrackConn(conn net.Conn) {
+	input.connMutex.Lock()
+	defer input.connMutex.Unlock()
+	delete(input.conns, conn)
+}
+
+func (input *socketDnstapInput) readConn(ctx context.Context, conn net.Conn, output chan<- []byte) error {
+	reader, err := dnstap.NewReader(conn, &dnstap.ReaderOptions{
+		Bidirectional: true,
+		Timeout:       input.timeout,
+	})
+	if err != nil {
+		return fmt.Errorf("open framestream reader: %w", err)
+	}
+
+	buf := make([]byte, dnstap.MaxPayloadSize)
+	for {
+		n, err := reader.ReadFrame(buf)
+		if err != nil {
+			if ctx.Err() != nil || errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("read frame: %w", err)
+		}
+
+		frame := make([]byte, n)
+		copy(frame, buf[:n])
+		select {
+		case output <- frame:
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+type noOpDnstapLogger struct{}
+
+func (noOpDnstapLogger) Printf(string, ...interface{}) {}

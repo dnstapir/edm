@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -21,20 +20,22 @@ import (
 	"github.com/yaronf/httpsign"
 )
 
-type aggregateSender struct {
+type realAggregateSender struct {
 	log               *slog.Logger
 	aggrecURL         *url.URL
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 	httpTransport     *http.Transport
+	fs                fileSystem
+	clock             clock
 }
 
-func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool) (aggregateSender, error) {
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (realAggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
 	err := signingJwk.Raw(&signingKey)
 	if err != nil {
-		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
+		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 	}
 
 	// Create HTTP handler for sending aggregate files to aggrec
@@ -47,7 +48,7 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 		ResponseHeaderTimeout: 10 * time.Second,
 		TLSClientConfig: &tls.Config{
 			RootCAs:              caCertPool,
-			GetClientCertificate: edm.httpClientCertStore.getClientCertificate,
+			GetClientCertificate: getClientCertificate,
 			MinVersion:           tls.VersionTLS13,
 		},
 	}
@@ -55,31 +56,42 @@ func (edm *dnstapMinimiser) newAggregateSender(aggrecURL *url.URL, signingJwk jw
 		Transport: httpTransport,
 	}
 
-	edm.log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
+	log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
 
 	// Create signer and wrapped HTTP client
 	signer, err := httpsign.NewEd25519Signer(signingKey,
 		httpsign.NewSignConfig().SetKeyID(signingJwk.KeyID()),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
 	if err != nil {
-		return aggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
+		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
 	}
 
 	client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 
-	return aggregateSender{
-		log:               edm.log,
+	return realAggregateSender{
+		log:               log,
 		aggrecURL:         aggrecURL,
 		caCertPool:        caCertPool,
 		signingHTTPClient: client,
 		httpTransport:     httpTransport,
+		fs:                fs,
+		clock:             clock,
 	}, nil
 }
 
-// Send histogram data via signed HTTP message to aggregate-receiver (https://github.com/dnstapir/aggregate-receiver)
-func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
+// Send sends histogram data via signed HTTP message to aggregate-receiver.
+func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
+	fs := as.fs
+	if fs == nil {
+		fs = osFileSystem{}
+	}
+	clock := as.clock
+	if clock == nil {
+		clock = realClock{}
+	}
+
 	fileName = filepath.Clean(fileName)
-	file, err := os.Open(fileName)
+	file, err := fs.Open(fileName)
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
 	}
@@ -133,9 +145,9 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
 	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
 
 	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
-	startTime := now()
+	startTime := clock.Now()
 	res, err := as.signingHTTPClient.Do(req)
-	elapsedTime := time.Since(startTime)
+	elapsedTime := clock.Now().Sub(startTime)
 	if err != nil {
 		return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
 	}
@@ -167,6 +179,13 @@ func (as aggregateSender) send(ctx context.Context, fileName string, ts time.Tim
 	as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 
 	return nil
+}
+
+// CloseIdleConnections closes idle HTTP connections held by the sender.
+func (as realAggregateSender) CloseIdleConnections() {
+	if as.httpTransport != nil {
+		as.httpTransport.CloseIdleConnections()
+	}
 }
 
 // iso8601Duration formats duration as an ISO 8601 duration string, e.g. "PT1H2M3S".
@@ -204,4 +223,47 @@ func iso8601Duration(duration time.Duration) string {
 	}
 
 	return res
+}
+
+func (edm *DnstapMinimiser) setupHistogramSender() error {
+	conf := edm.getConfig()
+
+	httpURL, err := url.Parse(conf.HTTPURL)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to parse 'http-url' setting: %w", err)
+	}
+
+	httpSigningJwk, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.HTTPSigningKeyFile)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
+	}
+
+	// Leaving these nil will use the OS default CA certs
+	var httpCACertPool *x509.CertPool
+
+	if conf.HTTPCAFile != "" {
+		// Setup CA cert for validating the aggregate-receiver connection
+		httpCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.HTTPCAFile)
+		if err != nil {
+			return fmt.Errorf("setupHistogramSender: failed to create CA cert pool for '-http-ca-file': %w", err)
+		}
+	}
+
+	// Build the new sender first so a failed rebuild leaves the existing
+	// working sender in place instead of zeroing it.
+	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	if err != nil {
+		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
+	}
+
+	edm.aggregSenderMutex.Lock()
+	oldAggregSender := edm.aggregSender
+	edm.aggregSender = newAggregSender
+	edm.aggregSenderMutex.Unlock()
+
+	if oldAggregSender != nil {
+		oldAggregSender.CloseIdleConnections()
+	}
+
+	return nil
 }

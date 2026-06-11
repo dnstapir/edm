@@ -1,20 +1,40 @@
 package cmd
 
 import (
+	"context"
+	"os"
+	"os/signal"
+	"syscall"
+
 	"github.com/dnstapir/edm/pkg/runner"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
-
-var runRunner = runner.Run
 
 // runCmd represents the run command
 var runCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run dnstapir-edm in dnstap capture mode",
 	Run: func(_ *cobra.Command, _ []string) {
-		runRunner(edmLogger, edmLoggerLevel)
+		runMinimiser()
 	},
+}
+
+func runMinimiser() {
+	edm, err := runner.NewDnstapMinimiser(runner.ViperConfigProvider{}, edmLogger, runner.WithLoggerLevel(edmLoggerLevel))
+	if err != nil {
+		edmLogger.Error("unable to init", "error", err)
+		exitProcess(1)
+		return
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := edm.Run(ctx); err != nil {
+		edmLogger.Error("edm: run failed", "error", err)
+		exitProcess(1)
+	}
 }
 
 func init() {

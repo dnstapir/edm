@@ -1,8 +1,6 @@
 package runner
 
 import (
-	"io"
-	"log/slog"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -12,7 +10,8 @@ import (
 	"github.com/miekg/dns"
 )
 
-// The tests in this file exercise the lock-free reload paths in runner.go:
+// The tests in this file exercise the lock-free reload paths across the
+// runner subsystems:
 // ignored-IP and ignored-question lookups read
 // atomic.Pointer snapshots on the hot path with no mutex, and reload
 // writers atomic.Store fresh values. They are designed to fail under
@@ -34,12 +33,7 @@ import (
 // Run under -race to catch any unsynchronised access to the IPSet pointer
 // or the CIDR count.
 func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Prime the set so readers don't all hit the early-return nil path.
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
@@ -116,19 +110,14 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 // the DAWG-backed ignored-question set, which is stored in an
 // atomic.Pointer[dawgFinderHolder]. The wrapper exists because dawg.Finder
 // is an interface and atomic.Pointer wants a concrete type - see the
-// design note on the dnstapMinimiser struct in runner.go.
+// design note on the DnstapMinimiser struct.
 //
 // As with the IP test the assertion is purely "no race, no panic". A
 // future change that, say, reintroduced ignoredQuestionsMutex without
 // updating readers would either deadlock (test would time out) or race
 // (race detector would fail).
 func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Prime so readers exercise the non-nil snapshot branch initially.
 	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
@@ -197,12 +186,7 @@ func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 // do assert is that the cryptopan pointer is never observed nil mid-run,
 // and that the final generation reflects every successful rotation.
 func TestConcurrentSetCryptopanReload(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	var (
 		stop atomic.Bool
@@ -229,12 +213,11 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 		}()
 	}
 
-	// Rotate the cryptopan instance several times. setCryptopan is
-	// expensive (argon2 KDF, ~100–200ms per call) so we keep the count
-	// modest - the readers still spin tens of thousands of Loads in
-	// that window, which is plenty for the race detector to catch any
-	// regression. The salt stays constant; only the key changes so each
-	// call installs a distinct instance.
+	// Rotate the cryptopan instance several times. The test factory keeps this
+	// cheap while still returning a fresh instance for every rotation. The
+	// readers still spin thousands of Loads in that window, which is plenty
+	// for the race detector to catch any regression. The salt stays constant;
+	// only the key changes so each call installs a distinct instance.
 	const rotations = 20
 	for i := range rotations {
 		key := "rotation-key-"
@@ -256,7 +239,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 	// After the writer has finished the generation must reflect every
 	// successful rotation - strictly monotonic, no skipped/dropped
 	// increments. The +1 accounts for the setCryptopan call inside
-	// newDnstapMinimiser.
+	// NewDnstapMinimiser.
 	wantGen := uint64(rotations + 1)
 	if got := edm.cryptopanGen.Load(); got != wantGen {
 		t.Fatalf("final cryptopanGen have: %d, want: %d", got, wantGen)
@@ -265,7 +248,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 
 // TestQuestionIsIgnoredMultipleQuestions documents the explicit "any
 // matches" policy in questionIsIgnored when a DNS message carries more
-// than one question. The runner.go comment states: "if there happens to
+// than one question. The minimiser code states: "if there happens to
 // be multiple questions in the packet we consider the message ignored if
 // any of them matches" - but no existing test exercises a multi-question
 // message, so a future refactor that, say, only inspected msg.Question[0]
@@ -275,12 +258,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 // recursors reject them, but the code intentionally handles the case;
 // this test pins the behaviour.
 func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	edm.conf.IgnoredQuestionNamesFile = "testdata/ignored-question-names.valid1.dawg"
 	if err := edm.setIgnoredQuestionNames(); err != nil {
@@ -353,12 +331,7 @@ func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 // before any further parsing - silently allowing a packet with no
 // QueryAddress through would defeat operator policy.
 func TestClientIPIsIgnoredEmptyQueryAddress(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	edm, err := newDnstapMinimiser(logger, defaultTC)
-	if err != nil {
-		t.Fatalf("newDnstapMinimiser: %s", err)
-	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
+	edm := newTestDnstapMinimiser(t, defaultTC)
 
 	// Active list - exercise the fail-closed path.
 	edm.conf.IgnoredClientIPsFile = "testdata/ignored-client-ips.valid1"
