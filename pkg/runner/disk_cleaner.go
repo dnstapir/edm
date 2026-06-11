@@ -40,7 +40,7 @@ timerLoop:
 				if dirEntry.IsDir() {
 					continue
 				}
-				if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") && strings.HasSuffix(dirEntry.Name(), ".parquet") {
+				if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") && strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) {
 					fileInfo, err := dirEntry.Info()
 					if err != nil {
 						edm.log.Error("diskCleaner: unable to get fileInfo for filename", "error", err, "filename", dirEntry.Name())

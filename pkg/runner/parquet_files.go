@@ -11,9 +11,12 @@ import (
 )
 
 // writeRotatedParquet creates tmpName via createFile, invokes write to populate
-// it, then atomically renames it to finalName. On any failure between create
-// and rename the temp file is removed. label disambiguates concurrent rotations
-// in log lines (e.g. "session" or "histogram"). Returns finalName on success.
+// it, then atomically renames it to finalName. A write or close failure
+// removes the temp file (its contents are incomplete); a rename failure
+// deliberately leaves the fully written temp file in place so the interval's
+// data is not lost and can be recovered manually. label disambiguates
+// concurrent rotations in log lines (e.g. "session" or "histogram"). Returns
+// finalName on success.
 func (edm *DnstapMinimiser) writeRotatedParquet(label, tmpName, finalName string, write func(io.Writer) error) (string, error) {
 	edm.log.Info("writing out "+label+" file", "filename", tmpName)
 
@@ -156,7 +159,7 @@ func buildParquetFilenames(baseDir string, baseName string, timeStart time.Time,
 	// characters in the shell, e.g: 2009-11-10T23-00-00Z
 	startTS := timestampToFileString(timeStart.UTC())
 	stopTS := timestampToFileString(timeStop.UTC())
-	fileName := fmt.Sprintf("%s-%s_%s.parquet", baseName, startTS, stopTS)
+	fileName := fmt.Sprintf("%s-%s_%s%s", baseName, startTS, stopTS, parquetFileSuffix)
 
 	// Write output to a .tmp file so we can atomically rename it to the real
 	// name when the file has been written in full

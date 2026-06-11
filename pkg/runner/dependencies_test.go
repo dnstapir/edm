@@ -75,6 +75,17 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	if _, err := loader.LoadEdDSAJWK(filepath.Join(t.TempDir(), "missing.jwk")); err == nil {
 		t.Fatal("missing JWK succeeded")
 	}
+	// An EC key is not an OKP key at all (example key from RFC 7515 A.3).
+	ecJWK := `{"kty":"EC","crv":"P-256","x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU","y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0","d":"jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI"}`
+	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "ec.jwk", []byte(ecJWK))); !errors.Is(err, errNotEdDSAJWK) {
+		t.Fatalf("EC JWK error = %v, want errNotEdDSAJWK", err)
+	}
+	// X25519 is an OKP key-agreement curve, not an EdDSA signing curve
+	// (example key from RFC 8037 A.6).
+	x25519JWK := `{"kty":"OKP","crv":"X25519","x":"hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"}`
+	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "x25519.jwk", []byte(x25519JWK))); !errors.Is(err, errNotEdDSAJWK) {
+		t.Fatalf("X25519 JWK error = %v, want errNotEdDSAJWK", err)
+	}
 }
 
 func TestLoadDawgFileErrors(t *testing.T) {

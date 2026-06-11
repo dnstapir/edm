@@ -127,6 +127,7 @@ type testFileWatcher struct {
 	done      chan struct{}
 	watchList []string
 	removeErr error
+	closeOnce sync.Once
 }
 
 func newTestFileWatcher() *testFileWatcher {
@@ -146,13 +147,11 @@ func (tfw *testFileWatcher) Remove(string) error {
 }
 
 func (tfw *testFileWatcher) Close() error {
-	select {
-	case <-tfw.done:
-	default:
+	tfw.closeOnce.Do(func() {
 		close(tfw.done)
 		close(tfw.events)
 		close(tfw.errors)
-	}
+	})
 	return nil
 }
 

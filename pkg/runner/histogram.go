@@ -52,6 +52,14 @@ const (
 	edmStatusMax
 )
 
+// Histogram parquet files are named histogramFileBase + "-<start>_<stop>" +
+// parquetFileSuffix (see [buildParquetFilenames]); the same pair is used to
+// recognize histogram files in the outbox and sent directories.
+const (
+	histogramFileBase = "dns_histogram"
+	parquetFileSuffix = ".parquet"
+)
+
 // Histogram struct implementing description at https://github.com/dnstapir/datasets/blob/main/HistogramReport.md
 type histogramData struct {
 	StartTime int64 `parquet:"start_time,timestamp(microsecond)"`
@@ -96,7 +104,7 @@ func getHllDefaults(explicitThreshold int) hll.Settings {
 func (edm *DnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
 	startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime)
 
-	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, "dns_histogram", startTime, prevWellKnownDomainsData.rotationTime)
+	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, histogramFileBase, startTime, prevWellKnownDomainsData.rotationTime)
 
 	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName)
 
@@ -162,7 +170,7 @@ timerLoop:
 				if dirEntry.IsDir() {
 					continue
 				}
-				if strings.HasPrefix(dirEntry.Name(), "dns_histogram-") && strings.HasSuffix(dirEntry.Name(), ".parquet") {
+				if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") && strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) {
 					startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
 					if err != nil {
 						edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
@@ -220,9 +228,19 @@ timerLoop:
 	edm.log.Info("histogramSender: exiting loop")
 }
 
-// storageType is an enum whose values match the type values in the hll storage
-// spec.  In the the spec, the "dense" value is referred to as "full".  We use
-// the name dense because we fined it to be more descriptive.
+// Unfortunately the hll library does not expose what format
+// the HLL is being stored in so figure things out manually.
+//
+// The format of the bytes are documented at
+// https://github.com/aggregateknowledge/hll-storage-spec
+//
+// See https://github.com/segmentio/go-hll/issues/8 for a request to make this easier.
+//
+// BEGIN: Code manually based on https://github.com/segmentio/go-hll/blob/main/hll.go
+
+// hllStorageType is an enum whose values match the type values in the hll
+// storage spec. In the spec, the "dense" value is referred to as "full". We
+// use the name dense because we find it to be more descriptive.
 type hllStorageType int
 
 const (

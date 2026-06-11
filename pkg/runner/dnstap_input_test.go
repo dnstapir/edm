@@ -186,6 +186,17 @@ func TestSetupDnstapInput(t *testing.T) {
 		}
 	})
 
+	t.Run("multiple inputs configured", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		_, err := edm.setupDnstapInput(discardLog, Config{
+			InputUnix: filepath.Join(t.TempDir(), "dnstap.sock"),
+			InputTCP:  "127.0.0.1:0",
+		})
+		if !errors.Is(err, errMultipleInputsConfigured) {
+			t.Fatalf("err = %v, want errMultipleInputsConfigured", err)
+		}
+	})
+
 	t.Run("unix happy", func(t *testing.T) {
 		edm := newTestDnstapMinimiser(t, defaultTC)
 		socketPath := filepath.Join(t.TempDir(), "dnstap.sock")

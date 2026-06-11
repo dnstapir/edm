@@ -18,11 +18,22 @@ import (
 )
 
 // setupDnstapInput constructs the dnstap socket input selected by startConf.
-// Exactly one of InputUnix/InputTCP/InputTLS must be set; with none configured
-// it returns errNoInputConfigured rather than letting Run dereference a nil
-// *FrameStreamSockInput. On TLS, InputTLSClientCAFile (when set) enables
+// Exactly one of InputUnix/InputTCP/InputTLS must be set: none returns
+// errNoInputConfigured and more than one returns errMultipleInputsConfigured,
+// so the contract holds even for a [ConfigProvider] that bypasses the
+// [Config] validate tags. On TLS, InputTLSClientCAFile (when set) enables
 // required-and-verify client mTLS via tls.RequireAndVerifyClientCert.
 func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Config) (dnstapInput, error) {
+	configuredInputs := 0
+	for _, configured := range []bool{startConf.InputUnix != "", startConf.InputTCP != "", startConf.InputTLS != ""} {
+		if configured {
+			configuredInputs++
+		}
+	}
+	if configuredInputs > 1 {
+		return nil, errMultipleInputsConfigured
+	}
+
 	var dti dnstapInput
 	switch {
 	case startConf.InputUnix != "":

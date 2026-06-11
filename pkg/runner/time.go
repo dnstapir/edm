@@ -19,16 +19,6 @@ func intervalStartFromTimes(startTime time.Time, rotationTime time.Time) time.Ti
 	return getStartTimeFromRotationTime(rotationTime)
 }
 
-// Unfortunately the hll library does not expose what format
-// the HLL is being stored in so figure things out manually.
-//
-// The format of the bytes are documented at
-// https://github.com/aggregateknowledge/hll-storage-spec
-//
-// See https://github.com/segmentio/go-hll/issues/8 for a request to make this easier.
-//
-// BEGIN: Code manually based on https://github.com/segmentio/go-hll/blob/main/hll.go
-
 func timeUntilNextMinute() time.Duration {
 	return timeUntilNextMinuteFrom(time.Now())
 }

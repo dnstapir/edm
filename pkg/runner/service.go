@@ -38,10 +38,12 @@ var (
 	// ErrNilRunContext is returned when Run is called with a nil context.
 	ErrNilRunContext = errors.New("nil run context")
 
-	errNoClientCertificate = errors.New("no client certificate loaded")
-	errEmptyDawgFile       = errors.New("dawg file is empty")
-	errNoInputConfigured   = errors.New("no dnstap input configured")
-	errAppendCertsFromPEM  = errors.New("failed to append certs from PEM")
+	errNoClientCertificate      = errors.New("no client certificate loaded")
+	errEmptyDawgFile            = errors.New("dawg file is empty")
+	errNoInputConfigured        = errors.New("no dnstap input configured")
+	errMultipleInputsConfigured = errors.New("only one dnstap input may be configured")
+	errNotEdDSAJWK              = errors.New("JWK is not an EdDSA (Ed25519/Ed448) key")
+	errAppendCertsFromPEM       = errors.New("failed to append certs from PEM")
 )
 
 // Run lifecycle states tracked in DnstapMinimiser.state. The only

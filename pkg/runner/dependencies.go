@@ -451,6 +451,11 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 	return cert, nil
 }
 
+// LoadEdDSAJWK loads a JWK from fileName and verifies it is an EdDSA
+// (Ed25519/Ed448) key before stamping its algorithm as EdDSA. Other key
+// types (including the OKP key-agreement curves X25519/X448) return an
+// error wrapping errNotEdDSAJWK, so a mismatched key fails at load time
+// instead of during later JWS operations.
 func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) {
 	fileName = filepath.Clean(fileName)
 	keyFile, err := rkl.fs.ReadFile(fileName)
@@ -461,6 +466,19 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 	jwkKey, err := jwk.ParseKey(keyFile)
 	if err != nil {
 		return nil, err
+	}
+
+	var crv jwa.EllipticCurveAlgorithm
+	switch key := jwkKey.(type) {
+	case jwk.OKPPrivateKey:
+		crv = key.Crv()
+	case jwk.OKPPublicKey:
+		crv = key.Crv()
+	default:
+		return nil, fmt.Errorf("%w: key type %q", errNotEdDSAJWK, jwkKey.KeyType())
+	}
+	if crv != jwa.Ed25519 && crv != jwa.Ed448 {
+		return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
 	}
 
 	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
