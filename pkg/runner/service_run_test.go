@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 // runCoreTC returns a testConfiger with the bare minimum to walk through
@@ -30,14 +28,6 @@ func runCoreTC(t *testing.T) testConfiger {
 	tc.DisableMQTT = true
 	tc.DisableSessionFiles = true
 	return tc
-}
-
-// runCoreCleanup releases the global viper state each error-path test touches,
-// so subtests do not leak into one another. Callers register this via t.Cleanup
-// before invoking Run.
-func runCoreCleanup(t *testing.T) {
-	t.Helper()
-	t.Cleanup(viper.Reset)
 }
 
 type httpServerRunnerFunc func(*http.Server) error
@@ -83,7 +73,6 @@ func pinHTTPServersToEphemeral(t *testing.T, edm *DnstapMinimiser) {
 
 func TestRunCore_ErrorPaths(t *testing.T) {
 	t.Run("setIgnoredClientIPs error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.IgnoredClientIPsFile = filepath.Join(t.TempDir(), "missing.txt")
 		edm := newTestDnstapMinimiser(t, tc)
@@ -94,7 +83,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("setIgnoredQuestionNames error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.IgnoredQuestionNamesFile = filepath.Join(t.TempDir(), "missing.dawg")
 		edm := newTestDnstapMinimiser(t, tc)
@@ -105,7 +93,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("seen-qname store open error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		edm := newTestDnstapMinimiser(t, tc)
 		edm.deps.SeenQnameStoreFactory = seenQnameStoreFactoryFunc(func(string) (seenQnameStore, error) {
@@ -124,7 +111,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		// loadHTTPClientCert, so the returned error is the
 		// "HTTP client cert" wrap — setupHistogramSender itself never
 		// runs. The test name and assertion reflect that.
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.DisableHistogramSender = false
 		tc.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
@@ -140,7 +126,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		// Real matching cert+key so loadHTTPClientCert succeeds and the
 		// failure surfaces from setupHistogramSender itself (here via an
 		// unparseable HTTPURL).
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.DisableHistogramSender = false
 		certPath, keyPath, _ := testCertFiles(t)
@@ -156,7 +141,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("setupMQTT error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.DisableMQTT = false
 		// Real matching cert+key so loadMQTTClientCert succeeds and the
@@ -173,7 +157,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("setupDnstapInput no input", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.InputUnix = ""
 		edm := newTestDnstapMinimiser(t, tc)
@@ -184,7 +167,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("seen-qname LRU error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.QnameSeenEntries = 0
 		edm := newTestDnstapMinimiser(t, tc)
@@ -195,7 +177,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("DawgLoader.LoadDawgFile error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		tc.WellKnownDomainsFile = filepath.Join(t.TempDir(), "missing.dawg")
 		edm := newTestDnstapMinimiser(t, tc)
@@ -207,7 +188,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("cryptopan cache creation error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		edm := newTestDnstapMinimiser(t, tc)
 		pinHTTPServersToEphemeral(t, edm)
@@ -223,7 +203,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 	})
 
 	t.Run("debug dnstap file open error", func(t *testing.T) {
-		runCoreCleanup(t)
 		tc := runCoreTC(t)
 		// A path under a regular file (not a directory) makes OpenFile
 		// fail with ENOTDIR regardless of the test user's uid.

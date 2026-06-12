@@ -44,7 +44,7 @@ func buildLogger(w io.Writer, loggerLevel *slog.LevelVar, buildVersion, hostname
 }
 
 // main wires the hostname and logger helpers together, installs the logger as
-// the slog/log default, and hands control to the cobra command tree.
+// the slog/log default, and hands control to the command dispatcher.
 func main() {
 	// loggerLevel controls the global logging level for the application
 	loggerLevel := new(slog.LevelVar) // Info by default

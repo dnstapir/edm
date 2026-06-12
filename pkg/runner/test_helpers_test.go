@@ -100,12 +100,12 @@ var (
 )
 
 // testConfiger is a ConfigProvider backed by a complete Config value. Tests
-// build on defaultTestConfig (which mirrors pkg/cmd/run.go's flag defaults)
-// and override individual fields rather than going through the viper
-// unmarshaling pipeline. Embedding Config promotes every field so a test
-// can do `tc := defaultTC; tc.MQTTServer = "..."` directly.
+// build on defaultTestConfig (which mirrors DefaultConfig) and override
+// individual fields rather than going through the config file decoding
+// pipeline. Embedding Config promotes every field so a test can do
+// `tc := defaultTC; tc.MQTTServer = "..."` directly.
 //
-// testConfiger is test-only; production wires ViperConfigProvider.
+// testConfiger is test-only; production wires FileConfigProvider.
 type testConfiger struct {
 	Config
 }

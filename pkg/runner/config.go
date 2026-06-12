@@ -1,10 +1,12 @@
 package runner
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"os"
 
-	"github.com/spf13/viper"
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Labels 0-9
@@ -12,50 +14,49 @@ const defaultLabelLimit = 10
 
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
-// The struct tags are part of the Viper-backed CLI contract and stay in sync
-// with the flags in pkg/cmd. Cross-field rules are enforced by
-// [Config.Validate].
+// The toml struct tags name the config file keys and stay in sync with the
+// flags in pkg/cmd. Cross-field rules are enforced by [Config.Validate].
 type Config struct {
-	ConfigFile                    string `mapstructure:"config-file"`
-	DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
-	DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
-	DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
-	DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
-	EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
-	PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
-	InputUnix                     string `mapstructure:"input-unix"`
-	InputTCP                      string `mapstructure:"input-tcp"`
-	InputTLS                      string `mapstructure:"input-tls"`
-	InputTLSCertFile              string `mapstructure:"input-tls-cert-file"`
-	InputTLSKeyFile               string `mapstructure:"input-tls-key-file"`
-	InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file"`
-	CryptopanKey                  string `mapstructure:"cryptopan-key" reload:"true"`
-	CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" reload:"true"`
-	WellKnownDomainsFile          string `mapstructure:"well-known-domains-file"`
-	HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold"`
-	IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
-	IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
-	DataDir                       string `mapstructure:"data-dir"`
-	MinimiserWorkers              int    `mapstructure:"minimiser-workers"`
-	MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file"`
-	MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" reload:"true"`
-	MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" reload:"true"`
-	MQTTServer                    string `mapstructure:"mqtt-server"`
-	MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
-	MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive"`
-	MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
-	QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
-	NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
-	HTTPCAFile                    string `mapstructure:"http-ca-file"`
-	HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file"`
-	HTTPClientKeyFile             string `mapstructure:"http-client-key-file" reload:"true"`
-	HTTPClientCertFile            string `mapstructure:"http-client-cert-file" reload:"true"`
-	HTTPURL                       string `mapstructure:"http-url"`
-	Debug                         bool   `mapstructure:"debug"`
-	DebugDnstapFilename           string `mapstructure:"debug-dnstap-filename"`
-	DebugEnableBlockProfiling     bool   `mapstructure:"debug-enable-blockprofiling"`
-	DebugEnableMutexProfiling     bool   `mapstructure:"debug-enable-mutexprofiling"`
+	ConfigFile                    string `toml:"config-file"`
+	DisableSessionFiles           bool   `toml:"disable-session-files"`
+	DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
+	DisableMQTT                   bool   `toml:"disable-mqtt"`
+	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
+	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
+	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
+	InputUnix                     string `toml:"input-unix"`
+	InputTCP                      string `toml:"input-tcp"`
+	InputTLS                      string `toml:"input-tls"`
+	InputTLSCertFile              string `toml:"input-tls-cert-file"`
+	InputTLSKeyFile               string `toml:"input-tls-key-file"`
+	InputTLSClientCAFile          string `toml:"input-tls-client-ca-file"`
+	CryptopanKey                  string `toml:"cryptopan-key" reload:"true"`
+	CryptopanKeySalt              string `toml:"cryptopan-key-salt" reload:"true"`
+	WellKnownDomainsFile          string `toml:"well-known-domains-file"`
+	HistogramHLLExplicitThreshold int    `toml:"histogram-hll-explicit-threshold"`
+	IgnoredClientIPsFile          string `toml:"ignored-client-ips-file" reload:"true"`
+	IgnoredQuestionNamesFile      string `toml:"ignored-question-names-file" reload:"true"`
+	DataDir                       string `toml:"data-dir"`
+	MinimiserWorkers              int    `toml:"minimiser-workers"`
+	MQTTSigningKeyFile            string `toml:"mqtt-signing-key-file"`
+	MQTTClientKeyFile             string `toml:"mqtt-client-key-file" reload:"true"`
+	MQTTClientCertFile            string `toml:"mqtt-client-cert-file" reload:"true"`
+	MQTTServer                    string `toml:"mqtt-server"`
+	MQTTCAFile                    string `toml:"mqtt-ca-file"`
+	MQTTKeepalive                 uint16 `toml:"mqtt-keepalive"`
+	MQTTSignWorkers               int    `toml:"mqtt-sign-workers"`
+	QnameSeenEntries              int    `toml:"qname-seen-entries"`
+	CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"`
+	NewQnameBuffer                int    `toml:"newqname-buffer"`
+	HTTPCAFile                    string `toml:"http-ca-file"`
+	HTTPSigningKeyFile            string `toml:"http-signing-key-file"`
+	HTTPClientKeyFile             string `toml:"http-client-key-file" reload:"true"`
+	HTTPClientCertFile            string `toml:"http-client-cert-file" reload:"true"`
+	HTTPURL                       string `toml:"http-url"`
+	Debug                         bool   `toml:"debug"`
+	DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
+	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
+	DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
 }
 
 // Validate checks the configuration rules for Config.
@@ -152,32 +153,89 @@ type ConfigProvider interface {
 	GetConfig() (Config, error)
 }
 
-// ViperConfigProvider reads [Config] from the package-level Viper instance.
-type ViperConfigProvider struct{}
-
-// GetConfig reads and validates Config from Viper.
-func (vc ViperConfigProvider) GetConfig() (Config, error) {
-	conf := Config{}
-
-	// Re-read the config file on every call so a SIGHUP-triggered reload
-	// always observes the current file contents rather than whatever Viper
-	// cached at startup.
-	err := viper.ReadInConfig()
-	if err != nil {
-		return Config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)
+// DefaultConfig returns the built-in defaults for [Config].
+//
+// It is the single source of truth for both the "run" command flag defaults
+// and the base layer [FileConfigProvider] starts from before applying the
+// config file and startup overrides.
+func DefaultConfig() (conf Config) {
+	conf = Config{
+		CryptopanKeySalt:              "edm-kdf-salt-val",
+		WellKnownDomainsFile:          "well-known-domains.dawg",
+		DataDir:                       "/var/lib/dnstapir/edm",
+		MinimiserWorkers:              1,
+		MQTTSigningKeyFile:            "edm-mqtt-signer-key.pem",
+		MQTTClientKeyFile:             "edm-mqtt-client-key.pem",
+		MQTTClientCertFile:            "edm-mqtt-client.pem",
+		MQTTServer:                    "127.0.0.1:8883",
+		MQTTKeepalive:                 30,
+		QnameSeenEntries:              10_000_000,
+		CryptopanAddressEntries:       10_000_000,
+		NewQnameBuffer:                1000,
+		HistogramHLLExplicitThreshold: 20,
+		HTTPSigningKeyFile:            "edm-http-signer-key.pem",
+		HTTPClientKeyFile:             "edm-http-client-key.pem",
+		HTTPClientCertFile:            "edm-http-client.pem",
+		HTTPURL:                       "https://127.0.0.1:8443",
 	}
+	return
+}
 
-	err = viper.UnmarshalExact(&conf)
-	if err != nil {
-		return Config{}, fmt.Errorf("getViperConfig: unable to unmarshal config: %w", err)
+// ConfigOverride applies one flag- or environment-derived value to a Config.
+//
+// Overrides are captured once at startup and re-applied on every config
+// reload, so command line and environment values always win over the config
+// file even after the file changes.
+type ConfigOverride func(*Config)
+
+// FileConfigProvider reads [Config] from a TOML file, layering it as
+// [DefaultConfig] values overwritten by file contents overwritten by
+// overrides.
+//
+// It implements [ConfigProvider] and is safe for repeated GetConfig calls
+// from the runner's config reload goroutine.
+type FileConfigProvider struct {
+	path      string
+	overrides []ConfigOverride
+}
+
+// NewFileConfigProvider returns a provider reading the TOML file at path.
+func NewFileConfigProvider(path string, overrides ...ConfigOverride) *FileConfigProvider {
+	return &FileConfigProvider{path: path, overrides: overrides}
+}
+
+// Path returns the config file path the provider reads from.
+func (p *FileConfigProvider) Path() string {
+	return p.path
+}
+
+// GetConfig reads and validates the configuration.
+//
+// The file is re-read on every call so a SIGHUP-triggered reload always
+// observes the current file contents. Unknown keys in the config file are
+// rejected; the returned error wraps [toml.StrictMissingError]. Validation
+// failures wrap [ErrInvalidConfig].
+func (p *FileConfigProvider) GetConfig() (conf Config, err error) {
+	var data []byte
+	data, err = os.ReadFile(p.path)
+	if err == nil {
+		conf = DefaultConfig()
+		dec := toml.NewDecoder(bytes.NewReader(data))
+		dec.DisallowUnknownFields()
+		err = dec.Decode(&conf)
 	}
-
-	err = conf.Validate()
-	if err != nil {
-		return Config{}, fmt.Errorf("getViperConfig: %w", err)
+	if err == nil {
+		for _, override := range p.overrides {
+			override(&conf)
+		}
+		conf.ConfigFile = p.path
+		err = conf.Validate()
 	}
-
-	return conf, nil
+	if err != nil {
+		conf = Config{}
+		err = fmt.Errorf("GetConfig: %w", err)
+	}
+	return
 }
 
 func (edm *DnstapMinimiser) updateConfig() error {

@@ -627,7 +627,6 @@ func TestNewQnamePublisher(t *testing.T) {
 // newQnamePublisherCh, so buffered new_qname events can still be signed and
 // queued during shutdown (the load-bearing shutdown ordering in Run).
 func TestRunMQTTPipelineOutlivesRunCtx(t *testing.T) {
-	runCoreCleanup(t)
 	tc := runCoreTC(t)
 	tc.DisableMQTT = false
 	certPath, keyPath, _ := testCertFiles(t)

@@ -69,7 +69,7 @@ func (edm *DnstapMinimiser) applyUpdate(startConf Config) {
 
 		if !reflect.DeepEqual(oldVal, newVal) {
 			if field.Tag.Get("reload") != "true" {
-				edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("mapstructure"))
+				edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("toml"))
 			}
 		}
 	}
