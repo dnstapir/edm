@@ -15,7 +15,7 @@ const defaultLabelLimit = 10
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
 // The toml struct tags name the config file keys and stay in sync with the
-// flags in pkg/cmd. Cross-field rules are enforced by [Config.Validate].
+// flags in pkg/cmd. Validation rules are enforced by [Config.Validate].
 type Config struct {
 	ConfigFile                    string `toml:"config-file"`
 	DisableSessionFiles           bool   `toml:"disable-session-files"`

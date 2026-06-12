@@ -81,6 +81,9 @@ func TestFileConfigProvider(t *testing.T) {
 		if !errors.Is(err, ErrInvalidConfig) {
 			t.Fatalf("GetConfig = %v, want ErrInvalidConfig", err)
 		}
+		if !strings.Contains(err.Error(), "cryptopan-key must be set") {
+			t.Fatalf("GetConfig = %v, want message containing %q", err, "cryptopan-key must be set")
+		}
 	})
 
 	t.Run("Path returns the configured path", func(t *testing.T) {
@@ -133,6 +136,27 @@ func TestConfigValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid with mqtt disabled and mqtt fields cleared",
+			mutate: func(c *Config) {
+				c.DisableMQTT = true
+				c.MQTTSigningKeyFile = ""
+				c.MQTTClientKeyFile = ""
+				c.MQTTClientCertFile = ""
+				c.MQTTServer = ""
+				c.MQTTKeepalive = 0
+			},
+		},
+		{
+			name: "valid with histogram sender disabled and http fields cleared",
+			mutate: func(c *Config) {
+				c.DisableHistogramSender = true
+				c.HTTPSigningKeyFile = ""
+				c.HTTPClientKeyFile = ""
+				c.HTTPClientCertFile = ""
+				c.HTTPURL = ""
+			},
+		},
+		{
 			name:     "missing config-file",
 			mutate:   func(c *Config) { c.ConfigFile = "" },
 			wantErrs: []error{ErrInvalidConfig},
@@ -166,10 +190,49 @@ func TestConfigValidate(t *testing.T) {
 			name:     "no input configured",
 			mutate:   func(c *Config) { c.InputUnix = "" },
 			wantErrs: []error{ErrInvalidConfig, errNoInputConfigured},
+			wantMsgs: []string{"set one of input-unix, input-tcp or input-tls"},
+		},
+		{
+			name: "input-tcp only is valid",
+			mutate: func(c *Config) {
+				c.InputUnix = ""
+				c.InputTCP = "127.0.0.1:53535"
+			},
 		},
 		{
 			name:     "multiple inputs configured",
 			mutate:   func(c *Config) { c.InputTCP = "127.0.0.1:53535" },
+			wantErrs: []error{ErrInvalidConfig, errMultipleInputsConfigured},
+			wantMsgs: []string{"set only one of input-unix, input-tcp or input-tls"},
+		},
+		{
+			name: "multiple inputs unix and tls",
+			mutate: func(c *Config) {
+				c.InputTLS = "127.0.0.1:53535"
+				c.InputTLSCertFile = "cert.pem"
+				c.InputTLSKeyFile = "key.pem"
+			},
+			wantErrs: []error{ErrInvalidConfig, errMultipleInputsConfigured},
+		},
+		{
+			name: "multiple inputs tcp and tls",
+			mutate: func(c *Config) {
+				c.InputUnix = ""
+				c.InputTCP = "127.0.0.1:53535"
+				c.InputTLS = "127.0.0.1:53536"
+				c.InputTLSCertFile = "cert.pem"
+				c.InputTLSKeyFile = "key.pem"
+			},
+			wantErrs: []error{ErrInvalidConfig, errMultipleInputsConfigured},
+		},
+		{
+			name: "all three inputs configured",
+			mutate: func(c *Config) {
+				c.InputTCP = "127.0.0.1:53535"
+				c.InputTLS = "127.0.0.1:53536"
+				c.InputTLSCertFile = "cert.pem"
+				c.InputTLSKeyFile = "key.pem"
+			},
 			wantErrs: []error{ErrInvalidConfig, errMultipleInputsConfigured},
 		},
 		{
@@ -183,6 +246,26 @@ func TestConfigValidate(t *testing.T) {
 				"input-tls-cert-file must be set when input-tls is used",
 				"input-tls-key-file must be set when input-tls is used",
 			},
+		},
+		{
+			name: "input-tls missing only cert file",
+			mutate: func(c *Config) {
+				c.InputUnix = ""
+				c.InputTLS = "127.0.0.1:53535"
+				c.InputTLSKeyFile = "key.pem"
+			},
+			wantErrs: []error{ErrInvalidConfig},
+			wantMsgs: []string{"input-tls-cert-file must be set when input-tls is used"},
+		},
+		{
+			name: "input-tls missing only key file",
+			mutate: func(c *Config) {
+				c.InputUnix = ""
+				c.InputTLS = "127.0.0.1:53535"
+				c.InputTLSCertFile = "cert.pem"
+			},
+			wantErrs: []error{ErrInvalidConfig},
+			wantMsgs: []string{"input-tls-key-file must be set when input-tls is used"},
 		},
 		{
 			name: "input-tls with cert and key files is valid",
