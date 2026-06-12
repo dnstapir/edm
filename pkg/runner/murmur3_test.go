@@ -8,7 +8,9 @@ import (
 )
 
 // TestMurmur3GoldenOutputs pins murmur3.Sum64 outputs for representative
-// inputs. The hash feeds HLL sketches that are combined across dnstapir
+// inputs.
+//
+// The hash feeds HLL sketches that are combined across dnstapir
 // components (see the deterministic-seed comment in sendUpdate in wkd.go),
 // so its output is a cross-component contract that must never change —
 // including across hash library swaps.
@@ -39,7 +41,7 @@ func TestMurmur3GoldenOutputs(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := murmur3.Sum64(tc.in); got != tc.want {
-				t.Fatalf("murmur3.Sum64(%q) = %#016x, want %#016x", tc.in, got, tc.want)
+				t.Fatalf("murmur3.Sum64(%x) = 0x%016x, want 0x%016x", tc.in, got, tc.want)
 			}
 		})
 	}
