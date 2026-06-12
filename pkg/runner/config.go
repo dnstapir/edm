@@ -13,7 +13,7 @@ const defaultLabelLimit = 10
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
 // The struct tags are part of the Viper-backed CLI contract and stay in sync
-// with the flags in pkg/cmd. Cross-field rules are enforced by
+// with the flags in pkg/cmd. Validation rules are enforced by
 // [Config.Validate].
 type Config struct {
 	ConfigFile                    string `mapstructure:"config-file"`
