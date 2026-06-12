@@ -40,6 +40,19 @@ dnstapir-edm run --input-unix /tmp/dnstapir-edm/input.sock --data-dir /tmp/dnsta
 Since all communication with Core is disabled this is helpful for creating some
 local parquet files to look around in.
 
+### Reloading configuration
+A running `dnstapir-edm` reloads its configuration on `SIGHUP` (e.g.
+`systemctl reload dnstapir-edm` or `kill -HUP <pid>`). One signal re-reads the
+config file and re-applies all reloadable state derived from files it points
+at: the Crypto-PAn key material, the ignored client IPs and ignored question
+names lists, the MQTT/HTTP client certificates and the well-known-domains
+DAWG file. The DAWG swap takes effect at the next histogram rotation (within
+a minute) since the collected histogram data is tied to the DAWG it was built
+against. Send the signal after all file changes are completely written. A
+reload that fails to read a file logs an error and keeps the previous state.
+Changes to config keys that are not reloadable are logged with a warning
+saying a restart is required.
+
 ### Inspecting the resulting files
 For inspecting the content you can use e.g. [DuckDB](https://duckdb.org) like
 so:

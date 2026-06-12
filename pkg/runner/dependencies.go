@@ -20,7 +20,6 @@ import (
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/fsnotify/fsnotify"
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/smhanov/dawg"
@@ -50,12 +49,6 @@ type fileSystem interface {
 	Remove(name string) error
 }
 
-// timer is the clock timer surface used by debounce code.
-type timer interface {
-	Stop() bool
-	Reset(time.Duration) bool
-}
-
 // ticker is the clock ticker surface used by background workers.
 type ticker interface {
 	C() <-chan time.Time
@@ -67,23 +60,7 @@ type ticker interface {
 type clock interface {
 	Now() time.Time
 	After(time.Duration) <-chan time.Time
-	AfterFunc(time.Duration, func()) timer
 	NewTicker(time.Duration) ticker
-}
-
-// fileWatcher is the fsnotify surface used by the runner.
-type fileWatcher interface {
-	Add(name string) error
-	Remove(name string) error
-	Close() error
-	WatchList() []string
-	Events() <-chan fsnotify.Event
-	Errors() <-chan error
-}
-
-// watcherFactory creates file watchers.
-type watcherFactory interface {
-	NewWatcher() (fileWatcher, error)
 }
 
 // listenerFactory creates plaintext and TLS listeners.
@@ -171,7 +148,6 @@ type cryptopanFactory interface {
 type dependencies struct {
 	FileSystem             fileSystem
 	Clock                  clock
-	WatcherFactory         watcherFactory
 	ListenerFactory        listenerFactory
 	DnstapInputFactory     dnstapInputFactory
 	SeenQnameStoreFactory  seenQnameStoreFactory
@@ -182,8 +158,6 @@ type dependencies struct {
 	DawgLoader             dawgLoader
 	CryptopanFactory       cryptopanFactory
 
-	ConfigUpdateDebounce    time.Duration
-	FSEventDebounce         time.Duration
 	DiskCleanerInterval     time.Duration
 	MonitorChannelInterval  time.Duration
 	HistogramSenderInterval time.Duration
@@ -202,9 +176,6 @@ func fillDependencies(deps dependencies) dependencies {
 	}
 	if deps.Clock == nil {
 		deps.Clock = realClock{}
-	}
-	if deps.WatcherFactory == nil {
-		deps.WatcherFactory = fsnotifyWatcherFactory{}
 	}
 	if deps.ListenerFactory == nil {
 		deps.ListenerFactory = netListenerFactory{}
@@ -232,12 +203,6 @@ func fillDependencies(deps dependencies) dependencies {
 	}
 	if deps.CryptopanFactory == nil {
 		deps.CryptopanFactory = realCryptopanFactory{}
-	}
-	if deps.ConfigUpdateDebounce == 0 {
-		deps.ConfigUpdateDebounce = 100 * time.Millisecond
-	}
-	if deps.FSEventDebounce == 0 {
-		deps.FSEventDebounce = 100 * time.Millisecond
 	}
 	if deps.DiskCleanerInterval == 0 {
 		deps.DiskCleanerInterval = time.Minute
@@ -308,10 +273,6 @@ func (realClock) After(d time.Duration) <-chan time.Time {
 	return time.After(d)
 }
 
-func (realClock) AfterFunc(d time.Duration, f func()) timer {
-	return time.AfterFunc(d, f)
-}
-
 func (realClock) NewTicker(d time.Duration) ticker {
 	return realTicker{Ticker: time.NewTicker(d)}
 }
@@ -322,28 +283,6 @@ type realTicker struct {
 
 func (rt realTicker) C() <-chan time.Time {
 	return rt.Ticker.C
-}
-
-type fsnotifyWatcherFactory struct{}
-
-func (fsnotifyWatcherFactory) NewWatcher() (fileWatcher, error) {
-	w, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
-	return fsnotifyFileWatcher{Watcher: w}, nil
-}
-
-type fsnotifyFileWatcher struct {
-	*fsnotify.Watcher
-}
-
-func (fw fsnotifyFileWatcher) Events() <-chan fsnotify.Event {
-	return fw.Watcher.Events
-}
-
-func (fw fsnotifyFileWatcher) Errors() <-chan error {
-	return fw.Watcher.Errors
 }
 
 type netListenerFactory struct{}

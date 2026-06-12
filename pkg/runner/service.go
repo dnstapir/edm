@@ -9,19 +9,19 @@ import (
 	"net/http"
 	"net/netip"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/dnstapir/edm/pkg/protocols"
-	"github.com/fsnotify/fsnotify"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/spf13/viper"
 	"github.com/yawning/cryptopan"
 	"go4.org/netipx"
 )
@@ -104,13 +104,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	defer func() {
 		stop()
 		configUpdaterWg.Wait()
-		edm.closeFSWatcher("Run: deferred fsWatcher.Close error")
 		edm.state.Store(runStateDone)
 	}()
 
 	// Shutdown ordering is load-bearing:
 	// minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
-	// (if MQTT) mqttCancel → configUpdater exits → fsWatcher close →
+	// (if MQTT) mqttCancel → configUpdater exits →
 	// wg.Wait → (if MQTT) autopahoWg.Wait.
 
 	// Create startConf for some initial setup. Other edm methods that need
@@ -141,20 +140,18 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return fmt.Errorf("unable to configure ignored question names: %w", err)
 	}
 
-	viperNotifyCh := make(chan fsnotify.Event, 1)
+	// Configuration is reloaded on SIGHUP (systemctl reload). The channel
+	// buffer of 1 combined with signal.Notify's non-blocking send coalesces
+	// signals arriving while a reload is already in progress.
+	hupCh := make(chan os.Signal, 1)
+	signal.Notify(hupCh, syscall.SIGHUP)
+	defer signal.Stop(hupCh)
 
 	configUpdaterWg.Add(1)
 	go func() {
 		defer configUpdaterWg.Done()
-		configUpdater(ctx, viperNotifyCh, edm)
+		configUpdater(ctx, hupCh, edm)
 	}()
-
-	viper.OnConfigChange(func(e fsnotify.Event) {
-		select {
-		case viperNotifyCh <- e:
-		default:
-		}
-	})
 
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
 	seenStore, err := edm.deps.SeenQnameStoreFactory.OpenSeenQnameStore(pdbDir)
@@ -196,10 +193,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 			return fmt.Errorf("unable to setup mqtt: %w", err)
 		}
 		defer mqttCancel()
-	}
-
-	if err := edm.configureFSWatchers(startConf); err != nil {
-		return fmt.Errorf("unable to configure fsWatchers: %w", err)
 	}
 
 	dti, err := edm.setupDnstapInput(edm.log, startConf)
@@ -267,12 +260,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 
 		serverWg.Wait()
 	}()
-
-	// Track the fsEventWatcher goroutine so shutdown can wait for it. It
-	// exits once fsWatcher.Close() closes the Events and Errors channels,
-	// which happens before wg.Wait() below.
-	wg.Add(1)
-	go edm.fsEventWatcher(&wg)
 
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
@@ -407,19 +394,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		mqttCancel()
 	}
 
-	// Wait out any in-flight config update before closing the fsWatcher,
-	// so applyUpdate never reconfigures watches on a closed watcher.
+	// Wait out any in-flight config update so a SIGHUP arriving during
+	// shutdown never reloads state that later teardown steps are releasing.
+	// The deferred signal.Stop detaches hupCh afterwards; signals delivered
+	// past this point are ignored.
 	configUpdaterWg.Wait()
-	// viperNotifyCh is deliberately left open: viper's config watcher
-	// started by WatchConfig outlives run and keeps invoking the
-	// OnConfigChange callback, so closing the channel here would let a later
-	// config change panic on a send to a closed channel. The buffered channel
-	// plus the callback's non-blocking send keep that callback from blocking
-	// once configUpdater has stopped.
-
-	// Close fsWatcher to signal fsEventWatcher to exit. Must happen before
-	// wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
-	edm.closeFSWatcher("Run: fsWatcher.Close error")
 
 	// Wait for all workers to exit. The HTTP servers are shut down by the
 	// deferred cleanup registered when they were started.
@@ -438,18 +417,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return fmt.Errorf("dnstap input failed: %w", dnstapInputErr)
 	}
 	return nil
-}
-
-// closeFSWatcher closes the fsnotify watcher, tolerating a nil and an
-// already-closed watcher so it is safe to call from both Run's shutdown path
-// and its deferred cleanup. Any other close error is logged with logMsg.
-func (edm *DnstapMinimiser) closeFSWatcher(logMsg string) {
-	if edm.fsWatcher == nil {
-		return
-	}
-	if err := edm.fsWatcher.Close(); err != nil && !errors.Is(err, fsnotify.ErrClosed) {
-		edm.log.Error(logMsg, "error", err)
-	}
 }
 
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.
@@ -511,11 +478,9 @@ type DnstapMinimiser struct {
 	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
 	ignoredClientCIDRsParsed      atomic.Uint64
 	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
-	fsWatcher                     fileWatcher
-	fsWatcherFuncs                map[string][]func() error
-	fsWatcherMutex                sync.RWMutex
-	httpClientCertStore           *certStore // client cert/key for mTLS authentication
-	mqttClientCertStore           *certStore // client cert/key for mTLS authentication
+	dawgReloadRequested           atomic.Bool // set on SIGHUP, consumed by rotateTracker
+	httpClientCertStore           *certStore  // client cert/key for mTLS authentication
+	mqttClientCertStore           *certStore  // client cert/key for mTLS authentication
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
@@ -647,13 +612,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// Capacity is set to 1 so we can do a send without hanging if
 	// the histogram sender is currently busy.
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-
-	edm.fsWatcher, err = edm.deps.WatcherFactory.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("NewDnstapMinimiser: unable to create fsWatcher: %w", err)
-	}
-
-	edm.fsWatcherFuncs = map[string][]func() error{}
 
 	// Prepare client cert/key storage for mTLS authentication
 	edm.httpClientCertStore = newCertStore()

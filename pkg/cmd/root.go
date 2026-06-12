@@ -25,7 +25,6 @@ var (
 	viperAutomaticEnv      = viper.AutomaticEnv
 	viperReadInConfig      = viper.ReadInConfig
 	viperConfigFileUsed    = viper.ConfigFileUsed
-	viperWatchConfig       = viper.WatchConfig
 )
 
 const envPrefix = "DNSTAPIR_EDM"
@@ -85,13 +84,11 @@ func initConfig() {
 
 	configureEnv()
 
-	// If a config file is found, read it in.
+	// If a config file is found, read it in. The running service re-reads
+	// it when reload is requested via SIGHUP.
 	if err := viperReadInConfig(); err == nil {
 		edmLogger.Info("using config file", "filename", viperConfigFileUsed())
 	}
-
-	// Make it so we can detect changes to the cryptopan secret in the config
-	viperWatchConfig()
 }
 
 // configureEnv isolates environment overrides to the [envPrefix] namespace.

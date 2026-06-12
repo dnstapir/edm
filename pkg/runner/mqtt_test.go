@@ -40,7 +40,6 @@ import (
 func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 
 		// The worker ranges over mqttPubCh and selects on ctx.Done() for
 		// cancellation. Bind a fresh context so this test does not affect other
@@ -93,7 +92,6 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -137,7 +135,6 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -227,7 +224,6 @@ func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *p
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -276,7 +272,6 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -307,7 +302,6 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&buf, nil))
 		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -345,7 +339,6 @@ func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
 		var buf bytes.Buffer
 		logger := slog.New(slog.NewJSONHandler(&buf, nil))
 		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-		defer cleanupTestMinimiser(edm)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -471,7 +464,6 @@ func TestParseMQTTServerURL(t *testing.T) {
 func TestMQTTConfigAndPublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -518,7 +510,6 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 func TestMQTTPipelinePublishPath(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		jwk := testJWK(t)
@@ -546,7 +537,6 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 func TestMQTTPublishWorkerAwaitError(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 		conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
 		edm.autopahoWg.Add(1)
@@ -608,7 +598,6 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 func TestNewQnamePublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		defer cleanupTestMinimiser(edm)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
@@ -722,7 +711,6 @@ func TestSetupMQTT(t *testing.T) {
 			conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
 			edm := newSynctestDnstapMinimiser(t, defaultTC)
-			defer cleanupTestMinimiser(edm)
 			edm.deps.MQTTFactory = testMQTTFactory{
 				mqttFactory: edm.deps.MQTTFactory,
 				newConnection: func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {

@@ -27,7 +27,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/fsnotify/fsnotify"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v2/jwa"
 	"github.com/lestrrat-go/jwx/v2/jwk"
@@ -83,13 +82,6 @@ func testRunContext(t testing.TB) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	return ctx, cancel
-}
-
-func cleanupTestMinimiser(edm *DnstapMinimiser) {
-	if edm.fsWatcher != nil {
-		_ = edm.fsWatcher.Close()
-		edm.fsWatcher = nil
-	}
 }
 
 var (
@@ -182,16 +174,6 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 
-	t.Cleanup(func() {
-		if edm.fsWatcher != nil {
-			if err := edm.fsWatcher.Close(); err != nil {
-				if !errors.Is(err, fsnotify.ErrClosed) {
-					t.Fatalf("unable to close fsWatcher: %s", err)
-				}
-			}
-		}
-	})
-
 	return edm
 }
 
@@ -205,10 +187,6 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-
-	t.Cleanup(func() {
-		cleanupTestMinimiser(edm)
-	})
 
 	return edm
 }
@@ -226,21 +204,6 @@ func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Crypt
 	return cryptopan.New(sum[:])
 }
 
-type testWatcherFactory struct {
-	watcher fileWatcher
-	err     error
-}
-
-func (twf testWatcherFactory) NewWatcher() (fileWatcher, error) {
-	if twf.err != nil {
-		return nil, twf.err
-	}
-	if twf.watcher != nil {
-		return twf.watcher, nil
-	}
-	return newTestFileWatcher(), nil
-}
-
 func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
@@ -254,7 +217,6 @@ func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger 
 	t.Helper()
 
 	deps := newTestDependencies()
-	deps.WatcherFactory = testWatcherFactory{}
 
 	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
 	if err != nil {

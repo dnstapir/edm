@@ -2,22 +2,24 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
 
-		viperNotifyCh := make(chan fsnotify.Event, 1)
+		reloadCh := make(chan os.Signal, 1)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -25,7 +27,7 @@ func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			configUpdater(ctx, viperNotifyCh, edm)
+			configUpdater(ctx, reloadCh, edm)
 		}()
 
 		// Cancelling the context is sticky, so configUpdater observes it via its
@@ -40,18 +42,18 @@ func TestConfigUpdaterExitsOnChannelClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
 
-		viperNotifyCh := make(chan fsnotify.Event, 1)
+		reloadCh := make(chan os.Signal, 1)
 
 		var wg sync.WaitGroup
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			configUpdater(t.Context(), viperNotifyCh, edm)
+			configUpdater(t.Context(), reloadCh, edm)
 		}()
 
-		// Closing viperNotifyCh makes the receive return ok=false, which
+		// Closing reloadCh makes the receive return ok=false, which
 		// configUpdater treats as a shutdown signal and returns.
-		close(viperNotifyCh)
+		close(reloadCh)
 
 		wg.Wait()
 	})
@@ -78,7 +80,6 @@ func (sc *sequenceConfiger) GetConfig() (Config, error) {
 func TestConfigUpdater(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		edm.deps.ConfigUpdateDebounce = 10 * time.Millisecond
 		startConf := edm.getConfig()
 		nextConf := startConf
 		nextConf.CryptopanKey = "key2"
@@ -90,14 +91,13 @@ func TestConfigUpdater(t *testing.T) {
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-		events := make(chan fsnotify.Event)
+		reloadCh := make(chan os.Signal)
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			configUpdater(t.Context(), events, edm)
+			configUpdater(t.Context(), reloadCh, edm)
 		}()
-		events <- fsnotify.Event{Name: "config.toml", Op: fsnotify.Write}
-		time.Sleep(edm.deps.ConfigUpdateDebounce)
+		reloadCh <- syscall.SIGHUP
 		synctest.Wait()
 
 		if edm.getConfig().CryptopanKey != "key2" {
@@ -113,35 +113,79 @@ func TestConfigUpdater(t *testing.T) {
 		default:
 			t.Fatal("histogram reload notification not queued")
 		}
-		close(events)
+		close(reloadCh)
 		<-done
 	})
 }
 
-// runConfigUpdaterUntil drives a single fsnotify event through configUpdater
-// and waits for the debounce timer + processing to apply nextConf, then
-// shuts the goroutine down. log is wired to a syncBuf so subtests can
-// assert on the reload paths that have no other observable side-effect
-// without racing the worker on the log write.
+// TestConfigUpdaterSIGHUP verifies the OS delivery path: a real SIGHUP sent
+// to the process reaches configUpdater through a signal.Notify channel wired
+// the same way as in Run and triggers a reload.
+func TestConfigUpdaterSIGHUP(t *testing.T) {
+	edm := newSynctestDnstapMinimiser(t, defaultTC)
+	startConf := edm.getConfig()
+	nextConf := startConf
+	nextConf.CryptopanKey = "key-sighup"
+	nextConf.IgnoredClientIPsFile = ""
+	nextConf.IgnoredQuestionNamesFile = ""
+	nextConf.DisableHistogramSender = true
+	edm.configer = &sequenceConfiger{configs: []Config{nextConf}}
+	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
+	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+
+	hupCh := make(chan os.Signal, 1)
+	signal.Notify(hupCh, syscall.SIGHUP)
+	defer signal.Stop(hupCh)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		configUpdater(ctx, hupCh, edm)
+	}()
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatalf("unable to send SIGHUP: %s", err)
+	}
+
+	// The histogram sender notification is queued by applyUpdate once the
+	// reload has been applied, so waiting on it avoids polling getConfig.
+	select {
+	case <-edm.reloadHistogramSenderConfigCh:
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for SIGHUP-triggered reload")
+	}
+
+	if edm.getConfig().CryptopanKey != "key-sighup" {
+		t.Fatalf("config was not updated: %#v", edm.getConfig())
+	}
+}
+
+// runConfigUpdaterUntil drives a single reload request through configUpdater,
+// waits for it to be applied, then shuts the goroutine down. log is wired to
+// a syncBuf so subtests can assert on the reload paths that have no other
+// observable side-effect without racing the worker on the log write.
 func runConfigUpdaterUntil(t *testing.T, edm *DnstapMinimiser, sc *sequenceConfiger, expect func() bool) {
 	t.Helper()
-	edm.deps.ConfigUpdateDebounce = 5 * time.Millisecond
 
 	edm.configer = sc
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-	events := make(chan fsnotify.Event)
+	reloadCh := make(chan os.Signal)
 	ctx := t.Context()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		configUpdater(ctx, events, edm)
+		configUpdater(ctx, reloadCh, edm)
 	}()
-	events <- fsnotify.Event{Name: "config.toml", Op: fsnotify.Write}
-	time.Sleep(edm.deps.ConfigUpdateDebounce)
+	reloadCh <- syscall.SIGHUP
 	synctest.Wait()
-	close(events)
+	close(reloadCh)
 	<-done
 	if !expect() {
 		t.Fatal("configUpdater did not reach the expected state")
@@ -169,7 +213,46 @@ func TestConfigUpdaterBranches(t *testing.T) {
 		})
 	})
 
-	t.Run("HTTP cert path change reloads cert", func(t *testing.T) {
+	t.Run("config provider error keeps old config", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			buf := &syncBuf{}
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+			startConf := edm.getConfig()
+			runConfigUpdaterUntil(t, edm, &sequenceConfiger{err: errors.New("boom")}, func() bool {
+				return strings.Contains(buf.String(), "unable to update edm config")
+			})
+			if edm.getConfig() != startConf {
+				t.Fatal("config changed even though the provider returned an error")
+			}
+		})
+	})
+
+	t.Run("broken ignore list file keeps old state and logs", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			buf := &syncBuf{}
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+			// A reload where the configured ignore list file has gone
+			// missing (or is unreadable) must keep the previous ignore
+			// state and log the loader error.
+			startConf := edm.getConfig()
+			next := startConf
+			next.IgnoredClientIPsFile = filepath.Join(t.TempDir(), "missing-ips.txt")
+			next.IgnoredQuestionNamesFile = ""
+			before := edm.ignoredClientsIPSet.Load()
+			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
+				return strings.Contains(buf.String(), "setIgnoredClientIPs")
+			})
+			if edm.ignoredClientsIPSet.Load() != before {
+				t.Fatal("ignored client IP set changed even though the loader failed")
+			}
+		})
+	})
+
+	t.Run("HTTP cert reloads on reload request", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
 			edm := newSynctestDnstapMinimiser(t, defaultTC)
@@ -177,37 +260,31 @@ func TestConfigUpdaterBranches(t *testing.T) {
 
 			// Start with the histogram sender enabled and a valid cert so
 			// the late-init branch does not also fire and obscure the
-			// cert-change assertion.
-			certPath, keyPath, _ := testCertFiles(t)
+			// cert-reload assertion.
 			startConf := edm.getConfig()
 			startConf.DisableHistogramSender = false
-			startConf.HTTPClientCertFile = certPath
-			startConf.HTTPClientKeyFile = keyPath
+			startConf.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
 			edm.conf = startConf
 
 			next := startConf
-			next.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
 			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
 				return strings.Contains(buf.String(), "loadHTTPClientCert")
 			})
 		})
 	})
 
-	t.Run("MQTT cert path change reloads cert", func(t *testing.T) {
+	t.Run("MQTT cert reloads on reload request", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
 			edm := newSynctestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
-			certPath, keyPath, _ := testCertFiles(t)
 			startConf := edm.getConfig()
 			startConf.DisableMQTT = false
-			startConf.MQTTClientCertFile = certPath
-			startConf.MQTTClientKeyFile = keyPath
+			startConf.MQTTClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
 			edm.conf = startConf
 
 			next := startConf
-			next.MQTTClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
 			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
 				return strings.Contains(buf.String(), "loadMQTTClientCert")
 			})

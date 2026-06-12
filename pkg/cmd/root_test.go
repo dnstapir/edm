@@ -35,7 +35,6 @@ func restoreCmdGlobals(t *testing.T) {
 	oldAutomaticEnv := viperAutomaticEnv
 	oldReadInConfig := viperReadInConfig
 	oldConfigFileUsed := viperConfigFileUsed
-	oldWatchConfig := viperWatchConfig
 
 	t.Cleanup(func() {
 		cfgFile = oldCfgFile
@@ -52,7 +51,6 @@ func restoreCmdGlobals(t *testing.T) {
 		viperAutomaticEnv = oldAutomaticEnv
 		viperReadInConfig = oldReadInConfig
 		viperConfigFileUsed = oldConfigFileUsed
-		viperWatchConfig = oldWatchConfig
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(nil)
 		rootCmd.SetErr(nil)
@@ -68,14 +66,12 @@ func TestInitConfigExplicitFile(t *testing.T) {
 
 	var setFile string
 	var automaticEnvCalled bool
-	var watchCalled bool
 	viperSetConfigFile = func(file string) { setFile = file }
 	viperSetEnvPrefix = func(string) {}
 	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() { automaticEnvCalled = true }
 	viperReadInConfig = func() error { return nil }
 	viperConfigFileUsed = func() string { return cfgFile }
-	viperWatchConfig = func() { watchCalled = true }
 
 	initConfig()
 
@@ -84,9 +80,6 @@ func TestInitConfigExplicitFile(t *testing.T) {
 	}
 	if !automaticEnvCalled {
 		t.Fatal("AutomaticEnv was not called")
-	}
-	if !watchCalled {
-		t.Fatal("WatchConfig was not called")
 	}
 }
 
@@ -106,7 +99,6 @@ func TestInitConfigDefaultHomeNoConfig(t *testing.T) {
 	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() {}
 	viperReadInConfig = func() error { return errors.New("not found") }
-	viperWatchConfig = func() {}
 
 	initConfig()
 
@@ -129,7 +121,6 @@ func TestExecuteSuccessAndError(t *testing.T) {
 	viperSetEnvKeyReplacer = func(*strings.Replacer) {}
 	viperAutomaticEnv = func() {}
 	viperReadInConfig = func() error { return errors.New("not found") }
-	viperWatchConfig = func() {}
 
 	rootCmd.SetOut(io.Discard)
 	rootCmd.SetErr(io.Discard)
@@ -254,17 +245,11 @@ func initConfigForTest(t *testing.T, configData string) {
 	viper.Reset()
 	oldCfgFile := cfgFile
 	oldLogger := edmLogger
-	oldWatchConfig := viperWatchConfig
 	t.Cleanup(func() {
 		cfgFile = oldCfgFile
 		edmLogger = oldLogger
-		viperWatchConfig = oldWatchConfig
 		viper.Reset()
 	})
-
-	// Stub the watcher so the real fsnotify-backed viper.WatchConfig does not
-	// leak a goroutine and inotify watch on the temporary config directory.
-	viperWatchConfig = func() {}
 
 	configFile := filepath.Join(t.TempDir(), "dnstapir-edm.toml")
 	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
