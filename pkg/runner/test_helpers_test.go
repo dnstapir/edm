@@ -130,8 +130,8 @@ func (tc testConfiger) GetConfig() (Config, error) {
 // `url.Parse` for autopaho/HTTP — those defaults are only useful once a
 // scheme is added at the CLI layer, so tests must opt in by setting them.
 //
-// testConfiger does not run validate.Struct, so the missing required_*
-// tags do not block construction.
+// testConfiger does not call [Config.Validate], so the unset required
+// fields do not block construction.
 func defaultTestConfig() Config {
 	return Config{
 		ConfigFile:                    "edm.toml",
