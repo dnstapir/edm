@@ -10,7 +10,7 @@ require (
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.11
 	github.com/hashicorp/golang-lru/v2 v2.0.7
-	github.com/lestrrat-go/jwx/v2 v2.1.6
+	github.com/lestrrat-go/jwx/v3 v3.1.1
 	github.com/miekg/dns v1.1.72
 	github.com/parquet-go/parquet-go v0.30.1
 	github.com/prometheus/client_golang v1.23.2
@@ -62,7 +62,7 @@ require (
 	github.com/lestrrat-go/httprc v1.0.6 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.6 // indirect
 	github.com/lestrrat-go/iter v1.0.2 // indirect
-	github.com/lestrrat-go/jwx/v3 v3.1.1 // indirect
+	github.com/lestrrat-go/jwx/v2 v2.1.6 // indirect
 	github.com/lestrrat-go/option v1.0.1 // indirect
 	github.com/lestrrat-go/option/v2 v2.0.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect

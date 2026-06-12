@@ -21,8 +21,8 @@ import (
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
 	"github.com/fsnotify/fsnotify"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
 )
@@ -468,20 +468,23 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 		return nil, err
 	}
 
+	// A missing crv leaves the zero EllipticCurveAlgorithm, which fails
+	// the curve check below just like an unknown curve, so the ok values
+	// can be discarded.
 	var crv jwa.EllipticCurveAlgorithm
 	switch key := jwkKey.(type) {
 	case jwk.OKPPrivateKey:
-		crv = key.Crv()
+		crv, _ = key.Crv()
 	case jwk.OKPPublicKey:
-		crv = key.Crv()
+		crv, _ = key.Crv()
 	default:
 		return nil, fmt.Errorf("%w: key type %q", errNotEdDSAJWK, jwkKey.KeyType())
 	}
-	if crv != jwa.Ed25519 && crv != jwa.Ed448 {
+	if crv != jwa.Ed25519() && crv != jwa.Ed448() {
 		return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
 	}
 
-	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 		return nil, err
 	}
 	return jwkKey, nil

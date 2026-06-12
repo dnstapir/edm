@@ -20,9 +20,9 @@ import (
 	"github.com/dnstapir/edm/pkg/protocols"
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/lestrrat-go/jwx/v2/jws"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
 // TestMqttSignWorkerSignsAndForwards covers the happy path: the worker
@@ -61,7 +61,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 		case signed := <-edm.mqttSignedCh:
 			// Verify the signature using the matching public key. Verify
 			// returns the original payload bytes on success.
-			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
+			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA(), pub))
 			if err != nil {
 				t.Fatalf("jws.Verify: %s", err)
 			}
@@ -146,7 +146,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 
 		// Force a signing error by claiming the Ed25519 key uses RS256 - the
 		// jws library will refuse to sign.
-		if err := priv.Set(jwk.AlgorithmKey, jwa.RS256); err != nil {
+		if err := priv.Set(jwk.AlgorithmKey, jwa.RS256()); err != nil {
 			t.Fatalf("set Algorithm: %s", err)
 		}
 
@@ -167,7 +167,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 		// Now flip the algorithm back to a valid one and push a real message.
 		// A correctly configured worker continues past the prior error and
 		// signs this one.
-		if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+		if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 			t.Fatalf("restore Algorithm: %s", err)
 		}
 		good := []byte(`{"ok":true}`)
@@ -175,7 +175,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 
 		select {
 		case signed := <-edm.mqttSignedCh:
-			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA, pub))
+			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA(), pub))
 			if err != nil {
 				t.Fatalf("jws.Verify: %s", err)
 			}

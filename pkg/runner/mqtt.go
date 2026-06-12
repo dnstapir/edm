@@ -16,8 +16,8 @@ import (
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/lestrrat-go/jwx/v2/jwk"
-	"github.com/lestrrat-go/jwx/v2/jws"
+	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jws"
 )
 
 const (
@@ -123,12 +123,14 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 	if signWorkers <= 0 {
 		signWorkers = 1
 	}
-	topic := "events/up/" + mqttJWK.KeyID() + "/new_qname"
+	keyID, _ := mqttJWK.KeyID()
+	alg, _ := mqttJWK.Algorithm()
+	topic := "events/up/" + keyID + "/new_qname"
 
 	edm.log.Info(
 		"starting signing MQTT publisher",
-		"jwk_id", mqttJWK.KeyID(),
-		"jwk_alg", mqttJWK.Algorithm(),
+		"jwk_id", keyID,
+		"jwk_alg", alg,
 		"topic", topic,
 		"sign_workers", signWorkers,
 	)
@@ -159,7 +161,16 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGroup, mqttJWK jwk.Key) {
 	defer wg.Done()
 	for unsignedMsg := range edm.mqttPubCh {
-		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(mqttJWK.Algorithm(), mqttJWK))
+		// The algorithm is read per message so a key whose alg field
+		// is cleared or replaced mid-run is picked up; a key without
+		// an algorithm cannot be signed with, so such messages are
+		// logged and skipped.
+		alg, ok := mqttJWK.Algorithm()
+		if !ok {
+			edm.log.Error("mqttSignWorker: failed to create JWS message", "error", "JWK has no algorithm set")
+			continue
+		}
+		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(alg, mqttJWK))
 		if err != nil {
 			edm.log.Error("mqttSignWorker: failed to create JWS message", "error", err)
 			continue
@@ -281,7 +292,8 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 		}
 	}
 
-	mqttClientID := mqttJWK.KeyID() + "-edm"
+	mqttKeyID, _ := mqttJWK.KeyID()
+	mqttClientID := mqttKeyID + "-edm"
 
 	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
 

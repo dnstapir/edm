@@ -16,7 +16,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/yaronf/httpsign"
 )
 
@@ -33,7 +33,7 @@ type realAggregateSender struct {
 func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (realAggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
-	err := signingJwk.Raw(&signingKey)
+	err := jwk.Export(signingJwk, &signingKey)
 	if err != nil {
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 	}
@@ -56,11 +56,13 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 		Transport: httpTransport,
 	}
 
-	log.Info("creating HTTP signer", "key_id", signingJwk.KeyID(), "key_alg", signingJwk.Algorithm())
+	keyID, _ := signingJwk.KeyID()
+	keyAlg, _ := signingJwk.Algorithm()
+	log.Info("creating HTTP signer", "key_id", keyID, "key_alg", keyAlg)
 
 	// Create signer and wrapped HTTP client
 	signer, err := httpsign.NewEd25519Signer(signingKey,
-		httpsign.NewSignConfig().SetKeyID(signingJwk.KeyID()),
+		httpsign.NewSignConfig().SetKeyID(keyID),
 		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
 	if err != nil {
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)

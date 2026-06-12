@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lestrrat-go/jwx/v2/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwa"
 )
 
 func TestDefaultDependenciesFillCryptopanFactory(t *testing.T) {
@@ -66,8 +66,9 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key.Algorithm() != jwa.EdDSA {
-		t.Fatalf("algorithm = %v", key.Algorithm())
+	alg, ok := key.Algorithm()
+	if !ok || alg != jwa.EdDSA() {
+		t.Fatalf("algorithm = %v", alg)
 	}
 	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "bad.jwk", []byte("{"))); err == nil {
 		t.Fatal("bad JWK succeeded")
