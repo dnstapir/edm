@@ -207,13 +207,22 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %s", err)
 	}
-	nextModTime := fileInfo.ModTime().Add(time.Second)
-	if err := os.Chtimes(dawgFile, nextModTime, nextModTime); err != nil {
-		t.Fatalf("Chtimes: %s", err)
-	}
+	edm.dawgReloadRequested.Store(true)
 
 	if _, err := wkd.rotateTracker(edm, dawgFile, time.Time{}, time.Now()); !errors.Is(err, errEmptyDawgFile) {
 		t.Fatalf("rotateTracker error have: %v, want: %v", err, errEmptyDawgFile)
+	}
+
+	// The failed reload consumed the request, so the next rotation keeps
+	// the previous DAWG instead of failing again.
+	if edm.dawgReloadRequested.Load() {
+		t.Fatal("failed reload should consume the reload request")
+	}
+	if _, err := wkd.rotateTracker(edm, dawgFile, time.Time{}, time.Now()); err != nil {
+		t.Fatalf("rotation after failed reload should succeed, got: %v", err)
+	}
+	if wkd.snap.Load().dawgFinder != dFinder {
+		t.Fatal("failed reload should keep the previous dawg finder")
 	}
 }
 
@@ -251,9 +260,28 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 	if !prev.startTime.Equal(time.Unix(0, 0)) || !prev.rotationTime.Equal(time.Unix(60, 0)) || len(wkd.m) != 0 {
 		t.Fatalf("unexpected rotation state: %#v", prev)
 	}
+	if wkd.snap.Load().dawgFinder != finder {
+		t.Fatal("rotation without reload request should keep the dawg finder")
+	}
 
+	// A requested reload swaps in the newly loaded finder at rotation.
+	edm.dawgReloadRequested.Store(true)
+	if _, err := wkd.rotateTracker(edm, path, time.Unix(60, 0), time.Unix(120, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if wkd.snap.Load().dawgFinder == finder {
+		t.Fatal("requested reload should swap the dawg finder")
+	}
+
+	// Without a pending reload request the dawg file is not touched, so
+	// even a missing file does not affect rotation.
+	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err != nil {
+		t.Fatalf("rotateTracker without reload request should not read the dawg file: %v", err)
+	}
+
+	edm.dawgReloadRequested.Store(true)
 	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err == nil {
-		t.Fatal("rotateTracker with missing file succeeded")
+		t.Fatal("rotateTracker with requested reload of missing file succeeded")
 	}
 }
 

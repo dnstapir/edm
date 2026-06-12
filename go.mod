@@ -6,7 +6,6 @@ require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/dnstap/golang-dnstap v0.4.0
 	github.com/eclipse/paho.golang v0.23.0
-	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.11
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -40,6 +39,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.1 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/farsightsec/golang-framestream v0.3.0 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/getsentry/sentry-go v0.46.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
