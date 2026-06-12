@@ -8,7 +8,7 @@ import (
 
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"github.com/yawning/cryptopan"
 )
 

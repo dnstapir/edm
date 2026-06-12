@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 // TestMurmur3GoldenOutputs pins murmur3.Sum64 outputs for representative
