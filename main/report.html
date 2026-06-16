@@ -67,7 +67,7 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/certs.go (100.0%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (81.8%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (94.5%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/cryptopan.go (95.5%)</option>
 				
@@ -606,32 +606,32 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 }
 
 // Send sends histogram data via signed HTTP message to aggregate-receiver.
-func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="11">{
+func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="12">{
         fs := as.fs
         if fs == nil </span><span class="cov0" title="0">{
                 fs = osFileSystem{}
         }</span>
-        <span class="cov8" title="11">clock := as.clock
+        <span class="cov8" title="12">clock := as.clock
         if clock == nil </span><span class="cov0" title="0">{
                 clock = realClock{}
         }</span>
 
-        <span class="cov8" title="11">fileName = filepath.Clean(fileName)
+        <span class="cov8" title="12">fileName = filepath.Clean(fileName)
         file, err := fs.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
         }</span>
-        <span class="cov8" title="10">defer func() </span><span class="cov8" title="10">{
+        <span class="cov8" title="11">defer func() </span><span class="cov8" title="11">{
                 if cerr := file.Close(); cerr != nil </span><span class="cov0" title="0">{
                         as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
                 }</span>
         }()
 
-        <span class="cov8" title="10">fileInfo, err := file.Stat()
+        <span class="cov8" title="11">fileInfo, err := file.Stat()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
         }</span>
-        <span class="cov8" title="10">fileSize := fileInfo.Size()
+        <span class="cov8" title="11">fileSize := fileInfo.Size()
 
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
@@ -640,7 +640,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov8" title="10">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
+        <span class="cov8" title="11">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -652,7 +652,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov8" title="10">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov8" title="11">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
@@ -674,7 +674,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         startTime := clock.Now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := clock.Now().Sub(startTime)
-        if err != nil </span><span class="cov4" title="3">{
+        if err != nil </span><span class="cov5" title="4">{
                 return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
         }</span>
         <span class="cov7" title="7">defer res.Body.Close()
@@ -718,12 +718,12 @@ func (as realAggregateSender) CloseIdleConnections() <span class="cov1" title="1
 //
 // Sub-second precision is preserved as a fractional seconds component.
 // Non-positive durations yield "PT0S".
-func iso8601Duration(duration time.Duration) string <span class="cov10" title="16">{
+func iso8601Duration(duration time.Duration) string <span class="cov10" title="17">{
         if duration &lt;= 0 </span><span class="cov3" title="2">{
                 return "PT0S"
         }</span>
 
-        <span class="cov9" title="14">total := int64(duration / time.Second)
+        <span class="cov9" title="15">total := int64(duration / time.Second)
         nanoseconds := duration % time.Second
 
         hours := total / 3600
@@ -735,10 +735,10 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
         if hours &gt; 0 </span><span class="cov1" title="1">{
                 res += strconv.FormatInt(hours, 10) + "H"
         }</span>
-        <span class="cov9" title="14">if minutes &gt; 0 </span><span class="cov8" title="10">{
+        <span class="cov9" title="15">if minutes &gt; 0 </span><span class="cov8" title="11">{
                 res += strconv.FormatInt(minutes, 10) + "M"
         }</span>
-        <span class="cov9" title="14">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
+        <span class="cov9" title="15">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
                 if nanoseconds == 0 </span><span class="cov5" title="4">{
                         res += strconv.FormatInt(seconds, 10)
                 }</span> else<span class="cov1" title="1"> {
@@ -748,10 +748,10 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
                 <span class="cov6" title="5">res += "S"</span>
         }
 
-        <span class="cov9" title="14">return res</span>
+        <span class="cov9" title="15">return res</span>
 }
 
-func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov8" title="9">{
+func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov7" title="9">{
         conf := edm.getConfig()
 
         httpURL, err := url.Parse(conf.HTTPURL)
@@ -855,14 +855,11 @@ func (edm *DnstapMinimiser) loadMQTTClientCert() error <span class="cov3" title=
 		<pre class="file" id="file6" style="display: none">package runner
 
 import (
+        "errors"
         "fmt"
 
-        "github.com/go-playground/validator/v10"
         "github.com/spf13/viper"
 )
-
-// use a single instance of Validate, it caches struct info
-var validate = validator.New(validator.WithRequiredStructEnabled())
 
 // Labels 0-9
 const defaultLabelLimit = 10
@@ -870,48 +867,135 @@ const defaultLabelLimit = 10
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
 // The struct tags are part of the Viper-backed CLI contract and stay in sync
-// with the flags in pkg/cmd.
+// with the flags in pkg/cmd. Validation rules are enforced by
+// [Config.Validate].
 type Config struct {
-        ConfigFile                    string `mapstructure:"config-file" validate:"required"`
+        ConfigFile                    string `mapstructure:"config-file"`
         DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
         DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
         DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
         DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
         EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
         PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
-        InputUnix                     string `mapstructure:"input-unix" validate:"required_without_all=InputTCP InputTLS,excluded_with=InputTCP InputTLS"`
-        InputTCP                      string `mapstructure:"input-tcp" validate:"required_without_all=InputUnix InputTLS,excluded_with=InputUnix InputTLS"`
-        InputTLS                      string `mapstructure:"input-tls" validate:"required_without_all=InputUnix InputTCP,excluded_with=InputUnix InputTCP"`
-        InputTLSCertFile              string `mapstructure:"input-tls-cert-file" validate:"required_with=InputTLS"`
-        InputTLSKeyFile               string `mapstructure:"input-tls-key-file" validate:"required_with=InputTLS"`
+        InputUnix                     string `mapstructure:"input-unix"`
+        InputTCP                      string `mapstructure:"input-tcp"`
+        InputTLS                      string `mapstructure:"input-tls"`
+        InputTLSCertFile              string `mapstructure:"input-tls-cert-file"`
+        InputTLSKeyFile               string `mapstructure:"input-tls-key-file"`
         InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file"`
-        CryptopanKey                  string `mapstructure:"cryptopan-key" validate:"required" reload:"true"`
-        CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" validate:"required" reload:"true"`
-        WellKnownDomainsFile          string `mapstructure:"well-known-domains-file" validate:"required"`
-        HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold" validate:"required,gte=0"`
+        CryptopanKey                  string `mapstructure:"cryptopan-key" reload:"true"`
+        CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" reload:"true"`
+        WellKnownDomainsFile          string `mapstructure:"well-known-domains-file"`
+        HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold"`
         IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
         IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
-        DataDir                       string `mapstructure:"data-dir" validate:"required"`
+        DataDir                       string `mapstructure:"data-dir"`
         MinimiserWorkers              int    `mapstructure:"minimiser-workers"`
-        MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file" validate:"required_without=DisableMQTT"`
-        MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" validate:"required_without=DisableMQTT" reload:"true"`
-        MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" validate:"required_without=DisableMQTT" reload:"true"`
-        MQTTServer                    string `mapstructure:"mqtt-server" validate:"required_without=DisableMQTT"`
+        MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file"`
+        MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" reload:"true"`
+        MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" reload:"true"`
+        MQTTServer                    string `mapstructure:"mqtt-server"`
         MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
-        MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive" validate:"required_without=DisableMQTT"`
+        MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive"`
         MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
         QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-        CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries" validate:"gte=0"`
+        CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
         NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
         HTTPCAFile                    string `mapstructure:"http-ca-file"`
-        HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file" validate:"required_without=DisableHistogramSender"`
-        HTTPClientKeyFile             string `mapstructure:"http-client-key-file" validate:"required_without=DisableHistogramSender" reload:"true"`
-        HTTPClientCertFile            string `mapstructure:"http-client-cert-file" validate:"required_without=DisableHistogramSender" reload:"true"`
-        HTTPURL                       string `mapstructure:"http-url" validate:"required_without=DisableHistogramSender"`
+        HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file"`
+        HTTPClientKeyFile             string `mapstructure:"http-client-key-file" reload:"true"`
+        HTTPClientCertFile            string `mapstructure:"http-client-cert-file" reload:"true"`
+        HTTPURL                       string `mapstructure:"http-url"`
         Debug                         bool   `mapstructure:"debug"`
         DebugDnstapFilename           string `mapstructure:"debug-dnstap-filename"`
         DebugEnableBlockProfiling     bool   `mapstructure:"debug-enable-blockprofiling"`
         DebugEnableMutexProfiling     bool   `mapstructure:"debug-enable-mutexprofiling"`
+}
+
+// Validate checks the configuration rules for Config.
+//
+// It reports every violation in a single error: individual failures are
+// combined with [errors.Join] and the result wraps [ErrInvalidConfig] for
+// matching with [errors.Is]. Violations of the exactly-one-input rule
+// additionally wrap the same error identities returned by the dnstap input
+// setup. Messages use the CLI flag / config key spelling.
+func (conf Config) Validate() (err error) <span class="cov5" title="36">{
+        var errs []error
+
+        for _, f := range []struct{ key, value string }{
+                {"config-file", conf.ConfigFile},
+                {"cryptopan-key", conf.CryptopanKey},
+                {"cryptopan-key-salt", conf.CryptopanKeySalt},
+                {"well-known-domains-file", conf.WellKnownDomainsFile},
+                {"data-dir", conf.DataDir},
+        } </span><span class="cov8" title="180">{
+                if f.value == "" </span><span class="cov3" title="7">{
+                        errs = append(errs, fmt.Errorf("%s must be set", f.key))
+                }</span>
+        }
+
+        <span class="cov5" title="36">inputs := 0
+        for _, in := range []string{conf.InputUnix, conf.InputTCP, conf.InputTLS} </span><span class="cov7" title="108">{
+                if in != "" </span><span class="cov6" title="41">{
+                        inputs++
+                }</span>
+        }
+        <span class="cov5" title="36">switch </span>{
+        case inputs == 0:<span class="cov1" title="1">
+                errs = append(errs, fmt.Errorf("%w: set one of input-unix, input-tcp or input-tls", errNoInputConfigured))</span>
+        case inputs &gt; 1:<span class="cov3" title="5">
+                errs = append(errs, fmt.Errorf("%w: set only one of input-unix, input-tcp or input-tls", errMultipleInputsConfigured))</span>
+        }
+
+        <span class="cov5" title="36">if conf.InputTLS != "" </span><span class="cov3" title="7">{
+                if conf.InputTLSCertFile == "" </span><span class="cov1" title="2">{
+                        errs = append(errs, errors.New("input-tls-cert-file must be set when input-tls is used"))
+                }</span>
+                <span class="cov3" title="7">if conf.InputTLSKeyFile == "" </span><span class="cov1" title="2">{
+                        errs = append(errs, errors.New("input-tls-key-file must be set when input-tls is used"))
+                }</span>
+        }
+
+        <span class="cov5" title="36">if conf.HistogramHLLExplicitThreshold &lt; 1 </span><span class="cov2" title="3">{
+                errs = append(errs, errors.New("histogram-hll-explicit-threshold must be greater than 0"))
+        }</span>
+        <span class="cov5" title="36">if conf.CryptopanAddressEntries &lt; 0 </span><span class="cov1" title="1">{
+                errs = append(errs, errors.New("cryptopan-address-entries must not be negative"))
+        }</span>
+
+        <span class="cov5" title="36">if !conf.DisableMQTT </span><span class="cov5" title="32">{
+                for _, f := range []struct{ key, value string }{
+                        {"mqtt-signing-key-file", conf.MQTTSigningKeyFile},
+                        {"mqtt-client-key-file", conf.MQTTClientKeyFile},
+                        {"mqtt-client-cert-file", conf.MQTTClientCertFile},
+                        {"mqtt-server", conf.MQTTServer},
+                } </span><span class="cov7" title="128">{
+                        if f.value == "" </span><span class="cov2" title="4">{
+                                errs = append(errs, fmt.Errorf("%s must be set unless disable-mqtt is true", f.key))
+                        }</span>
+                }
+                <span class="cov5" title="32">if conf.MQTTKeepalive == 0 </span><span class="cov1" title="1">{
+                        errs = append(errs, errors.New("mqtt-keepalive must be set unless disable-mqtt is true"))
+                }</span>
+        }
+
+        <span class="cov5" title="36">if !conf.DisableHistogramSender </span><span class="cov5" title="32">{
+                for _, f := range []struct{ key, value string }{
+                        {"http-signing-key-file", conf.HTTPSigningKeyFile},
+                        {"http-client-key-file", conf.HTTPClientKeyFile},
+                        {"http-client-cert-file", conf.HTTPClientCertFile},
+                        {"http-url", conf.HTTPURL},
+                } </span><span class="cov7" title="128">{
+                        if f.value == "" </span><span class="cov3" title="5">{
+                                errs = append(errs, fmt.Errorf("%s must be set unless disable-histogram-sender is true", f.key))
+                        }</span>
+                }
+        }
+
+        <span class="cov5" title="36">if len(errs) &gt; 0 </span><span class="cov5" title="27">{
+                err = fmt.Errorf("%w: %w", ErrInvalidConfig, errors.Join(errs...))
+        }</span>
+        <span class="cov5" title="36">return</span>
 }
 
 // ConfigProvider supplies the current runner configuration.
@@ -926,7 +1010,7 @@ type ConfigProvider interface {
 type ViperConfigProvider struct{}
 
 // GetConfig reads and validates Config from Viper.
-func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" title="1">{
+func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" title="2">{
         conf := Config{}
 
         // viper.WatchConfig() does call viper.ReadInConfig() internally so
@@ -945,14 +1029,14 @@ func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" tit
                 return Config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)
         }</span>
 
-        <span class="cov1" title="1">err = viper.UnmarshalExact(&amp;conf)
+        <span class="cov1" title="2">err = viper.UnmarshalExact(&amp;conf)
         if err != nil </span><span class="cov0" title="0">{
                 return Config{}, fmt.Errorf("getViperConfig: unable to unmarshal config: %w", err)
         }</span>
 
-        <span class="cov1" title="1">err = validate.Struct(conf)
-        if err != nil </span><span class="cov0" title="0">{
-                return Config{}, fmt.Errorf("getViperConfig: unable to validate config: %w", err)
+        <span class="cov1" title="2">err = conf.Validate()
+        if err != nil </span><span class="cov1" title="1">{
+                return Config{}, fmt.Errorf("getViperConfig: %w", err)
         }</span>
 
         <span class="cov1" title="1">return conf, nil</span>
@@ -1215,9 +1299,9 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         <span class="cov7" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
                 for </span><span class="cov7" title="11">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
+                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov7" title="10">
                                 return</span>
@@ -1257,10 +1341,10 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 <span class="cov7" title="9">collectorLoop:
         for </span><span class="cov10" title="27">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov4" title="4">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov5" title="5">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov4" title="3">
+                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C():<span class="cov1" title="1">
@@ -1591,7 +1675,7 @@ func fillDependencies(deps dependencies) dependencies <span class="cov5" title="
 
 type osFileSystem struct{}
 
-func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="225">{
+func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="226">{
         return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }</span>
 
@@ -1607,7 +1691,7 @@ func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" tit
         return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }</span>
 
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60013">{
+func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60014">{
         return os.ReadDir(name)
 }</span>
 
@@ -1629,11 +1713,11 @@ func (osFileSystem) Remove(name string) error <span class="cov3" title="12">{
 
 type realClock struct{}
 
-func (realClock) Now() time.Time <span class="cov4" title="52">{
+func (realClock) Now() time.Time <span class="cov4" title="54">{
         return time.Now()
 }</span>
 
-func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="10">{
+func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="11">{
         return time.After(d)
 }</span>
 
@@ -1649,7 +1733,7 @@ type realTicker struct {
         *time.Ticker
 }
 
-func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62090">{
+func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62091">{
         return rt.Ticker.C
 }</span>
 
@@ -1942,8 +2026,8 @@ import (
 // setupDnstapInput constructs the dnstap socket input selected by startConf.
 // Exactly one of InputUnix/InputTCP/InputTLS must be set: none returns
 // errNoInputConfigured and more than one returns errMultipleInputsConfigured,
-// so the contract holds even for a [ConfigProvider] that bypasses the
-// [Config] validate tags. On TLS, InputTLSClientCAFile (when set) enables
+// so the contract holds even for a [ConfigProvider] that bypasses
+// [Config.Validate]. On TLS, InputTLSClientCAFile (when set) enables
 // required-and-verify client mTLS via tls.RequireAndVerifyClientCert.
 func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Config) (dnstapInput, error) <span class="cov7" title="21">{
         configuredInputs := 0
@@ -2051,7 +2135,7 @@ func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) <span class="cov
 
 // Close closes the listener and every tracked connection. It is idempotent
 // and safe to call concurrently with ReadInto.
-func (input *socketDnstapInput) Close() error <span class="cov6" title="10">{
+func (input *socketDnstapInput) Close() error <span class="cov6" title="11">{
         input.closeOnce.Do(func() </span><span class="cov6" title="10">{
                 input.closeErr = input.listener.Close()
 
@@ -2063,7 +2147,7 @@ func (input *socketDnstapInput) Close() error <span class="cov6" title="10">{
                         }</span>
                 }
         })
-        <span class="cov6" title="10">return input.closeErr</span>
+        <span class="cov6" title="11">return input.closeErr</span>
 }
 
 // ReadInto accepts connections and forwards their dnstap frames to output
@@ -2076,11 +2160,11 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan&lt;- [
 
         go func() </span><span class="cov3" title="3">{
                 select </span>{
-                case &lt;-ctx.Done():<span class="cov2" title="2">
+                case &lt;-ctx.Done():<span class="cov3" title="3">
                         if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span><span class="cov0" title="0">{
                                 input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), err)
                         }</span>
-                case &lt;-done:<span class="cov1" title="1"></span>
+                case &lt;-done:<span class="cov0" title="0"></span>
                 }
         }()
 
@@ -2353,7 +2437,7 @@ func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg
         <span class="cov4" title="5">edm.log.Info("histogramWriter: exiting loop")</span>
 }
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov7" title="13">{
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov6" title="13">{
         defer wg.Done()
 
         backoffDuration := edm.deps.HistogramSenderBackoff
@@ -2370,15 +2454,15 @@ func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir strin
                 stateString = "disabled"
         }</span>
 
-        <span class="cov7" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
+        <span class="cov6" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov10" title="46">{
+        for </span><span class="cov10" title="47">{
                 select </span>{
-                case &lt;-ticker.C():<span class="cov9" title="34">
+                case &lt;-ticker.C():<span class="cov9" title="35">
                         if conf.DisableHistogramSender </span><span class="cov8" title="21">{
                                 continue</span>
                         }
-                        <span class="cov7" title="13">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+                        <span class="cov7" title="14">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -2387,17 +2471,17 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov7" title="13">for _, dirEntry := range dirEntries </span><span class="cov6" title="9">{
+                        <span class="cov7" title="14">for _, dirEntry := range dirEntries </span><span class="cov6" title="10">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov6" title="9">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov6" title="9">{
+                                <span class="cov6" title="10">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov6" title="10">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
                                         if err != nil </span><span class="cov4" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
-                                        <span class="cov4" title="4">duration := stopTS.Sub(startTS)
+                                        <span class="cov4" title="5">duration := stopTS.Sub(startTS)
 
                                         absPath := filepath.Join(outboxDir, dirEntry.Name())
                                         absPathSent := filepath.Join(sentDir, dirEntry.Name())
@@ -2413,15 +2497,15 @@ timerLoop:
                                                 edm.log.Error("histogramSender: aggregate sender is not initialized")
                                                 continue</span>
                                         }
-                                        <span class="cov4" title="4">err = as.Send(ctx, absPath, startTS, duration)
-                                        if err != nil </span><span class="cov3" title="3">{
+                                        <span class="cov4" title="5">err = as.Send(ctx, absPath, startTS, duration)
+                                        if err != nil </span><span class="cov4" title="4">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 select </span>{
-                                                case &lt;-edm.deps.Clock.After(backoffDuration):<span class="cov1" title="1"></span>
+                                                case &lt;-edm.deps.Clock.After(backoffDuration):<span class="cov2" title="2"></span>
                                                 case &lt;-ctx.Done():<span class="cov2" title="2">
                                                         break timerLoop</span>
                                                 }
-                                                <span class="cov1" title="1">continue</span>
+                                                <span class="cov2" title="2">continue</span>
                                         }
                                         <span class="cov1" title="1">err = edm.renameFile(absPath, absPathSent)
                                         if err != nil </span><span class="cov0" title="0">{
@@ -2446,7 +2530,7 @@ timerLoop:
                         break timerLoop</span>
                 }
         }
-        <span class="cov7" title="13">edm.log.Info("histogramSender: exiting loop")</span>
+        <span class="cov6" title="13">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
 // Unfortunately the hll library does not expose what format
@@ -2661,7 +2745,7 @@ import (
         "go4.org/netipx"
 )
 
-func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" title="228">{
+func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" title="228">{
         conf := edm.getConfig()
 
         if conf.IgnoredQuestionNamesFile == "" </span><span class="cov3" title="15">{
@@ -2671,7 +2755,7 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" t
         }</span>
 
         <span class="cov5" title="213">dawgFinder, _, err := edm.deps.DawgLoader.LoadDawgFile(conf.IgnoredQuestionNamesFile)
-        if err != nil </span><span class="cov1" title="3">{
+        if err != nil </span><span class="cov2" title="3">{
                 if errors.Is(err, errEmptyDawgFile) </span><span class="cov1" title="1">{
                         // Treat the same as unset filename
                         edm.ignoredQuestions.Store(nil)
@@ -2701,7 +2785,7 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" t
         <span class="cov5" title="210">return nil</span>
 }
 
-func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title="229">{
+func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title="229">{
         conf := edm.getConfig()
 
         if conf.IgnoredClientIPsFile == "" </span><span class="cov3" title="15">{
@@ -2726,16 +2810,16 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
 
         var numCIDRs uint64
         scanner := bufio.NewScanner(fh)
-        for scanner.Scan() </span><span class="cov6" title="853">{
+        for scanner.Scan() </span><span class="cov7" title="853">{
                 if scanner.Text() == "" || strings.HasPrefix(scanner.Text(), "#") </span><span class="cov2" title="4">{
                         // Skip empty lines and comments
                         continue</span>
                 }
-                <span class="cov6" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
+                <span class="cov7" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
                 if err != nil </span><span class="cov1" title="1">{
                         return fmt.Errorf("setIgnoredClientIPs: unable to parse ignored prefix '%s'", scanner.Text())
                 }</span>
-                <span class="cov6" title="848">b.AddPrefix(prefix)
+                <span class="cov7" title="848">b.AddPrefix(prefix)
                 numCIDRs++</span>
         }
         <span class="cov5" title="211">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
@@ -2764,7 +2848,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="43965">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="16940">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -2775,15 +2859,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov10" title="44008">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov10" title="16983">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov8" title="4955">{
+        if ipset == nil </span><span class="cov8" title="3519">{
                 return false
         }</span>
-        <span class="cov9" title="39053">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov9" title="13464">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -2793,30 +2877,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov9" title="39049">if ipset.Contains(clientIP) </span><span class="cov9" title="22038">{
+        <span class="cov9" title="13460">if ipset.Contains(clientIP) </span><span class="cov9" title="7502">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov9" title="17011">return false</span>
+        <span class="cov9" title="5958">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov8" title="10611">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov9" title="6842">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov8" title="4227">{
+        if holder == nil </span><span class="cov8" title="2710">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="6384">for _, question := range msg.Question </span><span class="cov8" title="6386">{
+        <span class="cov8" title="4132">for _, question := range msg.Question </span><span class="cov8" title="4134">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov7" title="1454">{
+                if dawgIndex != dawgNotFound </span><span class="cov7" title="990">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov8" title="4930">return false</span>
+        <span class="cov8" title="3142">return false</span>
 }
 </pre>
 		
@@ -3541,7 +3625,7 @@ func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) <span class="
         }
 }
 
-func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="16">{
+func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="17">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3549,22 +3633,22 @@ func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Tim
                 err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
                 return
         }</span>
-        <span class="cov9" title="15">times := strings.Split(nameParts[1], "_")
+        <span class="cov9" title="16">times := strings.Split(nameParts[1], "_")
         if len(times) != 2 </span><span class="cov6" title="6">{
                 err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
                 return
         }</span>
-        <span class="cov7" title="9">startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
+        <span class="cov7" title="10">startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
         if err != nil </span><span class="cov3" title="2">{
                 err = fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
                 return
         }</span>
-        <span class="cov6" title="7">stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+        <span class="cov7" title="8">stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
         if err != nil </span><span class="cov3" title="2">{
                 err = fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
                 return
         }</span>
-        <span class="cov5" title="5">return</span>
+        <span class="cov6" title="6">return</span>
 }
 
 func buildParquetFilenames(baseDir string, baseName string, timeStart time.Time, timeStop time.Time) (string, string) <span class="cov5" title="5">{
@@ -4100,6 +4184,10 @@ var (
         ErrNilLogger = errors.New("nil logger")
         // ErrNilRunContext is returned when Run is called with a nil context.
         ErrNilRunContext = errors.New("nil run context")
+        // ErrInvalidConfig is wrapped by every error returned from
+        // [Config.Validate] so callers can match configuration validation
+        // failures with [errors.Is].
+        ErrInvalidConfig = errors.New("invalid configuration")
 
         errNoClientCertificate      = errors.New("no client certificate loaded")
         errEmptyDawgFile            = errors.New("dawg file is empty")
@@ -5221,26 +5309,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="6409">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="4157">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="6214">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="3998">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="8792">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="5632">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov8" title="1274">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="846">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="5135">return dawgIndex, false</span>
+        <span class="cov9" title="3311">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5315,7 +5403,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Counters based on header
         <span class="cov3" title="10">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov2" title="7">
+        case dns.RcodeSuccess:<span class="cov3" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
