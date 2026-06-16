@@ -29,8 +29,8 @@ import (
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/fsnotify/fsnotify"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
@@ -376,7 +376,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	key, err := jwk.FromRaw(priv)
+	key, err := jwk.Import(priv)
 	if err != nil {
 		testJWKJSONErr = err
 		return
@@ -385,7 +385,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 		testJWKJSONErr = err
 		return
 	}

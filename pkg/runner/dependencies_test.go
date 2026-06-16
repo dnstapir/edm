@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lestrrat-go/jwx/v2/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwa"
 )
 
 func TestDefaultDependenciesFillCryptopanFactory(t *testing.T) {
@@ -66,8 +66,9 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key.Algorithm() != jwa.EdDSA {
-		t.Fatalf("algorithm = %v", key.Algorithm())
+	alg, ok := key.Algorithm()
+	if !ok || alg != jwa.EdDSA() {
+		t.Fatalf("algorithm = %v", alg)
 	}
 	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "bad.jwk", []byte("{"))); err == nil {
 		t.Fatal("bad JWK succeeded")
@@ -85,6 +86,11 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	x25519JWK := `{"kty":"OKP","crv":"X25519","x":"hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo"}`
 	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "x25519.jwk", []byte(x25519JWK))); !errors.Is(err, errNotEdDSAJWK) {
 		t.Fatalf("X25519 JWK error = %v, want errNotEdDSAJWK", err)
+	}
+	// A valid Ed25519 signing key but with no key ID (RFC 8037 A.1).
+	noKidJWK := `{"kty":"OKP","crv":"Ed25519","d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}`
+	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "nokid.jwk", []byte(noKidJWK))); !errors.Is(err, errJWKMissingKeyID) {
+		t.Fatalf("kid-less JWK error = %v, want errJWKMissingKeyID", err)
 	}
 }
 
