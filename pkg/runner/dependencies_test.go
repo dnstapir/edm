@@ -87,6 +87,11 @@ func TestCertPoolAndJWKFiles(t *testing.T) {
 	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "x25519.jwk", []byte(x25519JWK))); !errors.Is(err, errNotEdDSAJWK) {
 		t.Fatalf("X25519 JWK error = %v, want errNotEdDSAJWK", err)
 	}
+	// A valid Ed25519 signing key but with no key ID (RFC 8037 A.1).
+	noKidJWK := `{"kty":"OKP","crv":"Ed25519","d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}`
+	if _, err := loader.LoadEdDSAJWK(writeTempFile(t, "nokid.jwk", []byte(noKidJWK))); !errors.Is(err, errJWKMissingKeyID) {
+		t.Fatalf("kid-less JWK error = %v, want errJWKMissingKeyID", err)
+	}
 }
 
 func TestLoadDawgFileErrors(t *testing.T) {

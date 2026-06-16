@@ -456,6 +456,10 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 // types (including the OKP key-agreement curves X25519/X448) return an
 // error wrapping errNotEdDSAJWK, so a mismatched key fails at load time
 // instead of during later JWS operations.
+//
+// The key must also carry a key ID, returning errJWKMissingKeyID otherwise:
+// the HTTP signer's keyid and the MQTT topic/client ID are derived from it,
+// and a missing value would surface only as a downstream verification failure.
 func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) {
 	fileName = filepath.Clean(fileName)
 	keyFile, err := rkl.fs.ReadFile(fileName)
@@ -483,6 +487,10 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 	}
 	if crv != jwa.Ed25519() && crv != jwa.Ed448() {
 		return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
+	}
+
+	if kid, ok := jwkKey.KeyID(); !ok || kid == "" {
+		return nil, errJWKMissingKeyID
 	}
 
 	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
