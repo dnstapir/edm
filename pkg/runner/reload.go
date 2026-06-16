@@ -35,7 +35,7 @@ func configUpdater(ctx context.Context, reloadCh <-chan os.Signal, edm *DnstapMi
 // piece of state derived from it or from files it points at.
 //
 // The file-backed loaders (ignore lists and client certificates) are re-run
-// unconditionally: a reload request typically means file *contents* changed,
+// unconditionally: a reload request typically means file contents changed,
 // which is invisible in the Config value itself. Each loader validates its
 // input and atomically swaps the active state, so a failing loader logs an
 // error and keeps the previous state.
