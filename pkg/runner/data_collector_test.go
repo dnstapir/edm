@@ -85,8 +85,10 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	// A missing dawg file makes rotateTracker fail, exercising the path
-	// where session data is flushed but histogram rotation errors out.
+	// A requested reload of a missing dawg file makes rotateTracker fail,
+	// exercising the path where session data is flushed but histogram
+	// rotation errors out.
+	edm.dawgReloadRequested.Store(true)
 	go edm.dataCollector(&wg, wkdTracker, "missing-dawg-file.dawg")
 
 	firstServerID := "first"

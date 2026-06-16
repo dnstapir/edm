@@ -196,19 +196,21 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
 	var dawgFinder dawg.Finder
 	var dawgModTime time.Time
 
-	fileInfo, err := edm.deps.FileSystem.Stat(dawgFile)
-	if err != nil {
-		return nil, fmt.Errorf("rotateTracker: unable to stat dawgFile '%s': %w", dawgFile, err)
-	}
-
 	curSnap := wkd.snap.Load()
-	if fileInfo.ModTime() != curSnap.dawgModTime {
-		dawgFinder, dawgModTime, err = edm.deps.DawgLoader.LoadDawgFile(dawgFile)
+	// A SIGHUP-requested DAWG reload is applied here rather than directly
+	// in applyUpdate because the histogram map keyed by DAWG index must be
+	// rotated together with the finder it was built against. The request
+	// flag is consumed even when loading fails, so a broken DAWG file makes
+	// exactly one rotation fail instead of wedging every following one; the
+	// operator fixes the file and sends a new SIGHUP.
+	if edm.dawgReloadRequested.CompareAndSwap(true, false) {
+		var err error
+		dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
 		if err != nil {
 			return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
 		}
 		dawgFileChanged = true
-		edm.log.Info("dawg file modification changed, will reload file", "prev_time", curSnap.dawgModTime, "cur_time", fileInfo.ModTime())
+		edm.log.Info("dawg file reload requested, swapping in newly loaded file", "prev_time", curSnap.dawgModTime, "cur_time", dawgModTime)
 	}
 
 	// rotateTracker runs in the dataCollector goroutine, which is also

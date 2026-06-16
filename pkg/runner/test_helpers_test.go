@@ -27,7 +27,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/fsnotify/fsnotify"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
@@ -85,13 +84,6 @@ func testRunContext(t testing.TB) (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-func cleanupTestMinimiser(edm *DnstapMinimiser) {
-	if edm.fsWatcher != nil {
-		_ = edm.fsWatcher.Close()
-		edm.fsWatcher = nil
-	}
-}
-
 var (
 	testDawg     = flag.Bool("test-dawg", false, "perform tests requiring a well-known-domains.dawg file")
 	writeParquet = flag.Bool("write-parquet", false, "make parquet tests write out files in a temporary directory")
@@ -123,6 +115,11 @@ func (tc testConfiger) GetConfig() (Config, error) {
 	return tc.Config, nil
 }
 
+// placeholderDataDir is the non-writable data-dir defaultTestConfig uses as a
+// stand-in. The test minimiser constructors swap it for a writable temp dir
+// (see useWritableDataDir) so DAWG staging, which copies into data-dir, works.
+const placeholderDataDir = "/var/lib/dnstapir/edm"
+
 // defaultTestConfig returns a config populated with pkg/cmd/run.go's flag
 // defaults for the scalar/path fields. URL- and address-typed fields
 // (MQTTServer, HTTPURL) are deliberately left empty because run.go's
@@ -136,7 +133,7 @@ func defaultTestConfig() Config {
 	return Config{
 		ConfigFile:                    "edm.toml",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
-		DataDir:                       "/var/lib/dnstapir/edm",
+		DataDir:                       placeholderDataDir,
 		MinimiserWorkers:              1,
 		CryptopanKeySalt:              "edm-kdf-salt-val",
 		QnameSeenEntries:              10_000_000,
@@ -165,6 +162,18 @@ func newDefaultTC() testConfiger {
 	return testConfiger{Config: c}
 }
 
+// useWritableDataDir replaces the default placeholder data-dir with a writable
+// temp dir so DAWG staging (which copies into data-dir) works. It mutates the
+// config provider before construction so the writable path also survives a
+// SIGHUP reload, which re-reads Config from the provider. Tests that set their
+// own DataDir are left untouched.
+func useWritableDataDir(t testing.TB, tc *testConfiger) {
+	t.Helper()
+	if tc.DataDir == placeholderDataDir {
+		tc.DataDir = t.TempDir()
+	}
+}
+
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
@@ -173,6 +182,7 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 
 func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -182,21 +192,12 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 
-	t.Cleanup(func() {
-		if edm.fsWatcher != nil {
-			if err := edm.fsWatcher.Close(); err != nil {
-				if !errors.Is(err, fsnotify.ErrClosed) {
-					t.Fatalf("unable to close fsWatcher: %s", err)
-				}
-			}
-		}
-	})
-
 	return edm
 }
 
 func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -205,10 +206,6 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-
-	t.Cleanup(func() {
-		cleanupTestMinimiser(edm)
-	})
 
 	return edm
 }
@@ -226,21 +223,6 @@ func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Crypt
 	return cryptopan.New(sum[:])
 }
 
-type testWatcherFactory struct {
-	watcher fileWatcher
-	err     error
-}
-
-func (twf testWatcherFactory) NewWatcher() (fileWatcher, error) {
-	if twf.err != nil {
-		return nil, twf.err
-	}
-	if twf.watcher != nil {
-		return twf.watcher, nil
-	}
-	return newTestFileWatcher(), nil
-}
-
 func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
@@ -252,9 +234,9 @@ func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser 
 
 func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	deps := newTestDependencies()
-	deps.WatcherFactory = testWatcherFactory{}
 
 	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
 	if err != nil {

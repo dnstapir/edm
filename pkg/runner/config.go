@@ -159,17 +159,9 @@ type ViperConfigProvider struct{}
 func (vc ViperConfigProvider) GetConfig() (Config, error) {
 	conf := Config{}
 
-	// viper.WatchConfig() does call viper.ReadInConfig() internally so
-	// ideally we should not need to call it again, but I have seen
-	// inconsistent behaviour where viper.UnmarshalExact() below returns
-	// stale data when the config file is modified in-place with an editor
-	// rather than being atomically replaced e.g. via mv(1).
-	//
-	// Since this getConfig() function is not called by configUpdater()
-	// until it has waited on notifications to settle this should make
-	// things behave better (it is still recommended that an updated config
-	// file is moved in place atomically rather than being modified with an
-	// editor directly).
+	// Re-read the config file on every call so a SIGHUP-triggered reload
+	// always observes the current file contents rather than whatever Viper
+	// cached at startup.
 	err := viper.ReadInConfig()
 	if err != nil {
 		return Config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)

@@ -35,7 +35,6 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDnstapMinimiser: %s", err)
 	}
-	t.Cleanup(func() { cleanupTestMinimiser(edm) })
 
 	if edm.loggerLevel != loggerLevel {
 		t.Fatal("WithLoggerLevel did not install the supplied level var")
