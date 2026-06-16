@@ -67,43 +67,45 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/certs.go (100.0%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (94.5%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (96.4%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/cryptopan.go (95.5%)</option>
 				
-				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (88.3%)</option>
+				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (89.3%)</option>
 				
-				<option value="file9">github.com/dnstapir/edm/pkg/runner/dependencies.go (91.9%)</option>
+				<option value="file9">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (77.4%)</option>
 				
-				<option value="file10">github.com/dnstapir/edm/pkg/runner/disk_cleaner.go (82.1%)</option>
+				<option value="file10">github.com/dnstapir/edm/pkg/runner/dependencies.go (91.8%)</option>
 				
-				<option value="file11">github.com/dnstapir/edm/pkg/runner/dnstap_input.go (60.5%)</option>
+				<option value="file11">github.com/dnstapir/edm/pkg/runner/disk_cleaner.go (82.1%)</option>
 				
-				<option value="file12">github.com/dnstapir/edm/pkg/runner/histogram.go (87.4%)</option>
+				<option value="file12">github.com/dnstapir/edm/pkg/runner/dnstap_input.go (60.5%)</option>
 				
-				<option value="file13">github.com/dnstapir/edm/pkg/runner/http_server.go (100.0%)</option>
+				<option value="file13">github.com/dnstapir/edm/pkg/runner/histogram.go (87.4%)</option>
 				
-				<option value="file14">github.com/dnstapir/edm/pkg/runner/ignore.go (96.2%)</option>
+				<option value="file14">github.com/dnstapir/edm/pkg/runner/http_server.go (100.0%)</option>
 				
-				<option value="file15">github.com/dnstapir/edm/pkg/runner/minimiser.go (83.2%)</option>
+				<option value="file15">github.com/dnstapir/edm/pkg/runner/ignore.go (96.2%)</option>
 				
-				<option value="file16">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.2%)</option>
+				<option value="file16">github.com/dnstapir/edm/pkg/runner/minimiser.go (83.2%)</option>
 				
-				<option value="file17">github.com/dnstapir/edm/pkg/runner/parquet_files.go (100.0%)</option>
+				<option value="file17">github.com/dnstapir/edm/pkg/runner/mqtt.go (92.2%)</option>
 				
-				<option value="file18">github.com/dnstapir/edm/pkg/runner/parquet_rotation.go (83.3%)</option>
+				<option value="file18">github.com/dnstapir/edm/pkg/runner/parquet_files.go (100.0%)</option>
 				
-				<option value="file19">github.com/dnstapir/edm/pkg/runner/qname_seen.go (100.0%)</option>
+				<option value="file19">github.com/dnstapir/edm/pkg/runner/parquet_rotation.go (83.3%)</option>
 				
-				<option value="file20">github.com/dnstapir/edm/pkg/runner/reload.go (87.4%)</option>
+				<option value="file20">github.com/dnstapir/edm/pkg/runner/qname_seen.go (100.0%)</option>
 				
-				<option value="file21">github.com/dnstapir/edm/pkg/runner/service.go (89.6%)</option>
+				<option value="file21">github.com/dnstapir/edm/pkg/runner/reload.go (95.1%)</option>
 				
-				<option value="file22">github.com/dnstapir/edm/pkg/runner/session.go (98.5%)</option>
+				<option value="file22">github.com/dnstapir/edm/pkg/runner/service.go (90.8%)</option>
 				
-				<option value="file23">github.com/dnstapir/edm/pkg/runner/time.go (83.3%)</option>
+				<option value="file23">github.com/dnstapir/edm/pkg/runner/session.go (98.5%)</option>
 				
-				<option value="file24">github.com/dnstapir/edm/pkg/runner/wkd.go (98.6%)</option>
+				<option value="file24">github.com/dnstapir/edm/pkg/runner/time.go (83.3%)</option>
+				
+				<option value="file25">github.com/dnstapir/edm/pkg/runner/wkd.go (98.5%)</option>
 				
 				</select>
 			</div>
@@ -215,7 +217,6 @@ var (
         viperAutomaticEnv      = viper.AutomaticEnv
         viperReadInConfig      = viper.ReadInConfig
         viperConfigFileUsed    = viper.ConfigFileUsed
-        viperWatchConfig       = viper.WatchConfig
 )
 
 const envPrefix = "DNSTAPIR_EDM"
@@ -275,13 +276,11 @@ func initConfig() <span class="cov10" title="5">{
 
         <span class="cov10" title="5">configureEnv()
 
-        // If a config file is found, read it in.
+        // If a config file is found, read it in. The running service re-reads
+        // it when reload is requested via SIGHUP.
         if err := viperReadInConfig(); err == nil </span><span class="cov8" title="4">{
                 edmLogger.Info("using config file", "filename", viperConfigFileUsed())
         }</span>
-
-        // Make it so we can detect changes to the cryptopan secret in the config
-        <span class="cov10" title="5">viperWatchConfig()</span>
 }
 
 // configureEnv isolates environment overrides to the [envPrefix] namespace.
@@ -753,7 +752,7 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
         <span class="cov9" title="15">return res</span>
 }
 
-func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov7" title="9">{
+func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov8" title="10">{
         conf := edm.getConfig()
 
         httpURL, err := url.Parse(conf.HTTPURL)
@@ -761,8 +760,8 @@ func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov7" titl
                 return fmt.Errorf("setupHistogramSender: unable to parse 'http-url' setting: %w", err)
         }</span>
 
-        <span class="cov7" title="7">httpSigningJwk, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.HTTPSigningKeyFile)
-        if err != nil </span><span class="cov5" title="4">{
+        <span class="cov7" title="8">httpSigningJwk, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.HTTPSigningKeyFile)
+        if err != nil </span><span class="cov6" title="5">{
                 return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
         }</span>
 
@@ -811,20 +810,20 @@ type certStore struct {
 }
 
 // Implements tls.Config.GetClientCertificate
-func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) <span class="cov3" title="5">{
+func (cs *certStore) getClientCertificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) <span class="cov3" title="6">{
         cs.mtx.RLock()
         defer cs.mtx.RUnlock()
 
-        if cs.cert == nil </span><span class="cov3" title="4">{
+        if cs.cert == nil </span><span class="cov3" title="5">{
                 return nil, fmt.Errorf("getClientCertificate: %w", errNoClientCertificate)
         }</span>
 
         <span class="cov1" title="1">return cs.cert, nil</span>
 }
 
-func (cs *certStore) loadCert(loader keyMaterialLoader, certPath string, keyPath string) error <span class="cov5" title="13">{
+func (cs *certStore) loadCert(loader keyMaterialLoader, certPath string, keyPath string) error <span class="cov5" title="22">{
         cert, err := loader.LoadKeyPair(certPath, keyPath)
-        if err != nil </span><span class="cov4" title="7">{
+        if err != nil </span><span class="cov5" title="16">{
                 return fmt.Errorf("unable to load x509 cert: %w", err)
         }</span>
         <span class="cov3" title="6">cs.mtx.Lock()
@@ -834,11 +833,11 @@ func (cs *certStore) loadCert(loader keyMaterialLoader, certPath string, keyPath
         return nil</span>
 }
 
-func newCertStore() *certStore <span class="cov10" title="262">{
+func newCertStore() *certStore <span class="cov10" title="274">{
         return &amp;certStore{}
 }</span>
 
-func (edm *DnstapMinimiser) loadHTTPClientCert() error <span class="cov4" title="7">{
+func (edm *DnstapMinimiser) loadHTTPClientCert() error <span class="cov4" title="11">{
         conf := edm.getConfig()
 
         edm.log.Info("loadHTTPClientCert: loading cert into HTTP cert store", "cert_file", conf.HTTPClientCertFile, "key_file", conf.HTTPClientKeyFile)
@@ -846,7 +845,7 @@ func (edm *DnstapMinimiser) loadHTTPClientCert() error <span class="cov4" title=
         return err
 }</span>
 
-func (edm *DnstapMinimiser) loadMQTTClientCert() error <span class="cov3" title="4">{
+func (edm *DnstapMinimiser) loadMQTTClientCert() error <span class="cov4" title="9">{
         conf := edm.getConfig()
         edm.log.Info("loadMQTTClientCert: loading cert into MQTT cert store", "cert_file", conf.MQTTClientCertFile, "key_file", conf.MQTTClientKeyFile)
         err := edm.mqttClientCertStore.loadCert(edm.deps.KeyMaterialLoader, conf.MQTTClientCertFile, conf.MQTTClientKeyFile)
@@ -930,7 +929,7 @@ func (conf Config) Validate() (err error) <span class="cov5" title="36">{
                 {"cryptopan-key-salt", conf.CryptopanKeySalt},
                 {"well-known-domains-file", conf.WellKnownDomainsFile},
                 {"data-dir", conf.DataDir},
-        } </span><span class="cov8" title="180">{
+        } </span><span class="cov7" title="180">{
                 if f.value == "" </span><span class="cov3" title="7">{
                         errs = append(errs, fmt.Errorf("%s must be set", f.key))
                 }</span>
@@ -938,7 +937,7 @@ func (conf Config) Validate() (err error) <span class="cov5" title="36">{
 
         <span class="cov5" title="36">inputs := 0
         for _, in := range []string{conf.InputUnix, conf.InputTCP, conf.InputTLS} </span><span class="cov7" title="108">{
-                if in != "" </span><span class="cov6" title="41">{
+                if in != "" </span><span class="cov5" title="41">{
                         inputs++
                 }</span>
         }
@@ -1015,17 +1014,9 @@ type ViperConfigProvider struct{}
 func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" title="2">{
         conf := Config{}
 
-        // viper.WatchConfig() does call viper.ReadInConfig() internally so
-        // ideally we should not need to call it again, but I have seen
-        // inconsistent behaviour where viper.UnmarshalExact() below returns
-        // stale data when the config file is modified in-place with an editor
-        // rather than being atomically replaced e.g. via mv(1).
-        //
-        // Since this getConfig() function is not called by configUpdater()
-        // until it has waited on notifications to settle this should make
-        // things behave better (it is still recommended that an updated config
-        // file is moved in place atomically rather than being modified with an
-        // editor directly).
+        // Re-read the config file on every call so a SIGHUP-triggered reload
+        // always observes the current file contents rather than whatever Viper
+        // cached at startup.
         err := viper.ReadInConfig()
         if err != nil </span><span class="cov0" title="0">{
                 return Config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)
@@ -1044,21 +1035,21 @@ func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" tit
         <span class="cov1" title="1">return conf, nil</span>
 }
 
-func (edm *DnstapMinimiser) updateConfig() error <span class="cov7" title="134">{
+func (edm *DnstapMinimiser) updateConfig() error <span class="cov7" title="144">{
         edm.confMutex.Lock()
         defer edm.confMutex.Unlock()
 
         conf, err := edm.configer.GetConfig()
-        if err != nil </span><span class="cov0" title="0">{
+        if err != nil </span><span class="cov1" title="1">{
                 return err
         }</span>
 
-        <span class="cov7" title="134">edm.conf = conf
+        <span class="cov7" title="143">edm.conf = conf
 
         return nil</span>
 }
 
-func (edm *DnstapMinimiser) getConfig() Config <span class="cov10" title="754">{
+func (edm *DnstapMinimiser) getConfig() Config <span class="cov10" title="1032">{
         edm.confMutex.RLock()
         conf := edm.conf
         edm.confMutex.RUnlock()
@@ -1099,7 +1090,7 @@ func (realCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan
         return createCryptopan(key, salt)
 }</span>
 
-func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov10" title="164">{
+func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries int) error <span class="cov10" title="171">{
         // cacheEntries is the per-worker LRU size, validated here so a bad config
         // value surfaces at load time instead of crashing a worker when it builds
         // its LRU. The caches themselves are owned by each minimiser worker (see
@@ -1111,12 +1102,12 @@ func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
                 return fmt.Errorf("setCryptopan: invalid cache size %d", cacheEntries)
         }</span>
 
-        <span class="cov9" title="163">cpn, err := edm.deps.CryptopanFactory.NewCryptopan(key, salt)
+        <span class="cov9" title="170">cpn, err := edm.deps.CryptopanFactory.NewCryptopan(key, salt)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
         }</span>
 
-        <span class="cov9" title="162">edm.cryptopan.Store(cpn)
+        <span class="cov9" title="169">edm.cryptopan.Store(cpn)
         edm.cryptopanGen.Add(1)
 
         return nil</span>
@@ -1174,7 +1165,7 @@ func (edm *DnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Crypto
 
         <span class="cov7" title="31">if cacheHit </span><span class="cov1" title="1">{
                 edm.promCryptopanCacheHit.Inc()
-        }</span> else<span class="cov7" title="30"> {
+        }</span> else<span class="cov6" title="30"> {
                 // Not in cache or cache disabled, calculate the pseudonymised IP
                 pseudonymisedAddr, ok = netip.AddrFromSlice(cpn.Anonymize(addr.AsSlice()))
                 if !ok </span><span class="cov0" title="0">{
@@ -1188,7 +1179,7 @@ func (edm *DnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Crypto
                 // meaning we will get IPv4 addresses mapped to IPv6, e.g.
                 // ::ffff:127.0.0.1. It is easier to handle these as native
                 // IPv4 addresses in our system so call Unmap() on it.
-                <span class="cov7" title="30">pseudonymisedAddr = pseudonymisedAddr.Unmap()
+                <span class="cov6" title="30">pseudonymisedAddr = pseudonymisedAddr.Unmap()
 
                 if cache != nil </span><span class="cov5" title="11">{
                         evicted := cache.Add(addr, pseudonymisedAddr)
@@ -1211,7 +1202,7 @@ import (
 )
 
 // runMinimiser generates data and it is collected into datasets here
-func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) <span class="cov6" title="9">{
+func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) <span class="cov7" title="9">{
         defer wg.Done()
 
         // Keep track of if we have recorded any dnstap packets in session data
@@ -1244,7 +1235,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 sessionUpdated = true</span>
         }
 
-        <span class="cov6" title="9">flushSessions := func(startTime time.Time, rotationTime time.Time) </span><span class="cov7" title="11">{
+        <span class="cov7" title="9">flushSessions := func(startTime time.Time, rotationTime time.Time) </span><span class="cov7" title="11">{
                 if !sessionUpdated </span><span class="cov5" title="6">{
                         return
                 }</span>
@@ -1258,7 +1249,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 edm.sessionWriterCh &lt;- ps</span>
         }
 
-        <span class="cov6" title="9">processWKDUpdate := func(wu wkdUpdate) </span><span class="cov3" title="3">{
+        <span class="cov7" title="9">processWKDUpdate := func(wu wkdUpdate) </span><span class="cov4" title="3">{
                 // It is possible an update sitting in the queue has
                 // been created with an outdated dawgModTime due to a
                 // call to rotateTracker(). If this is the case we need
@@ -1274,11 +1265,11 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                         <span class="cov0" title="0">return</span>
                 }
 
-                <span class="cov3" title="3">if _, exists := wkd.m[wu.dawgIndex]; !exists </span><span class="cov3" title="3">{
+                <span class="cov4" title="3">if _, exists := wkd.m[wu.dawgIndex]; !exists </span><span class="cov4" title="3">{
                         wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
                 }</span>
 
-                <span class="cov3" title="3">wkd.m[wu.dawgIndex].OKCount += wu.OKCount
+                <span class="cov4" title="3">wkd.m[wu.dawgIndex].OKCount += wu.OKCount
                 wkd.m[wu.dawgIndex].NXCount += wu.NXCount
                 wkd.m[wu.dawgIndex].FailCount += wu.FailCount
                 wkd.m[wu.dawgIndex].ACount += wu.ACount
@@ -1289,8 +1280,8 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
                 wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
 
-                if wu.ip.IsValid() </span><span class="cov3" title="3">{
-                        if wu.ip.Unmap().Is4() </span><span class="cov3" title="3">{
+                if wu.ip.IsValid() </span><span class="cov4" title="3">{
+                        if wu.ip.Unmap().Is4() </span><span class="cov4" title="3">{
                                 wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
                         }</span> else<span class="cov0" title="0"> {
                                 wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
@@ -1298,12 +1289,12 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 }
         }
 
-        <span class="cov6" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
-                for </span><span class="cov7" title="10">{
+        <span class="cov7" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
+                for </span><span class="cov7" title="11">{
                         select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
+                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov7" title="10">
                                 return</span>
@@ -1311,7 +1302,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 }
         }
 
-        <span class="cov6" title="9">rotateCollectedData := func(sessionStart time.Time, histogramStart time.Time, rotationTime time.Time) error </span><span class="cov3" title="3">{
+        <span class="cov7" title="9">rotateCollectedData := func(sessionStart time.Time, histogramStart time.Time, rotationTime time.Time) error </span><span class="cov4" title="3">{
                 flushSessions(sessionStart, rotationTime)
 
                 prevWKD, err := wkd.rotateTracker(edm, dawgFile, histogramStart, rotationTime)
@@ -1327,7 +1318,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 <span class="cov2" title="2">return nil</span>
         }
 
-        <span class="cov6" title="9">flushHistogram := func(startTime time.Time, rotationTime time.Time) </span><span class="cov6" title="8">{
+        <span class="cov7" title="9">flushHistogram := func(startTime time.Time, rotationTime time.Time) </span><span class="cov6" title="8">{
                 if len(wkd.m) == 0 </span><span class="cov6" title="7">{
                         return
                 }</span>
@@ -1340,13 +1331,13 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 wkd.m = map[int]*histogramData{}</span>
         }
 
-<span class="cov6" title="9">collectorLoop:
-        for </span><span class="cov10" title="28">{
+<span class="cov7" title="9">collectorLoop:
+        for </span><span class="cov10" title="27">{
                 select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:<span class="cov5" title="5">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov3" title="3">
+                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C():<span class="cov1" title="1">
@@ -1416,6 +1407,158 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
 		<pre class="file" id="file9" style="display: none">package runner
 
 import (
+        "crypto/sha256"
+        "encoding/hex"
+        "fmt"
+        "io"
+        "os"
+        "path/filepath"
+        "time"
+
+        "github.com/smhanov/dawg"
+)
+
+// dawgStagingDirName is the subdirectory of the configured data-dir that holds
+// EDM's private copies of the memory-mapped DAWG files.
+const dawgStagingDirName = "dawg-staging"
+
+// loadDawgFileStaged loads srcPath as a DAWG from a private copy kept on the
+// data-dir filesystem, returning the [dawg.Finder] and srcPath's modification
+// time.
+//
+// The DAWG files are memory-mapped, so EDM never maps the operator-supplied
+// file directly: an in-place overwrite of a mapped file would corrupt or
+// SIGBUS in-flight lookups that still reference the old mapping. Instead the
+// source is copied into the staging directory and the private copy is mapped,
+// which decouples the live mapping from later changes to srcPath.
+//
+// The returned time is srcPath's modification time, sampled once from the file
+// that is actually copied. It tags the DAWG version that in-flight histogram
+// updates are matched against (the data collector discards updates whose
+// dawgModTime no longer matches the active snapshot), so it must reflect the
+// source rather than the moment the copy was made.
+func (edm *DnstapMinimiser) loadDawgFileStaged(srcPath string) (dawg.Finder, time.Time, error) <span class="cov9" title="232">{
+        stagingDir := filepath.Join(edm.getConfig().DataDir, dawgStagingDirName)
+        staged, modTime, err := stageDawgCopy(srcPath, stagingDir)
+        if err != nil </span><span class="cov4" title="9">{
+                return nil, time.Time{}, err
+        }</span>
+
+        // The previous copy at the same path was unlinked by stageDawgCopy's
+        // rename and is kept alive by the prior mapping until the GC reclaims it
+        // (see the ignoredQuestions field comment on DnstapMinimiser).
+        <span class="cov9" title="223">finder, err := loadStagedFinder(edm.deps.DawgLoader, staged)
+        if err != nil </span><span class="cov1" title="1">{
+                return nil, time.Time{}, err
+        }</span>
+        <span class="cov9" title="222">return finder, modTime, nil</span>
+}
+
+// loadStagedFinder mmaps the staged DAWG copy, converting a panic from the
+// DAWG library into an error.
+//
+// [dawg.Load] panics rather than returning an error on a malformed file, so a
+// corrupt or half-written source would otherwise crash the reload goroutine
+// (and the process) instead of failing the one reload. Recovering keeps the
+// previous DAWG mapped and the service running, matching the rest of the
+// reload path's "log and keep old state" behavior.
+func loadStagedFinder(loader dawgLoader, staged string) (finder dawg.Finder, err error) <span class="cov9" title="223">{
+        defer func() </span><span class="cov9" title="223">{
+                if r := recover(); r != nil </span><span class="cov1" title="1">{
+                        finder = nil
+                        err = fmt.Errorf("loadStagedFinder: loading DAWG %q panicked (corrupt file?): %v", staged, r)
+                }</span>
+        }()
+        <span class="cov9" title="223">finder, _, err = loader.LoadDawgFile(staged)
+        return</span>
+}
+
+// stagedDawgName returns a staging file name for srcPath that cannot collide
+// with a different source sharing the same base name. A short hash of the
+// cleaned path keeps distinct sources distinct, while the base name is kept as
+// a readable suffix so the staging directory is unsurprising to inspect.
+func stagedDawgName(srcPath string) string <span class="cov9" title="229">{
+        sum := sha256.Sum256([]byte(filepath.Clean(srcPath)))
+        return hex.EncodeToString(sum[:8]) + "-" + filepath.Base(srcPath)
+}</span>
+
+// stageDawgCopy copies srcPath into stagingDir and returns the staged path and
+// srcPath's modification time.
+//
+// The copy is written to a temporary file in stagingDir and atomically renamed
+// over any existing staged copy of the same source, so a reader mapping the
+// previous copy keeps a stable file: the rename unlinks the old inode rather
+// than truncating it. The staged copy carries the source's modification time
+// so it is unsurprising to inspect and preserves the DAWG version stamp. A
+// zero-length source returns [errEmptyDawgFile] without staging anything.
+func stageDawgCopy(srcPath, stagingDir string) (stagedPath string, modTime time.Time, err error) <span class="cov10" title="238">{
+        if err = os.MkdirAll(stagingDir, 0o700); err != nil </span><span class="cov1" title="1">{
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+
+        <span class="cov9" title="237">in, err := os.Open(srcPath) // #nosec G304 -- configured runtime DAWG path
+        if err != nil </span><span class="cov3" title="6">{
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+        <span class="cov9" title="231">defer func() </span><span class="cov9" title="231">{ _ = in.Close() }</span>()
+
+        <span class="cov9" title="231">srcInfo, err := in.Stat()
+        if err != nil </span><span class="cov0" title="0">{
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+        <span class="cov9" title="231">if srcInfo.Size() == 0 </span><span class="cov2" title="3">{
+                return "", time.Time{}, errEmptyDawgFile
+        }</span>
+        <span class="cov9" title="228">modTime = srcInfo.ModTime()
+
+        name := stagedDawgName(srcPath)
+        tmp, err := os.CreateTemp(stagingDir, name+".incoming-*")
+        if err != nil </span><span class="cov0" title="0">{
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+        <span class="cov9" title="228">tmpName := tmp.Name()
+
+        if _, err = io.Copy(tmp, in); err != nil </span><span class="cov0" title="0">{
+                _ = tmp.Close()
+                _ = os.Remove(tmpName)
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+        <span class="cov9" title="228">if err = tmp.Close(); err != nil </span><span class="cov0" title="0">{
+                _ = os.Remove(tmpName)
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+
+        // Carry the source modification time onto the copy.
+        <span class="cov9" title="228">if err = os.Chtimes(tmpName, modTime, modTime); err != nil </span><span class="cov0" title="0">{
+                _ = os.Remove(tmpName)
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+
+        <span class="cov9" title="228">stagedPath = filepath.Join(stagingDir, name)
+        if err = os.Rename(tmpName, stagedPath); err != nil </span><span class="cov0" title="0">{
+                _ = os.Remove(tmpName)
+                return "", time.Time{}, fmt.Errorf("stageDawgCopy: %w", err)
+        }</span>
+        <span class="cov9" title="228">return stagedPath, modTime, nil</span>
+}
+
+// prepareDawgStaging clears the DAWG staging directory.
+//
+// It runs once at startup, before any DAWG is staged. A fresh process holds no
+// mappings into the directory, so removing it reclaims copies orphaned by a
+// previous process that exited before its mappings were released.
+func (edm *DnstapMinimiser) prepareDawgStaging() error <span class="cov5" title="16">{
+        stagingDir := filepath.Join(edm.getConfig().DataDir, dawgStagingDirName)
+        if err := os.RemoveAll(stagingDir); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("prepareDawgStaging: %w", err)
+        }</span>
+        <span class="cov5" title="16">return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file10" style="display: none">package runner
+
+import (
         "context"
         "crypto/tls"
         "crypto/x509"
@@ -1435,7 +1578,6 @@ import (
         "github.com/eclipse/paho.golang/autopaho"
         "github.com/eclipse/paho.golang/autopaho/queue/file"
         "github.com/eclipse/paho.golang/paho"
-        "github.com/fsnotify/fsnotify"
         "github.com/lestrrat-go/jwx/v3/jwa"
         "github.com/lestrrat-go/jwx/v3/jwk"
         "github.com/smhanov/dawg"
@@ -1465,12 +1607,6 @@ type fileSystem interface {
         Remove(name string) error
 }
 
-// timer is the clock timer surface used by debounce code.
-type timer interface {
-        Stop() bool
-        Reset(time.Duration) bool
-}
-
 // ticker is the clock ticker surface used by background workers.
 type ticker interface {
         C() &lt;-chan time.Time
@@ -1482,23 +1618,7 @@ type ticker interface {
 type clock interface {
         Now() time.Time
         After(time.Duration) &lt;-chan time.Time
-        AfterFunc(time.Duration, func()) timer
         NewTicker(time.Duration) ticker
-}
-
-// fileWatcher is the fsnotify surface used by the runner.
-type fileWatcher interface {
-        Add(name string) error
-        Remove(name string) error
-        Close() error
-        WatchList() []string
-        Events() &lt;-chan fsnotify.Event
-        Errors() &lt;-chan error
-}
-
-// watcherFactory creates file watchers.
-type watcherFactory interface {
-        NewWatcher() (fileWatcher, error)
 }
 
 // listenerFactory creates plaintext and TLS listeners.
@@ -1586,7 +1706,6 @@ type cryptopanFactory interface {
 type dependencies struct {
         FileSystem             fileSystem
         Clock                  clock
-        WatcherFactory         watcherFactory
         ListenerFactory        listenerFactory
         DnstapInputFactory     dnstapInputFactory
         SeenQnameStoreFactory  seenQnameStoreFactory
@@ -1597,8 +1716,6 @@ type dependencies struct {
         DawgLoader             dawgLoader
         CryptopanFactory       cryptopanFactory
 
-        ConfigUpdateDebounce    time.Duration
-        FSEventDebounce         time.Duration
         DiskCleanerInterval     time.Duration
         MonitorChannelInterval  time.Duration
         HistogramSenderInterval time.Duration
@@ -1607,77 +1724,68 @@ type dependencies struct {
         MetricsListenAddr       string
 }
 
-func defaultDependencies() dependencies <span class="cov5" title="151">{
+func defaultDependencies() dependencies <span class="cov5" title="157">{
         return fillDependencies(dependencies{})
 }</span>
 
-func fillDependencies(deps dependencies) dependencies <span class="cov5" title="282">{
-        if deps.FileSystem == nil </span><span class="cov5" title="154">{
+func fillDependencies(deps dependencies) dependencies <span class="cov5" title="294">{
+        if deps.FileSystem == nil </span><span class="cov5" title="160">{
                 deps.FileSystem = osFileSystem{}
         }</span>
-        <span class="cov5" title="282">if deps.Clock == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.Clock == nil </span><span class="cov5" title="160">{
                 deps.Clock = realClock{}
         }</span>
-        <span class="cov5" title="282">if deps.WatcherFactory == nil </span><span class="cov5" title="154">{
-                deps.WatcherFactory = fsnotifyWatcherFactory{}
-        }</span>
-        <span class="cov5" title="282">if deps.ListenerFactory == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.ListenerFactory == nil </span><span class="cov5" title="160">{
                 deps.ListenerFactory = netListenerFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.DnstapInputFactory == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.DnstapInputFactory == nil </span><span class="cov5" title="160">{
                 deps.DnstapInputFactory = realDnstapInputFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.SeenQnameStoreFactory == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.SeenQnameStoreFactory == nil </span><span class="cov5" title="160">{
                 deps.SeenQnameStoreFactory = pebbleSeenQnameStoreFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.HTTPServerRunner == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.HTTPServerRunner == nil </span><span class="cov5" title="160">{
                 deps.HTTPServerRunner = realHTTPServerRunner{}
         }</span>
-        <span class="cov5" title="282">if deps.AggregateSenderFactory == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.AggregateSenderFactory == nil </span><span class="cov5" title="160">{
                 deps.AggregateSenderFactory = realAggregateSenderFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.MQTTFactory == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.MQTTFactory == nil </span><span class="cov5" title="160">{
                 deps.MQTTFactory = realMQTTFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.KeyMaterialLoader == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.KeyMaterialLoader == nil </span><span class="cov5" title="160">{
                 deps.KeyMaterialLoader = realKeyMaterialLoader{fs: deps.FileSystem}
         }</span>
-        <span class="cov5" title="282">if deps.DawgLoader == nil </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.DawgLoader == nil </span><span class="cov5" title="160">{
                 deps.DawgLoader = realDawgLoader{fs: deps.FileSystem}
         }</span>
-        <span class="cov5" title="282">if deps.CryptopanFactory == nil </span><span class="cov5" title="153">{
+        <span class="cov5" title="294">if deps.CryptopanFactory == nil </span><span class="cov5" title="159">{
                 deps.CryptopanFactory = realCryptopanFactory{}
         }</span>
-        <span class="cov5" title="282">if deps.ConfigUpdateDebounce == 0 </span><span class="cov5" title="154">{
-                deps.ConfigUpdateDebounce = 100 * time.Millisecond
-        }</span>
-        <span class="cov5" title="282">if deps.FSEventDebounce == 0 </span><span class="cov5" title="154">{
-                deps.FSEventDebounce = 100 * time.Millisecond
-        }</span>
-        <span class="cov5" title="282">if deps.DiskCleanerInterval == 0 </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.DiskCleanerInterval == 0 </span><span class="cov5" title="160">{
                 deps.DiskCleanerInterval = time.Minute
         }</span>
-        <span class="cov5" title="282">if deps.MonitorChannelInterval == 0 </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.MonitorChannelInterval == 0 </span><span class="cov5" title="160">{
                 deps.MonitorChannelInterval = time.Second
         }</span>
-        <span class="cov5" title="282">if deps.HistogramSenderInterval == 0 </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.HistogramSenderInterval == 0 </span><span class="cov5" title="160">{
                 deps.HistogramSenderInterval = 10 * time.Second
         }</span>
-        <span class="cov5" title="282">if deps.HistogramSenderBackoff == 0 </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.HistogramSenderBackoff == 0 </span><span class="cov5" title="160">{
                 deps.HistogramSenderBackoff = 15 * time.Second
         }</span>
-        <span class="cov5" title="282">if deps.PprofListenAddr == "" </span><span class="cov5" title="153">{
+        <span class="cov5" title="294">if deps.PprofListenAddr == "" </span><span class="cov5" title="159">{
                 deps.PprofListenAddr = "127.0.0.1:6060"
         }</span>
-        <span class="cov5" title="282">if deps.MetricsListenAddr == "" </span><span class="cov5" title="154">{
+        <span class="cov5" title="294">if deps.MetricsListenAddr == "" </span><span class="cov5" title="160">{
                 deps.MetricsListenAddr = "127.0.0.1:2112"
         }</span>
-        <span class="cov5" title="282">return deps</span>
+        <span class="cov5" title="294">return deps</span>
 }
 
 type osFileSystem struct{}
 
-func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="226">{
+func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="227">{
         return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }</span>
 
@@ -1689,7 +1797,7 @@ func (osFileSystem) Create(name string) (fsFile, error) <span class="cov3" title
         return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
 }</span>
 
-func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" title="60">{
+func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" title="70">{
         return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }</span>
 
@@ -1697,7 +1805,7 @@ func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov
         return os.ReadDir(name)
 }</span>
 
-func (osFileSystem) Stat(name string) (os.FileInfo, error) <span class="cov5" title="238">{
+func (osFileSystem) Stat(name string) (os.FileInfo, error) <span class="cov5" title="233">{
         return os.Stat(name)
 }</span>
 
@@ -1719,12 +1827,8 @@ func (realClock) Now() time.Time <span class="cov4" title="54">{
         return time.Now()
 }</span>
 
-func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="11">{
+func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="7">{
         return time.After(d)
-}</span>
-
-func (realClock) AfterFunc(d time.Duration, f func()) timer <span class="cov1" title="2">{
-        return time.AfterFunc(d, f)
 }</span>
 
 func (realClock) NewTicker(d time.Duration) ticker <span class="cov3" title="39">{
@@ -1735,30 +1839,8 @@ type realTicker struct {
         *time.Ticker
 }
 
-func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62092">{
+func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62091">{
         return rt.Ticker.C
-}</span>
-
-type fsnotifyWatcherFactory struct{}
-
-func (fsnotifyWatcherFactory) NewWatcher() (fileWatcher, error) <span class="cov4" title="98">{
-        w, err := fsnotify.NewWatcher()
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, err
-        }</span>
-        <span class="cov4" title="98">return fsnotifyFileWatcher{Watcher: w}, nil</span>
-}
-
-type fsnotifyFileWatcher struct {
-        *fsnotify.Watcher
-}
-
-func (fw fsnotifyFileWatcher) Events() &lt;-chan fsnotify.Event <span class="cov2" title="7">{
-        return fw.Watcher.Events
-}</span>
-
-func (fw fsnotifyFileWatcher) Errors() &lt;-chan error <span class="cov2" title="7">{
-        return fw.Watcher.Errors
 }</span>
 
 type netListenerFactory struct{}
@@ -1846,12 +1928,12 @@ type realKeyMaterialLoader struct {
         fs fileSystem
 }
 
-func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Certificate, error) <span class="cov3" title="21">{
+func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Certificate, error) <span class="cov3" title="30">{
         certPath = filepath.Clean(certPath)
         keyPath = filepath.Clean(keyPath)
 
         certPEMBlock, err := rkl.fs.ReadFile(certPath)
-        if err != nil </span><span class="cov2" title="8">{
+        if err != nil </span><span class="cov3" title="17">{
                 return tls.Certificate{}, fmt.Errorf("read cert file %q: %w", certPath, err)
         }</span>
         <span class="cov3" title="13">keyPEMBlock, err := rkl.fs.ReadFile(keyPath)
@@ -1875,10 +1957,10 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 // The key must also carry a key ID, returning errJWKMissingKeyID otherwise:
 // the HTTP signer's keyid and the MQTT topic/client ID are derived from it,
 // and a missing value would surface only as a downstream verification failure.
-func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) <span class="cov3" title="20">{
+func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) <span class="cov3" title="21">{
         fileName = filepath.Clean(fileName)
         keyFile, err := rkl.fs.ReadFile(fileName)
-        if err != nil </span><span class="cov2" title="7">{
+        if err != nil </span><span class="cov2" title="8">{
                 return nil, err
         }</span>
 
@@ -1932,26 +2014,26 @@ type realDawgLoader struct {
         fs fileSystem
 }
 
-func (rdl realDawgLoader) LoadDawgFile(dawgFile string) (dawg.Finder, time.Time, error) <span class="cov5" title="228">{
+func (rdl realDawgLoader) LoadDawgFile(dawgFile string) (dawg.Finder, time.Time, error) <span class="cov5" title="229">{
         dawgFileInfo, err := rdl.fs.Stat(dawgFile)
-        if err != nil </span><span class="cov2" title="4">{
+        if err != nil </span><span class="cov1" title="1">{
                 return nil, time.Time{}, err
         }</span>
 
-        <span class="cov5" title="224">if dawgFileInfo.Size() == 0 </span><span class="cov1" title="3">{
+        <span class="cov5" title="228">if dawgFileInfo.Size() == 0 </span><span class="cov1" title="1">{
                 return nil, time.Time{}, errEmptyDawgFile
         }</span>
 
-        <span class="cov5" title="221">dawgFinder, err := dawg.Load(dawgFile)
+        <span class="cov5" title="227">dawgFinder, err := dawg.Load(dawgFile)
         if err != nil </span><span class="cov0" title="0">{
                 return nil, time.Time{}, err
         }</span>
 
-        <span class="cov5" title="220">return dawgFinder, dawgFileInfo.ModTime(), nil</span>
+        <span class="cov5" title="225">return dawgFinder, dawgFileInfo.ModTime(), nil</span>
 }
 </pre>
 		
-		<pre class="file" id="file10" style="display: none">package runner
+		<pre class="file" id="file11" style="display: none">package runner
 
 import (
         "context"
@@ -2018,7 +2100,7 @@ timerLoop:
 }
 </pre>
 		
-		<pre class="file" id="file11" style="display: none">package runner
+		<pre class="file" id="file12" style="display: none">package runner
 
 import (
         "context"
@@ -2317,7 +2399,7 @@ type noOpDnstapLogger struct{}
 func (noOpDnstapLogger) Printf(string, ...interface{}) {<span class="cov1" title="1">}</span>
 </pre>
 		
-		<pre class="file" id="file12" style="display: none">package runner
+		<pre class="file" id="file13" style="display: none">package runner
 
 import (
         "context"
@@ -2688,7 +2770,7 @@ func (edm *DnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMat
 }
 </pre>
 		
-		<pre class="file" id="file13" style="display: none">package runner
+		<pre class="file" id="file14" style="display: none">package runner
 
 import (
         "context"
@@ -2743,7 +2825,7 @@ func (edm *DnstapMinimiser) newMetricsServer(ctx context.Context, addr string, e
 }
 </pre>
 		
-		<pre class="file" id="file14" style="display: none">package runner
+		<pre class="file" id="file15" style="display: none">package runner
 
 import (
         "bufio"
@@ -2759,17 +2841,17 @@ import (
         "go4.org/netipx"
 )
 
-func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" title="228">{
+func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" title="234">{
         conf := edm.getConfig()
 
-        if conf.IgnoredQuestionNamesFile == "" </span><span class="cov3" title="15">{
+        if conf.IgnoredQuestionNamesFile == "" </span><span class="cov3" title="21">{
                 edm.ignoredQuestions.Store(nil)
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list unset", "filename", conf.IgnoredQuestionNamesFile, "num_names", 0)
                 return nil
         }</span>
 
-        <span class="cov6" title="213">dawgFinder, _, err := edm.deps.DawgLoader.LoadDawgFile(conf.IgnoredQuestionNamesFile)
-        if err != nil </span><span class="cov2" title="3">{
+        <span class="cov5" title="213">dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
+        if err != nil </span><span class="cov1" title="3">{
                 if errors.Is(err, errEmptyDawgFile) </span><span class="cov1" title="1">{
                         // Treat the same as unset filename
                         edm.ignoredQuestions.Store(nil)
@@ -2784,85 +2866,85 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" t
         // as that would race with hot-path readers still holding it. Reloads
         // leave the old finder for the GC to reclaim once no reader references
         // it (see the ignoredQuestions field comment on DnstapMinimiser).
-        <span class="cov6" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
                 edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
-        }</span> else<span class="cov5" title="68"> {
+        }</span> else<span class="cov4" title="68"> {
                 edm.ignoredQuestions.Store(nil)
         }</span>
 
-        <span class="cov6" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
-        }</span> else<span class="cov5" title="68"> {
+        }</span> else<span class="cov4" title="68"> {
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
         }</span>
 
-        <span class="cov6" title="210">return nil</span>
+        <span class="cov5" title="210">return nil</span>
 }
 
-func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title="229">{
+func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title="235">{
         conf := edm.getConfig()
 
-        if conf.IgnoredClientIPsFile == "" </span><span class="cov3" title="15">{
+        if conf.IgnoredClientIPsFile == "" </span><span class="cov3" title="20">{
                 edm.ignoredClientsIPSet.Store(nil)
                 edm.ignoredClientCIDRsParsed.Store(0)
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list unset", "filename", conf.IgnoredClientIPsFile, "num_cidrs", 0)
                 return nil
         }</span>
 
-        <span class="cov6" title="214">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
-        if err != nil </span><span class="cov1" title="2">{
+        <span class="cov5" title="215">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
+        if err != nil </span><span class="cov1" title="3">{
                 return fmt.Errorf("setIgnoredClientsIPs: unable to open file: %w", err)
         }</span>
-        <span class="cov6" title="212">defer func() </span><span class="cov6" title="212">{
+        <span class="cov5" title="212">defer func() </span><span class="cov5" title="212">{
                 err := fh.Close()
                 if err != nil </span><span class="cov0" title="0">{
                         edm.log.Error("setIgnoredClientIPs: failed closing fh", "filename", conf.IgnoredClientIPsFile, "error", err)
                 }</span>
         }()
 
-        <span class="cov6" title="212">var b netipx.IPSetBuilder
+        <span class="cov5" title="212">var b netipx.IPSetBuilder
 
         var numCIDRs uint64
         scanner := bufio.NewScanner(fh)
-        for scanner.Scan() </span><span class="cov7" title="853">{
+        for scanner.Scan() </span><span class="cov6" title="853">{
                 if scanner.Text() == "" || strings.HasPrefix(scanner.Text(), "#") </span><span class="cov2" title="4">{
                         // Skip empty lines and comments
                         continue</span>
                 }
-                <span class="cov7" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
+                <span class="cov6" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
                 if err != nil </span><span class="cov1" title="1">{
                         return fmt.Errorf("setIgnoredClientIPs: unable to parse ignored prefix '%s'", scanner.Text())
                 }</span>
-                <span class="cov7" title="848">b.AddPrefix(prefix)
+                <span class="cov6" title="848">b.AddPrefix(prefix)
                 numCIDRs++</span>
         }
-        <span class="cov6" title="211">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
+        <span class="cov5" title="211">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("setIgnoredClientIPs: error reading from '%s': %w", conf.IgnoredClientIPsFile, err)
         }</span>
 
         // Starts out as nil. We only set it to an initialized IPSet if there is at
         // least one ignored client CIDR present in the input file.
-        <span class="cov6" title="211">var ipset *netipx.IPSet
-        if numCIDRs &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="211">var ipset *netipx.IPSet
+        if numCIDRs &gt; 0 </span><span class="cov4" title="142">{
                 ipset, err = b.IPSet()
                 if err != nil </span><span class="cov0" title="0">{
                         return fmt.Errorf("setIgnoredClientIPs: IPSet creation failed: %w", err)
                 }</span>
         }
 
-        <span class="cov6" title="211">edm.ignoredClientsIPSet.Store(ipset)
+        <span class="cov5" title="211">edm.ignoredClientsIPSet.Store(ipset)
         edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
-        if ipset != nil </span><span class="cov5" title="142">{
+        if ipset != nil </span><span class="cov4" title="142">{
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
-        }</span> else<span class="cov5" title="69"> {
+        }</span> else<span class="cov4" title="69"> {
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
         }</span>
 
-        <span class="cov6" title="211">return nil</span>
+        <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="11833">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov8" title="10866">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -2873,15 +2955,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov10" title="11876">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov8" title="10909">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov9" title="5820">{
+        if ipset == nil </span><span class="cov7" title="5727">{
                 return false
         }</span>
-        <span class="cov9" title="6056">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov7" title="5182">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -2891,34 +2973,34 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov9" title="6052">if ipset.Contains(clientIP) </span><span class="cov8" title="3130">{
+        <span class="cov7" title="5178">if ipset.Contains(clientIP) </span><span class="cov7" title="2693">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov8" title="2922">return false</span>
+        <span class="cov7" title="2485">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov9" title="6129">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="103406">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov9" title="4390">{
+        if holder == nil </span><span class="cov9" title="47326">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="1739">for _, question := range msg.Question </span><span class="cov8" title="1741">{
+        <span class="cov9" title="56080">for _, question := range msg.Question </span><span class="cov9" title="56082">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov6" title="517">{
+                if dawgIndex != dawgNotFound </span><span class="cov8" title="17071">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov7" title="1222">return false</span>
+        <span class="cov9" title="39009">return false</span>
 }
 </pre>
 		
-		<pre class="file" id="file15" style="display: none">package runner
+		<pre class="file" id="file16" style="display: none">package runner
 
 import (
         "context"
@@ -3177,7 +3259,7 @@ func (edm *DnstapMinimiser) dnstapTimestamp(sec *uint64, nsec *uint32, fieldName
 }
 </pre>
 		
-		<pre class="file" id="file16" style="display: none">package runner
+		<pre class="file" id="file17" style="display: none">package runner
 
 import (
         "context"
@@ -3520,7 +3602,7 @@ func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context, wg *sync.Wait
 }
 </pre>
 		
-		<pre class="file" id="file17" style="display: none">package runner
+		<pre class="file" id="file18" style="display: none">package runner
 
 import (
         "errors"
@@ -3702,7 +3784,7 @@ func timestampToFileString(ts time.Time) string <span class="cov8" title="11">{
 }</span>
 </pre>
 		
-		<pre class="file" id="file18" style="display: none">package runner
+		<pre class="file" id="file19" style="display: none">package runner
 
 import (
         "context"
@@ -3754,7 +3836,7 @@ func (edm *DnstapMinimiser) manualParquetRotationHandler(ctx context.Context, w 
 }
 </pre>
 		
-		<pre class="file" id="file19" style="display: none">package runner
+		<pre class="file" id="file20" style="display: none">package runner
 
 import (
         "strings"
@@ -3806,371 +3888,163 @@ func (edm *DnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[stri
 }
 </pre>
 		
-		<pre class="file" id="file20" style="display: none">package runner
+		<pre class="file" id="file21" style="display: none">package runner
 
 import (
         "context"
         "errors"
-        "fmt"
-        "math"
-        "path/filepath"
+        "os"
         "reflect"
-        "sync"
-        "time"
-
-        "github.com/fsnotify/fsnotify"
 )
 
-func configUpdater(ctx context.Context, viperNotifyCh chan fsnotify.Event, edm *DnstapMinimiser) <span class="cov6" title="19">{
+// configUpdater reloads the runner configuration each time a value is
+// received on reloadCh, which [DnstapMinimiser.Run] wires to SIGHUP.
+//
+// The goroutine exits when ctx is cancelled or reloadCh is closed. Reload
+// errors are logged and leave the previous state in place, so a SIGHUP with
+// a broken config file or auxiliary file never tears down a running service.
+func configUpdater(ctx context.Context, reloadCh &lt;-chan os.Signal, edm *DnstapMinimiser) <span class="cov6" title="22">{
         // Since not all config changes are dynamically picked up and requires
         // a restart, keep a reference to what we started with.
         startConf := edm.getConfig()
 
-        // The notifications from viper are based on
-        // https://github.com/fsnotify/fsnotify which means we can receive
-        // multiple events for the same file when someone modifies it. E.g. an
-        // editor like vim writing to the file can result in three events
-        // (CREATE, WRITE, WRITE) because of how the editor juggles the file
-        // during a write.
-        //
-        // To not let this translate to us updating settings three times when
-        // one is enough we wait a short duration for more events to occur
-        // before telling things to update.
-        //
-        // The code below is inspired by the example at:
-        // https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
-
-        applyUpdate := func(eventName string) </span><span class="cov3" title="4">{
-                edm.log.Info("configUpdater: config file was modified", "filename", eventName)
-
-                oldConf := edm.getConfig()
-
-                err := edm.updateConfig()
-                if err != nil </span><span class="cov0" title="0">{
-                        edm.log.Error("configUpdater: unable to update edm config", "error", err)
-                        return
-                }</span>
-
-                <span class="cov3" title="4">conf := edm.getConfig()
-
-                // Log a warning if we detect a changed config key that
-                // does not have the 'reload:"true"' struct tag. If you
-                // implement new functionality below to handle dynamically
-                // reloading a new config key remember to also add the "reload"
-                // struct tag to it.
-                vOld := reflect.ValueOf(oldConf)
-                vNew := reflect.ValueOf(conf)
-                typ := vOld.Type()
-
-                for i := 0; i &lt; typ.NumField(); i++ </span><span class="cov10" title="160">{
-                        field := typ.Field(i)
-
-                        oldVal := vOld.Field(i).Interface()
-                        newVal := vNew.Field(i).Interface()
-
-                        if !reflect.DeepEqual(oldVal, newVal) </span><span class="cov3" title="5">{
-                                if field.Tag.Get("reload") != "true" </span><span class="cov1" title="1">{
-                                        edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("mapstructure"))
-                                }</span>
-                        }
-                }
-
-                <span class="cov3" title="4">if oldConf.CryptopanKey != conf.CryptopanKey ||
-                        oldConf.CryptopanKeySalt != conf.CryptopanKeySalt </span><span class="cov1" title="1">{
-                        edm.log.Info("configUpdater: updating Crypto-PAn instance")
-                        err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
-                        if err != nil </span><span class="cov0" title="0">{
-                                edm.log.Error("configUpdater: unable to update Crypto-PAn instance", "error", err)
-                        }</span>
-                }
-
-                <span class="cov3" title="4">if oldConf.IgnoredClientIPsFile != conf.IgnoredClientIPsFile </span><span class="cov0" title="0">{
-                        err := edm.setIgnoredClientIPs()
-                        if err != nil </span><span class="cov0" title="0">{
-                                edm.log.Error("configUpdater: unable to run edm.setIgnoredClientIPs", "error", err)
-                        }</span>
-                }
-
-                <span class="cov3" title="4">if oldConf.IgnoredQuestionNamesFile != conf.IgnoredQuestionNamesFile </span><span class="cov0" title="0">{
-                        err := edm.setIgnoredQuestionNames()
-                        if err != nil </span><span class="cov0" title="0">{
-                                edm.log.Error("configUpdater: unable to run edm.setIgnoredQuestionNames", "error", err)
-                        }</span>
-                }
-
-                <span class="cov3" title="4">if !conf.DisableHistogramSender </span><span class="cov2" title="3">{
-                        if oldConf.HTTPClientCertFile != conf.HTTPClientCertFile ||
-                                oldConf.HTTPClientKeyFile != conf.HTTPClientKeyFile </span><span class="cov1" title="1">{
-                                err := edm.loadHTTPClientCert()
-                                if err != nil </span><span class="cov1" title="1">{
-                                        edm.log.Error("configUpdater: unable to run edm.loadHTTPClientCert", "error", err)
-                                }</span>
-                        }
-
-                        // If the histogram sender was not enabled at startup
-                        // we also need to initialize it.
-                        <span class="cov2" title="3">edm.aggregSenderMutex.RLock()
-                        isUninitialized := edm.aggregSender == nil
-                        edm.aggregSenderMutex.RUnlock()
-                        if isUninitialized </span><span class="cov2" title="3">{
-                                // Also make sure a client certificate is loaded
-                                _, err := edm.httpClientCertStore.getClientCertificate(nil)
-                                if err != nil </span><span class="cov2" title="3">{
-                                        if errors.Is(err, errNoClientCertificate) </span><span class="cov2" title="3">{
-                                                err := edm.loadHTTPClientCert()
-                                                if err != nil </span><span class="cov2" title="3">{
-                                                        edm.log.Error("configUpdater: unable to init certs when setting up histogram sender", "error", err)
-                                                }</span>
-                                        } else<span class="cov0" title="0"> {
-                                                edm.log.Error("configUpdater: unable to call getClientCertificate", "error", err)
-                                        }</span>
-                                }
-                                <span class="cov2" title="3">err = edm.setupHistogramSender()
-                                if err != nil </span><span class="cov2" title="3">{
-                                        edm.log.Error("configUpdater: unable to setup histogram sender", "error", err)
-                                }</span>
-                        }
-                }
-
-                <span class="cov3" title="4">if !conf.DisableMQTT </span><span class="cov3" title="4">{
-                        if !startConf.DisableMQTT </span><span class="cov3" title="4">{
-                                if oldConf.MQTTClientCertFile != conf.MQTTClientCertFile ||
-                                        oldConf.MQTTClientKeyFile != conf.MQTTClientKeyFile </span><span class="cov1" title="1">{
-                                        err := edm.loadMQTTClientCert()
-                                        if err != nil </span><span class="cov1" title="1">{
-                                                edm.log.Error("configUpdater: unable to run edm.loadMQTTClientCert", "error", err)
-                                        }</span>
-                                }
-                        }
-                }
-
-                <span class="cov3" title="4">err = edm.configureFSWatchers(startConf)
-                if err != nil </span><span class="cov0" title="0">{
-                        edm.log.Error("unable to update fs watchers", "error", err)
-                }</span>
-
-                <span class="cov3" title="4">if oldConf != conf </span><span class="cov3" title="4">{
-                        edm.reloadMinimiserMutex.RLock()
-                        for minimiserID := range edm.reloadMinimiserConfigCh </span><span class="cov3" title="4">{
-                                select </span>{
-                                case edm.reloadMinimiserConfigCh[minimiserID] &lt;- struct{}{}:<span class="cov3" title="4"></span>
-                                default:<span class="cov0" title="0"></span> // notify already queued
-                                }
-                        }
-                        <span class="cov3" title="4">edm.reloadMinimiserMutex.RUnlock()
-
-                        select </span>{
-                        case edm.reloadHistogramSenderConfigCh &lt;- struct{}{}:<span class="cov3" title="4"></span>
-                        default:<span class="cov0" title="0"></span> // notify already queued
-                        }
-                }
-        }
-
-        <span class="cov6" title="19">var debounce &lt;-chan time.Time
-        var eventName string
-        for </span><span class="cov6" title="27">{
+        for </span><span class="cov6" title="29">{
                 select </span>{
-                case ev, ok := &lt;-viperNotifyCh:<span class="cov4" title="9">
-                        if !ok </span><span class="cov3" title="5">{
+                case _, ok := &lt;-reloadCh:<span class="cov5" title="14">
+                        if !ok </span><span class="cov4" title="7">{
                                 return
                         }</span>
-                        // If an event has been received this means we now want to
-                        // wait "soon" before updating, but if more events occur we
-                        // replace the pending debounce channel. This allows us to wait
-                        // until events on the file settle down before actually calling
-                        // the update function.
-                        <span class="cov3" title="4">eventName = ev.Name
-                        debounce = edm.deps.Clock.After(edm.deps.ConfigUpdateDebounce)</span>
-                case &lt;-debounce:<span class="cov3" title="4">
-                        name := eventName
-                        debounce = nil
-                        applyUpdate(name)</span>
-                case &lt;-ctx.Done():<span class="cov5" title="14">
+                        <span class="cov4" title="7">edm.applyUpdate(startConf)</span>
+                case &lt;-ctx.Done():<span class="cov5" title="15">
                         return</span>
                 }
         }
 }
 
-func (edm *DnstapMinimiser) fsEventWatcher(wg *sync.WaitGroup) <span class="cov4" title="9">{
-        defer wg.Done()
-        // Like in
-        // https://github.com/fsnotify/fsnotify/blob/main/cmd/fsnotify/dedup.go
-        // we keep a timer per registered filename
-        timers := map[string]timer{}
-        timersMutex := new(sync.Mutex)
-        defer func() </span><span class="cov4" title="9">{
-                timersMutex.Lock()
-                defer timersMutex.Unlock()
-                for _, t := range timers </span><span class="cov1" title="1">{
-                        t.Stop()
-                }</span>
-        }()
+// applyUpdate re-reads the configuration and re-applies every reloadable
+// piece of state derived from it or from files it points at.
+//
+// The file-backed loaders (ignore lists and client certificates) are re-run
+// unconditionally: a reload request typically means file contents changed,
+// which is invisible in the Config value itself. Each loader validates its
+// input and atomically swaps the active state, so a failing loader logs an
+// error and keeps the previous state.
+func (edm *DnstapMinimiser) applyUpdate(startConf Config) <span class="cov4" title="7">{
+        edm.log.Info("configUpdater: reload requested, updating config")
 
-        <span class="cov4" title="9">callbackHandler := func(callbacks []func() error, name string) func() </span><span class="cov2" title="2">{
-                return func() </span><span class="cov1" title="1">{
-                        for _, callback := range callbacks </span><span class="cov1" title="1">{
-                                err := callback()
-                                if err != nil </span><span class="cov1" title="1">{
-                                        edm.log.Error("fsEventWatcher: callback error", "filename", name, "error", err)
-                                }</span>
-                        }
+        oldConf := edm.getConfig()
 
-                        // Cleanup expired timer
-                        <span class="cov1" title="1">timersMutex.Lock()
-                        delete(timers, name)
-                        timersMutex.Unlock()</span>
+        err := edm.updateConfig()
+        if err != nil </span><span class="cov1" title="1">{
+                edm.log.Error("configUpdater: unable to update edm config", "error", err)
+                return
+        }</span>
+
+        <span class="cov3" title="6">conf := edm.getConfig()
+
+        // Log a warning if we detect a changed config key that
+        // does not have the 'reload:"true"' struct tag. If you
+        // implement new functionality below to handle dynamically
+        // reloading a new config key remember to also add the "reload"
+        // struct tag to it.
+        vOld := reflect.ValueOf(oldConf)
+        vNew := reflect.ValueOf(conf)
+        typ := vOld.Type()
+
+        for i := 0; i &lt; typ.NumField(); i++ </span><span class="cov10" title="240">{
+                field := typ.Field(i)
+
+                oldVal := vOld.Field(i).Interface()
+                newVal := vNew.Field(i).Interface()
+
+                if !reflect.DeepEqual(oldVal, newVal) </span><span class="cov3" title="6">{
+                        if field.Tag.Get("reload") != "true" </span><span class="cov1" title="1">{
+                                edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("mapstructure"))
+                        }</span>
                 }
         }
 
-        <span class="cov4" title="9">for </span><span class="cov5" title="11">{
+        <span class="cov3" title="6">if oldConf.CryptopanKey != conf.CryptopanKey ||
+                oldConf.CryptopanKeySalt != conf.CryptopanKeySalt </span><span class="cov2" title="2">{
+                edm.log.Info("configUpdater: updating Crypto-PAn instance")
+                err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+                if err != nil </span><span class="cov0" title="0">{
+                        edm.log.Error("configUpdater: unable to update Crypto-PAn instance", "error", err)
+                }</span>
+        }
+
+        // The well-known-domains DAWG swap must coincide with a histogram
+        // rotation (the histogram map is keyed by DAWG index), so only flag
+        // the request here; the data collector applies it at the next
+        // rotation, within a minute.
+        <span class="cov3" title="6">edm.dawgReloadRequested.Store(true)
+
+        if err := edm.setIgnoredClientIPs(); err != nil </span><span class="cov1" title="1">{
+                edm.log.Error("configUpdater: unable to run edm.setIgnoredClientIPs", "error", err)
+        }</span>
+
+        <span class="cov3" title="6">if err := edm.setIgnoredQuestionNames(); err != nil </span><span class="cov0" title="0">{
+                edm.log.Error("configUpdater: unable to run edm.setIgnoredQuestionNames", "error", err)
+        }</span>
+
+        <span class="cov3" title="6">if !conf.DisableHistogramSender </span><span class="cov3" title="4">{
+                if err := edm.loadHTTPClientCert(); err != nil </span><span class="cov3" title="4">{
+                        edm.log.Error("configUpdater: unable to run edm.loadHTTPClientCert", "error", err)
+                }</span>
+
+                // If the histogram sender was not enabled at startup
+                // we also need to initialize it.
+                <span class="cov3" title="4">edm.aggregSenderMutex.RLock()
+                isUninitialized := edm.aggregSender == nil
+                edm.aggregSenderMutex.RUnlock()
+                if isUninitialized </span><span class="cov3" title="4">{
+                        // Also make sure a client certificate is loaded
+                        _, err := edm.httpClientCertStore.getClientCertificate(nil)
+                        if err != nil </span><span class="cov3" title="4">{
+                                if errors.Is(err, errNoClientCertificate) </span><span class="cov3" title="4">{
+                                        err := edm.loadHTTPClientCert()
+                                        if err != nil </span><span class="cov3" title="4">{
+                                                edm.log.Error("configUpdater: unable to init certs when setting up histogram sender", "error", err)
+                                        }</span>
+                                } else<span class="cov0" title="0"> {
+                                        edm.log.Error("configUpdater: unable to call getClientCertificate", "error", err)
+                                }</span>
+                        }
+                        <span class="cov3" title="4">err = edm.setupHistogramSender()
+                        if err != nil </span><span class="cov3" title="4">{
+                                edm.log.Error("configUpdater: unable to setup histogram sender", "error", err)
+                        }</span>
+                }
+        }
+
+        <span class="cov3" title="6">if !conf.DisableMQTT </span><span class="cov3" title="6">{
+                // MQTT can only be enabled/disabled at startup.
+                if !startConf.DisableMQTT </span><span class="cov3" title="6">{
+                        if err := edm.loadMQTTClientCert(); err != nil </span><span class="cov3" title="6">{
+                                edm.log.Error("configUpdater: unable to run edm.loadMQTTClientCert", "error", err)
+                        }</span>
+                }
+        }
+
+        <span class="cov3" title="6">if oldConf != conf </span><span class="cov3" title="4">{
+                edm.reloadMinimiserMutex.RLock()
+                for minimiserID := range edm.reloadMinimiserConfigCh </span><span class="cov3" title="4">{
+                        select </span>{
+                        case edm.reloadMinimiserConfigCh[minimiserID] &lt;- struct{}{}:<span class="cov3" title="4"></span>
+                        default:<span class="cov0" title="0"></span> // notify already queued
+                        }
+                }
+                <span class="cov3" title="4">edm.reloadMinimiserMutex.RUnlock()
+
                 select </span>{
-                case event, ok := &lt;-edm.fsWatcher.Events():<span class="cov3" title="4">
-                        if !ok </span><span class="cov2" title="2">{
-                                // watcher is closed
-                                return
-                        }</span>
-
-                        <span class="cov2" title="2">if !event.Has(fsnotify.Write) &amp;&amp; !event.Has(fsnotify.Create) </span><span class="cov0" title="0">{
-                                continue</span>
-                        }
-
-                        <span class="cov2" title="2">cleanName := filepath.Clean(event.Name)
-
-                        edm.fsWatcherMutex.RLock()
-                        callbacks, ok := edm.fsWatcherFuncs[cleanName]
-                        edm.fsWatcherMutex.RUnlock()
-                        if !ok </span><span class="cov0" title="0">{
-                                if edm.debug </span><span class="cov0" title="0">{
-                                        edm.log.Info("skipping event for unregistered file", "op", event.Op.String(), "filename", cleanName)
-                                }</span>
-                                <span class="cov0" title="0">continue</span>
-                        }
-
-                        <span class="cov2" title="2">timersMutex.Lock()
-                        t, ok := timers[cleanName]
-                        timersMutex.Unlock()
-                        if !ok </span><span class="cov2" title="2">{
-                                t = edm.deps.Clock.AfterFunc(math.MaxInt64, callbackHandler(callbacks, cleanName))
-                                t.Stop()
-
-                                timersMutex.Lock()
-                                timers[cleanName] = t
-                                timersMutex.Unlock()
-                        }</span>
-
-                        <span class="cov2" title="2">t.Reset(edm.deps.FSEventDebounce)</span>
-                case err, ok := &lt;-edm.fsWatcher.Errors():<span class="cov4" title="7">
-                        if !ok </span><span class="cov4" title="7">{
-                                // watcher is closed
-                                return
-                        }</span>
-                        <span class="cov0" title="0">edm.log.Error("fsEventWatcher: error received", "error", err)</span>
+                case edm.reloadHistogramSenderConfigCh &lt;- struct{}{}:<span class="cov3" title="4"></span>
+                default:<span class="cov0" title="0"></span> // notify already queued
                 }
         }
-}
-
-func (edm *DnstapMinimiser) configureFSWatchers(startConf Config) error <span class="cov5" title="15">{
-        conf := edm.getConfig()
-
-        // Build fresh file -&gt; []func mapping
-        fileToFuncs := map[string][]func() error{}
-
-        if conf.IgnoredClientIPsFile != "" </span><span class="cov1" title="1">{
-                fname, err := filepath.Abs(conf.IgnoredClientIPsFile)
-                if err != nil </span><span class="cov0" title="0">{
-                        edm.log.Error("unable to create absolute filepath for conf.IgnoredClientsIPsFile", "error", err)
-                }</span> else<span class="cov1" title="1"> {
-                        fileToFuncs[fname] = append(fileToFuncs[fname], edm.setIgnoredClientIPs)
-                }</span>
-        }
-
-        <span class="cov5" title="15">if conf.IgnoredQuestionNamesFile != "" </span><span class="cov1" title="1">{
-                fname, err := filepath.Abs(conf.IgnoredQuestionNamesFile)
-                if err != nil </span><span class="cov0" title="0">{
-                        edm.log.Error("unable to create absolute filepath for conf.IgnoredQuestionNamesFile", "error", err)
-                }</span> else<span class="cov1" title="1"> {
-                        fileToFuncs[fname] = append(fileToFuncs[fname], edm.setIgnoredQuestionNames)
-                }</span>
-        }
-
-        <span class="cov5" title="15">if !conf.DisableHistogramSender </span><span class="cov3" title="5">{
-                if conf.HTTPClientCertFile != "" </span><span class="cov3" title="4">{
-                        fname, err := filepath.Abs(conf.HTTPClientCertFile)
-                        if err != nil </span><span class="cov0" title="0">{
-                                edm.log.Error("unable to create absolute filepath for conf.HTTPClientCertFile", "error", err)
-                        }</span> else<span class="cov3" title="4"> {
-                                fileToFuncs[fname] = append(fileToFuncs[fname], edm.loadHTTPClientCert)
-                        }</span>
-                }
-        }
-
-        // MQTT can only be enabled/disabled at startup
-        <span class="cov5" title="15">if !startConf.DisableMQTT </span><span class="cov4" title="7">{
-                if conf.MQTTClientCertFile != "" </span><span class="cov4" title="6">{
-                        fname, err := filepath.Abs(conf.MQTTClientCertFile)
-                        if err != nil </span><span class="cov0" title="0">{
-                                edm.log.Error("unable to create absolute filepath for conf.MQTTClientCertFile", "error", err)
-                        }</span> else<span class="cov4" title="6"> {
-                                fileToFuncs[fname] = append(fileToFuncs[fname], edm.loadMQTTClientCert)
-                        }</span>
-                }
-        }
-
-        <span class="cov5" title="15">edm.fsWatcherMutex.Lock()
-        edm.fsWatcherFuncs = fileToFuncs
-        edm.fsWatcherMutex.Unlock()
-
-        err := edm.addFSWatchers(fileToFuncs)
-        if err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("configureFSWatchers: addFSWatchers failed: %w", err)
-        }</span>
-
-        <span class="cov5" title="15">err = edm.cleanupFSWatchers()
-        if err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("configureFSWatchers: cleanupFSWatchers failed: %w", err)
-        }</span>
-
-        <span class="cov5" title="15">return nil</span>
-}
-
-func (edm *DnstapMinimiser) addFSWatchers(fileToFuncs map[string][]func() error) error <span class="cov5" title="16">{
-        // Adding the same dir multiple times is a no-op, so it is OK to
-        // add multiple files from the same directory.
-        for filename := range fileToFuncs </span><span class="cov5" title="13">{
-                err := edm.fsWatcher.Add(filepath.Dir(filename))
-                if err != nil </span><span class="cov1" title="1">{
-                        return fmt.Errorf("addFSWatchers: unable to add directory '%s': %w", filepath.Dir(filename), err)
-                }</span>
-        }
-
-        <span class="cov5" title="15">return nil</span>
-}
-
-func (edm *DnstapMinimiser) cleanupFSWatchers() error <span class="cov5" title="16">{
-        edm.fsWatcherMutex.RLock()
-        defer edm.fsWatcherMutex.RUnlock()
-        for _, watchPath := range edm.fsWatcher.WatchList() </span><span class="cov3" title="4">{
-                watchPathInUse := false
-                for fsWatcherFuncFilename := range edm.fsWatcherFuncs </span><span class="cov3" title="5">{
-                        if filepath.Dir(fsWatcherFuncFilename) == watchPath </span><span class="cov3" title="5">{
-                                watchPathInUse = true
-                        }</span>
-                }
-
-                <span class="cov3" title="4">if !watchPathInUse </span><span class="cov2" title="2">{
-                        edm.log.Info("cleanupFSWatchers: cleaning up path watcher", "watch_path", watchPath)
-                        err := edm.fsWatcher.Remove(watchPath)
-                        if err != nil </span><span class="cov1" title="1">{
-                                return fmt.Errorf("cleanupFSWatchers: unable to remove path watcher '%s': %w", watchPath, err)
-                        }</span>
-                }
-        }
-
-        <span class="cov5" title="15">return nil</span>
 }
 </pre>
 		
-		<pre class="file" id="file21" style="display: none">package runner
+		<pre class="file" id="file22" style="display: none">package runner
 
 import (
         "context"
@@ -4181,19 +4055,19 @@ import (
         "net/http"
         "net/netip"
         "os"
+        "os/signal"
         "path/filepath"
         "runtime"
         "sync"
         "sync/atomic"
+        "syscall"
         "time"
 
         "github.com/dnstapir/edm/pkg/protocols"
-        "github.com/fsnotify/fsnotify"
         lru "github.com/hashicorp/golang-lru/v2"
         "github.com/prometheus/client_golang/prometheus"
         "github.com/prometheus/client_golang/prometheus/collectors"
         "github.com/prometheus/client_golang/prometheus/promauto"
-        "github.com/spf13/viper"
         "github.com/yawning/cryptopan"
         "go4.org/netipx"
 )
@@ -4250,8 +4124,8 @@ func WithLoggerLevel(loggerLevel *slog.LevelVar) DnstapMinimiserOption <span cla
 // withDependencies replaces external runner functionality.
 //
 // Nil fields in deps are filled with production implementations.
-func withDependencies(deps dependencies) DnstapMinimiserOption <span class="cov7" title="129">{
-        return func(options *dnstapMinimiserOptions) </span><span class="cov7" title="129">{
+func withDependencies(deps dependencies) DnstapMinimiserOption <span class="cov7" title="135">{
+        return func(options *dnstapMinimiserOptions) </span><span class="cov7" title="135">{
                 options.deps = deps
         }</span>
 }
@@ -4278,13 +4152,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
         defer func() </span><span class="cov4" title="15">{
                 stop()
                 configUpdaterWg.Wait()
-                edm.closeFSWatcher("Run: deferred fsWatcher.Close error")
                 edm.state.Store(runStateDone)
         }</span>()
 
         // Shutdown ordering is load-bearing:
         // minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
-        // (if MQTT) mqttCancel → configUpdater exits → fsWatcher close →
+        // (if MQTT) mqttCancel → configUpdater exits →
         // wg.Wait → (if MQTT) autopahoWg.Wait.
 
         // Create startConf for some initial setup. Other edm methods that need
@@ -4307,6 +4180,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 }</span>
         }
 
+        // Clear any DAWG copies orphaned by a previous process before the first
+        // staged load below reads from the staging directory.
+        <span class="cov4" title="15">if err := edm.prepareDawgStaging(); err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("unable to prepare DAWG staging directory: %w", err)
+        }</span>
+
         <span class="cov4" title="15">if err := edm.setIgnoredClientIPs(); err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("unable to configure ignored client IPs: %w", err)
         }</span>
@@ -4315,20 +4194,18 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 return fmt.Errorf("unable to configure ignored question names: %w", err)
         }</span>
 
-        <span class="cov4" title="13">viperNotifyCh := make(chan fsnotify.Event, 1)
+        // Configuration is reloaded on SIGHUP (systemctl reload). The channel
+        // buffer of 1 combined with signal.Notify's non-blocking send coalesces
+        // signals arriving while a reload is already in progress.
+        <span class="cov4" title="13">hupCh := make(chan os.Signal, 1)
+        signal.Notify(hupCh, syscall.SIGHUP)
+        defer signal.Stop(hupCh)
 
         configUpdaterWg.Add(1)
         go func() </span><span class="cov4" title="13">{
                 defer configUpdaterWg.Done()
-                configUpdater(ctx, viperNotifyCh, edm)
+                configUpdater(ctx, hupCh, edm)
         }</span>()
-
-        <span class="cov4" title="13">viper.OnConfigChange(func(e fsnotify.Event) </span><span class="cov0" title="0">{
-                select </span>{
-                case viperNotifyCh &lt;- e:<span class="cov0" title="0"></span>
-                default:<span class="cov0" title="0"></span>
-                }
-        })
 
         <span class="cov4" title="13">pdbDir := filepath.Join(startConf.DataDir, "pebble")
         seenStore, err := edm.deps.SeenQnameStoreFactory.OpenSeenQnameStore(pdbDir)
@@ -4371,10 +4248,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 }</span>
                 <span class="cov1" title="1">defer mqttCancel()</span>
         }
-
-        <span class="cov3" title="9">if err := edm.configureFSWatchers(startConf); err != nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("unable to configure fsWatchers: %w", err)
-        }</span>
 
         <span class="cov3" title="9">dti, err := edm.setupDnstapInput(edm.log, startConf)
         if err != nil </span><span class="cov1" title="1">{
@@ -4442,15 +4315,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 serverWg.Wait()</span>
         }()
 
-        // Track the fsEventWatcher goroutine so shutdown can wait for it. It
-        // exits once fsWatcher.Close() closes the Events and Errors channels,
-        // which happens before wg.Wait() below.
-        <span class="cov3" title="7">wg.Add(1)
-        go edm.fsEventWatcher(&amp;wg)
-
         // Write histogram file to an outbox dir where it will get picked up by
         // the histogram sender. Upon being sent it will be moved to the sent dir.
-        dataDir := startConf.DataDir
+        <span class="cov3" title="7">dataDir := startConf.DataDir
         outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
         sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
@@ -4474,7 +4341,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
 
         dawgFile := startConf.WellKnownDomainsFile
 
-        dawgFinder, dawgModTime, err := edm.deps.DawgLoader.LoadDawgFile(dawgFile)
+        dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(dawgFile)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("DawgLoader.LoadDawgFile failed: %w", err)
         }</span>
@@ -4581,19 +4448,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 mqttCancel()
         }</span>
 
-        // Wait out any in-flight config update before closing the fsWatcher,
-        // so applyUpdate never reconfigures watches on a closed watcher.
+        // Wait out any in-flight config update so a SIGHUP arriving during
+        // shutdown never reloads state that later teardown steps are releasing.
+        // The deferred signal.Stop detaches hupCh afterwards; signals delivered
+        // past this point are ignored.
         <span class="cov2" title="4">configUpdaterWg.Wait()
-        // viperNotifyCh is deliberately left open: viper's config watcher
-        // started by WatchConfig outlives run and keeps invoking the
-        // OnConfigChange callback, so closing the channel here would let a later
-        // config change panic on a send to a closed channel. The buffered channel
-        // plus the callback's non-blocking send keep that callback from blocking
-        // once configUpdater has stopped.
-
-        // Close fsWatcher to signal fsEventWatcher to exit. Must happen before
-        // wg.Wait() below, which the fsEventWatcher goroutine is tracked in.
-        edm.closeFSWatcher("Run: fsWatcher.Close error")
 
         // Wait for all workers to exit. The HTTP servers are shut down by the
         // deferred cleanup registered when they were started.
@@ -4612,18 +4471,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error <span class="cov4" ti
                 return fmt.Errorf("dnstap input failed: %w", dnstapInputErr)
         }</span>
         <span class="cov2" title="3">return nil</span>
-}
-
-// closeFSWatcher closes the fsnotify watcher, tolerating a nil and an
-// already-closed watcher so it is safe to call from both Run's shutdown path
-// and its deferred cleanup. Any other close error is logged with logMsg.
-func (edm *DnstapMinimiser) closeFSWatcher(logMsg string) <span class="cov4" title="19">{
-        if edm.fsWatcher == nil </span><span class="cov0" title="0">{
-                return
-        }</span>
-        <span class="cov4" title="19">if err := edm.fsWatcher.Close(); err != nil &amp;&amp; !errors.Is(err, fsnotify.ErrClosed) </span><span class="cov0" title="0">{
-                edm.log.Error(logMsg, "error", err)
-        }</span>
 }
 
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.
@@ -4685,11 +4532,9 @@ type DnstapMinimiser struct {
         ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
         ignoredClientCIDRsParsed      atomic.Uint64
         ignoredQuestions              atomic.Pointer[dawgFinderHolder]
-        fsWatcher                     fileWatcher
-        fsWatcherFuncs                map[string][]func() error
-        fsWatcherMutex                sync.RWMutex
-        httpClientCertStore           *certStore // client cert/key for mTLS authentication
-        mqttClientCertStore           *certStore // client cert/key for mTLS authentication
+        dawgReloadRequested           atomic.Bool // set on SIGHUP, consumed by rotateTracker
+        httpClientCertStore           *certStore  // client cert/key for mTLS authentication
+        mqttClientCertStore           *certStore  // client cert/key for mTLS authentication
         reloadMinimiserMutex          sync.RWMutex
         reloadMinimiserConfigCh       []chan struct{}
         reloadHistogramSenderConfigCh chan struct{}
@@ -4700,19 +4545,19 @@ type DnstapMinimiser struct {
 //
 // The returned service is ready to run but has no active run context until
 // [DnstapMinimiser.Run] is called.
-func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...DnstapMinimiserOption) (*DnstapMinimiser, error) <span class="cov7" title="132">{
+func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...DnstapMinimiserOption) (*DnstapMinimiser, error) <span class="cov7" title="138">{
         if provider == nil </span><span class="cov1" title="1">{
                 return nil, ErrNilConfigProvider
         }</span>
-        <span class="cov7" title="131">if logger == nil </span><span class="cov1" title="1">{
+        <span class="cov7" title="137">if logger == nil </span><span class="cov1" title="1">{
                 return nil, ErrNilLogger
         }</span>
 
-        <span class="cov7" title="130">var options dnstapMinimiserOptions
-        for _, opt := range opts </span><span class="cov7" title="131">{
+        <span class="cov7" title="136">var options dnstapMinimiserOptions
+        for _, opt := range opts </span><span class="cov7" title="137">{
                 opt(&amp;options)
         }</span>
-        <span class="cov7" title="130">options.deps = fillDependencies(options.deps)
+        <span class="cov7" title="136">options.deps = fillDependencies(options.deps)
 
         edm := &amp;DnstapMinimiser{
                 configer:    provider,
@@ -4725,7 +4570,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
                 return nil, fmt.Errorf("NewDnstapMinimiser: unable to set config: %w", err)
         }</span>
 
-        <span class="cov7" title="130">conf := edm.getConfig()
+        <span class="cov7" title="136">conf := edm.getConfig()
 
         err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
         if err != nil </span><span class="cov0" title="0">{
@@ -4739,7 +4584,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
         // panic: duplicate metrics collector registration attempted
         // ===
         // Some more info at https://github.com/prometheus/client_golang/issues/716
-        <span class="cov7" title="130">promReg := prometheus.NewRegistry()
+        <span class="cov7" title="136">promReg := prometheus.NewRegistry()
 
         // Mimic default collectors used by the global prometheus instance
         promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -4822,13 +4667,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
         // the histogram sender is currently busy.
         edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-        edm.fsWatcher, err = edm.deps.WatcherFactory.NewWatcher()
-        if err != nil </span><span class="cov0" title="0">{
-                return nil, fmt.Errorf("NewDnstapMinimiser: unable to create fsWatcher: %w", err)
-        }</span>
-
-        <span class="cov7" title="130">edm.fsWatcherFuncs = map[string][]func() error{}
-
         // Prepare client cert/key storage for mTLS authentication
         edm.httpClientCertStore = newCertStore()
         edm.mqttClientCertStore = newCertStore()
@@ -4872,7 +4710,7 @@ func (edm *DnstapMinimiser) monitorChannelLen(ctx context.Context, wg *sync.Wait
 }
 </pre>
 		
-		<pre class="file" id="file22" style="display: none">package runner
+		<pre class="file" id="file23" style="display: none">package runner
 
 import (
         "encoding/binary"
@@ -5237,7 +5075,7 @@ func (edm *DnstapMinimiser) writeSessionParquet(output io.Writer, ps *prevSessio
 }
 </pre>
 		
-		<pre class="file" id="file23" style="display: none">package runner
+		<pre class="file" id="file24" style="display: none">package runner
 
 import "time"
 
@@ -5267,7 +5105,7 @@ func timeUntilNextMinuteFrom(now time.Time) time.Duration <span class="cov10" ti
 }</span>
 </pre>
 		
-		<pre class="file" id="file24" style="display: none">package runner
+		<pre class="file" id="file25" style="display: none">package runner
 
 import (
         "fmt"
@@ -5321,7 +5159,7 @@ type wellKnownDomainsData struct {
         dawgFinder   dawg.Finder
 }
 
-func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov4" title="22">{
+func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov3" title="22">{
         wkd := &amp;wellKnownDomainsTracker{
                 m:           map[int]*histogramData{},
                 updateCh:    make(chan wkdUpdate, 10000),
@@ -5335,26 +5173,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="1764">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="56105">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="1573">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="50254">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="2296">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="72690">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov7" title="341">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="11235">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="1423">return dawgIndex, false</span>
+        <span class="cov9" title="44870">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5371,16 +5209,16 @@ type wkdUpdate struct {
         retryLimit  int
 }
 
-func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov4" title="15">{
+func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov3" title="15">{
         snap := wkd.snap.Load()
         dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
         return dawgIndex, suffixMatch, snap.dawgModTime
 }</span>
 
-func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov3" title="12">{
+func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov2" title="12">{
         defer wg.Done()
 
-        for wu := range wkd.retryCh </span><span class="cov2" title="3">{
+        for wu := range wkd.retryCh </span><span class="cov1" title="3">{
                 wu.retry++
                 if wu.retry &gt;= wu.retryLimit </span><span class="cov1" title="1">{
                         edm.log.Info("ignoring wkd update since retry counter hit retry limit", "retry", wu.retry, "retry_limit", wu.retryLimit)
@@ -5404,11 +5242,11 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync
                 <span class="cov1" title="1">wkd.updateCh &lt;- wu</span>
         }
 
-        <span class="cov3" title="11">edm.log.Info("updateRetryer: exiting loop")
+        <span class="cov2" title="11">edm.log.Info("updateRetryer: exiting loop")
         close(wkd.retryerDone)</span>
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov3" title="10">{
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov2" title="10">{
         wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
@@ -5420,7 +5258,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Create hash from IP address for use in HLL data
         ip, ok := netip.AddrFromSlice(ipBytes)
-        if ok </span><span class="cov3" title="9">{
+        if ok </span><span class="cov2" title="9">{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
                 wu.hllHash = murmur3.Sum64(ipBytes)
@@ -5428,8 +5266,8 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }</span>
 
         // Counters based on header
-        <span class="cov3" title="10">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov3" title="7">
+        <span class="cov2" title="10">switch msg.Rcode </span>{
+        case dns.RcodeSuccess:<span class="cov2" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
@@ -5440,7 +5278,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov3" title="9">{
+        <span class="cov2" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov2" title="9">{
                 switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:<span class="cov2" title="5">
                         wu.ACount++</span>
@@ -5457,34 +5295,36 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 wu.NonINCount++
         }</span>
 
-        <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
+        <span class="cov2" title="10">wkd.updateCh &lt;- wu</span>
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov3" title="6">{
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov2" title="9">{
         dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
 
-        fileInfo, err := edm.deps.FileSystem.Stat(dawgFile)
-        if err != nil </span><span class="cov1" title="2">{
-                return nil, fmt.Errorf("rotateTracker: unable to stat dawgFile '%s': %w", dawgFile, err)
-        }</span>
-
-        <span class="cov2" title="4">curSnap := wkd.snap.Load()
-        if fileInfo.ModTime() != curSnap.dawgModTime </span><span class="cov1" title="2">{
-                dawgFinder, dawgModTime, err = edm.deps.DawgLoader.LoadDawgFile(dawgFile)
-                if err != nil </span><span class="cov1" title="1">{
+        curSnap := wkd.snap.Load()
+        // A SIGHUP-requested DAWG reload is applied here rather than directly
+        // in applyUpdate because the histogram map keyed by DAWG index must be
+        // rotated together with the finder it was built against. The request
+        // flag is consumed even when loading fails, so a broken DAWG file makes
+        // exactly one rotation fail instead of wedging every following one; the
+        // operator fixes the file and sends a new SIGHUP.
+        if edm.dawgReloadRequested.CompareAndSwap(true, false) </span><span class="cov2" title="4">{
+                var err error
+                dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
+                if err != nil </span><span class="cov1" title="3">{
                         return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
                 }</span>
                 <span class="cov1" title="1">dawgFileChanged = true
-                edm.log.Info("dawg file modification changed, will reload file", "prev_time", curSnap.dawgModTime, "cur_time", fileInfo.ModTime())</span>
+                edm.log.Info("dawg file reload requested, swapping in newly loaded file", "prev_time", curSnap.dawgModTime, "cur_time", dawgModTime)</span>
         }
 
         // rotateTracker runs in the dataCollector goroutine, which is also
         // the only writer of wkd.m (see the case wu := &lt;-wkd.updateCh branch).
         // No lock needed for the map swap. The DAWG snapshot is a separate
         // atomic Store so hot-path lookup() callers see a consistent view.
-        <span class="cov2" title="3">prevWKD := &amp;wellKnownDomainsData{
+        <span class="cov2" title="6">prevWKD := &amp;wellKnownDomainsData{
                 m:            wkd.m,
                 dawgFinder:   curSnap.dawgFinder,
                 startTime:    startTime,
@@ -5498,7 +5338,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
                 })
         }</span>
 
-        <span class="cov2" title="3">return prevWKD, nil</span>
+        <span class="cov2" title="6">return prevWKD, nil</span>
 }
 </pre>
 		
