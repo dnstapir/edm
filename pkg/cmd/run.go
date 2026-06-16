@@ -210,9 +210,17 @@ func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provid
 	fs := newRunFlagSet(flagConf)
 	fs.SetOutput(errW)
 
+	// fs.Parse reports parse errors (and usage) on errW itself; the other
+	// failures below do not, so they are reported at the end to avoid a
+	// silent non-zero exit. parseReported tracks the one already-reported
+	// path so it is not printed twice.
+	parseReported := false
 	err = applyEnvOverrides(fs)
 	if err == nil {
-		err = fs.Parse(args)
+		if perr := fs.Parse(args); perr != nil {
+			err = perr
+			parseReported = true
+		}
 	}
 	if err == nil && fs.NArg() > 0 {
 		err = fmt.Errorf("unexpected argument(s): %q", fs.Args())
@@ -235,6 +243,10 @@ func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provid
 			}
 		})
 		provider = runner.NewFileConfigProvider(path, overrides...)
+	}
+
+	if err != nil && !parseReported && !errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(errW, err)
 	}
 	return
 }

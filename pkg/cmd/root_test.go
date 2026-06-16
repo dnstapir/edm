@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -181,26 +182,23 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 		extra string            // appended to the base config file
 		env   map[string]string // set via t.Setenv
 		args  []string
-		check func(t *testing.T, conf interface {
-			GetDebug() bool
-		})
-		// verify receives the resolved config.
-		verify func(t *testing.T, debug bool, wkdFile string, dataDir string, keepalive uint16, httpURL string)
+		// verify receives the fully resolved config.
+		verify func(t *testing.T, conf runner.Config)
 	}{
 		{
 			name: "defaults only",
-			verify: func(t *testing.T, debug bool, wkdFile, dataDir string, keepalive uint16, httpURL string) {
-				if debug || wkdFile != "well-known-domains.dawg" || dataDir != "/var/lib/dnstapir/edm" || keepalive != 30 || httpURL != "https://127.0.0.1:8443" {
-					t.Fatalf("unexpected defaults: debug=%v wkd=%q dataDir=%q keepalive=%d httpURL=%q", debug, wkdFile, dataDir, keepalive, httpURL)
+			verify: func(t *testing.T, conf runner.Config) {
+				if conf.Debug || conf.WellKnownDomainsFile != "well-known-domains.dawg" || conf.DataDir != "/var/lib/dnstapir/edm" || conf.MQTTKeepalive != 30 || conf.HTTPURL != "https://127.0.0.1:8443" {
+					t.Fatalf("unexpected defaults: %+v", conf)
 				}
 			},
 		},
 		{
 			name:  "file overrides default",
 			extra: "data-dir = \"/srv/edm\"\nmqtt-keepalive = 60\n",
-			verify: func(t *testing.T, debug bool, wkdFile, dataDir string, keepalive uint16, httpURL string) {
-				if dataDir != "/srv/edm" || keepalive != 60 {
-					t.Fatalf("file values not applied: dataDir=%q keepalive=%d", dataDir, keepalive)
+			verify: func(t *testing.T, conf runner.Config) {
+				if conf.DataDir != "/srv/edm" || conf.MQTTKeepalive != 60 {
+					t.Fatalf("file values not applied: dataDir=%q keepalive=%d", conf.DataDir, conf.MQTTKeepalive)
 				}
 			},
 		},
@@ -212,9 +210,9 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 				"DNSTAPIR_EDM_WELL_KNOWN_DOMAINS_FILE": "from-env.dawg",
 				"DNSTAPIR_EDM_MQTT_KEEPALIVE":          "45",
 			},
-			verify: func(t *testing.T, debug bool, wkdFile, dataDir string, keepalive uint16, httpURL string) {
-				if !debug || wkdFile != "from-env.dawg" || keepalive != 45 {
-					t.Fatalf("env values not applied: debug=%v wkd=%q keepalive=%d", debug, wkdFile, keepalive)
+			verify: func(t *testing.T, conf runner.Config) {
+				if !conf.Debug || conf.WellKnownDomainsFile != "from-env.dawg" || conf.MQTTKeepalive != 45 {
+					t.Fatalf("env values not applied: debug=%v wkd=%q keepalive=%d", conf.Debug, conf.WellKnownDomainsFile, conf.MQTTKeepalive)
 				}
 			},
 		},
@@ -226,9 +224,9 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 				"DNSTAPIR_EDM_MQTT_KEEPALIVE": "45",
 			},
 			args: []string{"--debug=false", "--mqtt-keepalive", "99"},
-			verify: func(t *testing.T, debug bool, wkdFile, dataDir string, keepalive uint16, httpURL string) {
-				if debug || keepalive != 99 {
-					t.Fatalf("CLI values not applied: debug=%v keepalive=%d", debug, keepalive)
+			verify: func(t *testing.T, conf runner.Config) {
+				if conf.Debug || conf.MQTTKeepalive != 99 {
+					t.Fatalf("CLI values not applied: debug=%v keepalive=%d", conf.Debug, conf.MQTTKeepalive)
 				}
 			},
 		},
@@ -238,8 +236,8 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 			env: map[string]string{
 				"DEBUG": "true",
 			},
-			verify: func(t *testing.T, debug bool, wkdFile, dataDir string, keepalive uint16, httpURL string) {
-				if debug {
+			verify: func(t *testing.T, conf runner.Config) {
+				if conf.Debug {
 					t.Fatal("unprefixed DEBUG unexpectedly overrode config debug=false")
 				}
 			},
@@ -264,7 +262,7 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 			if conf.ConfigFile != configFile {
 				t.Fatalf("ConfigFile = %q, want %q", conf.ConfigFile, configFile)
 			}
-			tc.verify(t, conf.Debug, conf.WellKnownDomainsFile, conf.DataDir, conf.MQTTKeepalive, conf.HTTPURL)
+			tc.verify(t, conf)
 		})
 	}
 }
@@ -315,11 +313,51 @@ func TestApplyEnvOverridesInvalidValue(t *testing.T) {
 	}
 }
 
+// TestBuildRunProviderReportsErrors pins that the failures the flag package
+// does not print itself are written to errW, so Execute never exits silently.
+func TestBuildRunProviderReportsErrors(t *testing.T) {
+	t.Run("invalid environment value", func(t *testing.T) {
+		t.Setenv("DNSTAPIR_EDM_DEBUG", "release")
+		var errW bytes.Buffer
+		if _, err := buildRunProvider(nil, "", &errW); err == nil {
+			t.Fatal("buildRunProvider succeeded, want error")
+		}
+		if !strings.Contains(errW.String(), "DNSTAPIR_EDM_DEBUG") {
+			t.Fatalf("error not reported to writer: %q", errW.String())
+		}
+	})
+
+	t.Run("unexpected argument", func(t *testing.T) {
+		var errW bytes.Buffer
+		if _, err := buildRunProvider([]string{"surprise"}, "", &errW); err == nil {
+			t.Fatal("buildRunProvider succeeded, want error")
+		}
+		if !strings.Contains(errW.String(), "unexpected argument") {
+			t.Fatalf("error not reported to writer: %q", errW.String())
+		}
+	})
+}
+
 // TestOverrideForCoversAllFlags guards the overrideFor switch against
-// drifting from the flags registered in newRunFlagSet.
+// drifting from the flags registered in newRunFlagSet and verifies each
+// override copies the matching Config field and only that field.
+//
+// A flag name equals its Config field's toml tag, so the tag is an
+// independent source of truth: setting only the tagged field of src and
+// applying the override to a zero Config must leave exactly that field set.
+// A wrong source or destination field makes the result diverge from want.
 func TestOverrideForCoversAllFlags(t *testing.T) {
 	flagConf := new(runner.Config)
 	fs := newRunFlagSet(flagConf)
+
+	confType := reflect.TypeOf(runner.Config{})
+	fieldByTag := make(map[string]int, confType.NumField())
+	for i := range confType.NumField() {
+		if tag, _, _ := strings.Cut(confType.Field(i).Tag.Get("toml"), ","); tag != "" {
+			fieldByTag[tag] = i
+		}
+	}
+
 	fs.VisitAll(func(f *flag.Flag) {
 		if f.Name == "config-file" {
 			if overrideFor(f.Name, flagConf) != nil {
@@ -327,10 +365,41 @@ func TestOverrideForCoversAllFlags(t *testing.T) {
 			}
 			return
 		}
-		if overrideFor(f.Name, flagConf) == nil {
+		idx, ok := fieldByTag[f.Name]
+		if !ok {
+			t.Errorf("flag %q has no Config field with a matching toml tag", f.Name)
+			return
+		}
+
+		var src runner.Config
+		setSentinel(reflect.ValueOf(&src).Elem().Field(idx))
+		o := overrideFor(f.Name, &src)
+		if o == nil {
 			t.Errorf("flag %q has no overrideFor mapping", f.Name)
+			return
+		}
+		var dst, want runner.Config
+		o(&dst)
+		setSentinel(reflect.ValueOf(&want).Elem().Field(idx))
+		if dst != want {
+			t.Errorf("overrideFor(%q) copied the wrong field: got %+v, want only %s set", f.Name, dst, confType.Field(idx).Name)
 		}
 	})
+}
+
+// setSentinel sets v to a non-zero value appropriate to its kind so a copy
+// of it can be detected.
+func setSentinel(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.String:
+		v.SetString("sentinel")
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(1)
+	}
 }
 
 func TestExecuteSuccessAndError(t *testing.T) {
@@ -338,7 +407,7 @@ func TestExecuteSuccessAndError(t *testing.T) {
 	logger, level := testLogger()
 
 	exitCalled := false
-	exitProcess = func(code int) { exitCalled = true }
+	exitProcess = func(int) { exitCalled = true }
 
 	osArgs = func() []string { return []string{"dnstapir-edm", "help"} }
 	Execute(logger, level)

@@ -96,9 +96,8 @@ Commands:
   help    Show this help text
 
 Flags:`)
-	fs := rootFS
-	fs.SetOutput(w)
-	fs.PrintDefaults()
+	rootFS.SetOutput(w)
+	rootFS.PrintDefaults()
 }
 
 // resolveConfigPath returns the config file to use: explicit when non-empty,
