@@ -20,8 +20,8 @@ import (
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
 )
@@ -395,6 +395,10 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 // types (including the OKP key-agreement curves X25519/X448) return an
 // error wrapping errNotEdDSAJWK, so a mismatched key fails at load time
 // instead of during later JWS operations.
+//
+// The key must also carry a key ID, returning errJWKMissingKeyID otherwise:
+// the HTTP signer's keyid and the MQTT topic/client ID are derived from it,
+// and a missing value would surface only as a downstream verification failure.
 func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) {
 	fileName = filepath.Clean(fileName)
 	keyFile, err := rkl.fs.ReadFile(fileName)
@@ -407,20 +411,28 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 		return nil, err
 	}
 
+	// jwk.ParseKey rejects an OKP key without a crv, so the ok value is
+	// always true here. Even if it were not, Crv reports an invalid curve
+	// that fails the Ed25519/Ed448 check below, so the ok value can be
+	// discarded.
 	var crv jwa.EllipticCurveAlgorithm
 	switch key := jwkKey.(type) {
 	case jwk.OKPPrivateKey:
-		crv = key.Crv()
+		crv, _ = key.Crv()
 	case jwk.OKPPublicKey:
-		crv = key.Crv()
+		crv, _ = key.Crv()
 	default:
 		return nil, fmt.Errorf("%w: key type %q", errNotEdDSAJWK, jwkKey.KeyType())
 	}
-	if crv != jwa.Ed25519 && crv != jwa.Ed448 {
+	if crv != jwa.Ed25519() && crv != jwa.Ed448() {
 		return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
 	}
 
-	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+	if kid, ok := jwkKey.KeyID(); !ok || kid == "" {
+		return nil, errJWKMissingKeyID
+	}
+
+	if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 		return nil, err
 	}
 	return jwkKey, nil

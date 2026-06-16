@@ -28,8 +28,8 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
@@ -127,8 +127,8 @@ const placeholderDataDir = "/var/lib/dnstapir/edm"
 // `url.Parse` for autopaho/HTTP — those defaults are only useful once a
 // scheme is added at the CLI layer, so tests must opt in by setting them.
 //
-// testConfiger does not run validate.Struct, so the missing required_*
-// tags do not block construction.
+// testConfiger does not call [Config.Validate], so the unset required
+// fields do not block construction.
 func defaultTestConfig() Config {
 	return Config{
 		ConfigFile:                    "edm.toml",
@@ -356,7 +356,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	key, err := jwk.FromRaw(priv)
+	key, err := jwk.Import(priv)
 	if err != nil {
 		testJWKJSONErr = err
 		return
@@ -365,7 +365,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 		testJWKJSONErr = err
 		return
 	}

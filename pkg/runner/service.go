@@ -37,12 +37,17 @@ var (
 	ErrNilLogger = errors.New("nil logger")
 	// ErrNilRunContext is returned when Run is called with a nil context.
 	ErrNilRunContext = errors.New("nil run context")
+	// ErrInvalidConfig is wrapped by every error returned from
+	// [Config.Validate] so callers can match configuration validation
+	// failures with [errors.Is].
+	ErrInvalidConfig = errors.New("invalid configuration")
 
 	errNoClientCertificate      = errors.New("no client certificate loaded")
 	errEmptyDawgFile            = errors.New("dawg file is empty")
 	errNoInputConfigured        = errors.New("no dnstap input configured")
 	errMultipleInputsConfigured = errors.New("only one dnstap input may be configured")
 	errNotEdDSAJWK              = errors.New("JWK is not an EdDSA (Ed25519/Ed448) key")
+	errJWKMissingKeyID          = errors.New("JWK has no key ID set")
 	errAppendCertsFromPEM       = errors.New("failed to append certs from PEM")
 )
 
