@@ -322,6 +322,9 @@ func TestConfigValidate(t *testing.T) {
 }
 
 func TestViperConfigProviderGetConfigInvalidConfig(t *testing.T) {
+	// Reset global Viper state up front too, so leaked singleton state from
+	// an earlier test cannot affect this one (UnmarshalExact reads it all).
+	viper.Reset()
 	t.Cleanup(viper.Reset)
 
 	dir := t.TempDir()
