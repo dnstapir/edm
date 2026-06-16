@@ -122,7 +122,7 @@ func TestConfigUpdater(t *testing.T) {
 // to the process reaches configUpdater through a signal.Notify channel wired
 // the same way as in Run and triggers a reload.
 func TestConfigUpdaterSIGHUP(t *testing.T) {
-	edm := newSynctestDnstapMinimiser(t, defaultTC)
+	edm := newTestDnstapMinimiser(t, defaultTC)
 	startConf := edm.getConfig()
 	nextConf := startConf
 	nextConf.CryptopanKey = "key-sighup"
