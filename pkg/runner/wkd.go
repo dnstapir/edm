@@ -10,7 +10,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 const dawgNotFound = -1

@@ -23,7 +23,7 @@ import (
 	"github.com/parquet-go/parquet-go/format"
 	"github.com/segmentio/go-hll"
 	"github.com/smhanov/dawg"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 )
 
 func TestSetHistogramLabels(t *testing.T) {
