@@ -96,9 +96,8 @@ func envName(flagName string) string {
 //
 // "config-file" is excluded: it selects the config path rather than a config
 // value, and the path is resolved from the run/root flags alone (see
-// [buildRunProvider]). This keeps an explicit --config-file from being
-// shadowed by the environment and matches the pre-migration behavior, where
-// the environment never chose the config file.
+// [buildRunProvider]). The environment never selects the config file, so an
+// explicit --config-file is never shadowed by an env var.
 func applyEnvOverrides(fs *flag.FlagSet) (err error) {
 	fs.VisitAll(func(f *flag.Flag) {
 		if err != nil || f.Name == "config-file" {

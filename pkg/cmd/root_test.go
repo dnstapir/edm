@@ -144,7 +144,7 @@ func TestDispatchRunReportsMissingConfigFile(t *testing.T) {
 // TestConfigFileNotSettableViaEnv pins that DNSTAPIR_EDM_CONFIG_FILE does not
 // select the config path: an explicit --config-file must win over it, and with
 // no flag the environment value is ignored entirely (the path falls back to
-// the home default). This matches the pre-migration viper behavior.
+// the home default).
 func TestConfigFileNotSettableViaEnv(t *testing.T) {
 	restoreCmdGlobals(t)
 	edmLogger, edmLoggerLevel = testLogger()

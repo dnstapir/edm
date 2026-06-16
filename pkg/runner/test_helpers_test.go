@@ -100,9 +100,9 @@ var (
 )
 
 // testConfiger is a ConfigProvider backed by a complete Config value. Tests
-// build on defaultTestConfig (which mirrors pkg/cmd/run.go's flag defaults)
-// and override individual fields rather than going through the TOML decoding
-// pipeline. Embedding Config promotes every field so a test can do
+// build on defaultTestConfig (which builds on [DefaultConfig]) and override
+// individual fields rather than going through the TOML decoding pipeline.
+// Embedding Config promotes every field so a test can do
 // `tc := defaultTC; tc.MQTTServer = "..."` directly.
 //
 // testConfiger is test-only; production wires [FileConfigProvider].
