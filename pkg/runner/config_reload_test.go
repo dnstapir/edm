@@ -231,7 +231,9 @@ func TestConfigUpdaterBranches(t *testing.T) {
 			next.WellKnownDomainsFile = "other-well-known.dawg"
 			next.DisableSessionFiles = !startConf.DisableSessionFiles
 			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
-				return edm.getConfig().WellKnownDomainsFile == "other-well-known.dawg"
+				got := edm.getConfig()
+				return got.WellKnownDomainsFile == next.WellKnownDomainsFile &&
+					got.DisableSessionFiles == next.DisableSessionFiles
 			})
 			if strings.Contains(buf.String(), "requires restart") {
 				t.Fatalf("toggling reloadable fields logged a restart warning: %s", buf.String())
