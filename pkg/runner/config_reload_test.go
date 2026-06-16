@@ -216,6 +216,31 @@ func TestConfigUpdaterBranches(t *testing.T) {
 		})
 	})
 
+	t.Run("reloadable fields do not warn", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			buf := &syncBuf{}
+			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
+
+			// well-known-domains-file (the DAWG, re-read at the next
+			// rotation) and disable-session-files (the minimiser worker
+			// re-reads it live) both carry reload:"true", so changing them
+			// must not log the "requires restart" warning.
+			startConf := edm.getConfig()
+			next := startConf
+			next.WellKnownDomainsFile = "other-well-known.dawg"
+			next.DisableSessionFiles = !startConf.DisableSessionFiles
+			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
+				got := edm.getConfig()
+				return got.WellKnownDomainsFile == next.WellKnownDomainsFile &&
+					got.DisableSessionFiles == next.DisableSessionFiles
+			})
+			if strings.Contains(buf.String(), "requires restart") {
+				t.Fatalf("toggling reloadable fields logged a restart warning: %s", buf.String())
+			}
+		})
+	})
+
 	t.Run("config provider error keeps old config", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
