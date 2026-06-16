@@ -163,12 +163,14 @@ func newDefaultTC() testConfiger {
 }
 
 // useWritableDataDir replaces the default placeholder data-dir with a writable
-// temp dir so DAWG staging (which copies into data-dir) works. Tests that set
-// their own DataDir before or after construction are left untouched.
-func useWritableDataDir(t testing.TB, edm *DnstapMinimiser) {
+// temp dir so DAWG staging (which copies into data-dir) works. It mutates the
+// config provider before construction so the writable path also survives a
+// SIGHUP reload, which re-reads Config from the provider. Tests that set their
+// own DataDir are left untouched.
+func useWritableDataDir(t testing.TB, tc *testConfiger) {
 	t.Helper()
-	if edm.conf.DataDir == placeholderDataDir {
-		edm.conf.DataDir = t.TempDir()
+	if tc.DataDir == placeholderDataDir {
+		tc.DataDir = t.TempDir()
 	}
 }
 
@@ -180,6 +182,7 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 
 func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -188,13 +191,13 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
 
 func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -203,7 +206,6 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
@@ -232,6 +234,7 @@ func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser 
 
 func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	deps := newTestDependencies()
 
@@ -239,7 +242,6 @@ func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
