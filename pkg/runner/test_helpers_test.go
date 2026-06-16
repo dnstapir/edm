@@ -124,11 +124,16 @@ func (tc testConfiger) GetConfig() (Config, error) {
 //
 // testConfiger does not run validate.Struct, so the missing required_*
 // tags do not block construction.
+// placeholderDataDir is the non-writable data-dir defaultTestConfig uses as a
+// stand-in. The test minimiser constructors swap it for a writable temp dir
+// (see useWritableDataDir) so DAWG staging, which copies into data-dir, works.
+const placeholderDataDir = "/var/lib/dnstapir/edm"
+
 func defaultTestConfig() Config {
 	return Config{
 		ConfigFile:                    "edm.toml",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
-		DataDir:                       "/var/lib/dnstapir/edm",
+		DataDir:                       placeholderDataDir,
 		MinimiserWorkers:              1,
 		CryptopanKeySalt:              "edm-kdf-salt-val",
 		QnameSeenEntries:              10_000_000,
@@ -157,6 +162,16 @@ func newDefaultTC() testConfiger {
 	return testConfiger{Config: c}
 }
 
+// useWritableDataDir replaces the default placeholder data-dir with a writable
+// temp dir so DAWG staging (which copies into data-dir) works. Tests that set
+// their own DataDir before or after construction are left untouched.
+func useWritableDataDir(t testing.TB, edm *DnstapMinimiser) {
+	t.Helper()
+	if edm.conf.DataDir == placeholderDataDir {
+		edm.conf.DataDir = t.TempDir()
+	}
+}
+
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
@@ -173,6 +188,7 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	useWritableDataDir(t, edm)
 
 	return edm
 }
@@ -187,6 +203,7 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	useWritableDataDir(t, edm)
 
 	return edm
 }
@@ -222,6 +239,7 @@ func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
+	useWritableDataDir(t, edm)
 
 	return edm
 }

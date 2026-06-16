@@ -23,7 +23,7 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error {
 		return nil
 	}
 
-	dawgFinder, _, err := edm.deps.DawgLoader.LoadDawgFile(conf.IgnoredQuestionNamesFile)
+	dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
 	if err != nil {
 		if errors.Is(err, errEmptyDawgFile) {
 			// Treat the same as unset filename
