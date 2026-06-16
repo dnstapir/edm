@@ -57,9 +57,9 @@
 				
 				<option value="file0">github.com/dnstapir/edm/cmd/dnstapir-edm/main.go (73.3%)</option>
 				
-				<option value="file1">github.com/dnstapir/edm/pkg/cmd/root.go (100.0%)</option>
+				<option value="file1">github.com/dnstapir/edm/pkg/cmd/root.go (97.2%)</option>
 				
-				<option value="file2">github.com/dnstapir/edm/pkg/cmd/run.go (90.6%)</option>
+				<option value="file2">github.com/dnstapir/edm/pkg/cmd/run.go (96.6%)</option>
 				
 				<option value="file3">github.com/dnstapir/edm/pkg/protocols/protocols.go (100.0%)</option>
 				
@@ -67,11 +67,11 @@
 				
 				<option value="file5">github.com/dnstapir/edm/pkg/runner/certs.go (100.0%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (96.4%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/config.go (100.0%)</option>
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/cryptopan.go (95.5%)</option>
 				
-				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (89.3%)</option>
+				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (90.3%)</option>
 				
 				<option value="file9">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (77.4%)</option>
 				
@@ -174,7 +174,7 @@ func buildLogger(w io.Writer, loggerLevel *slog.LevelVar, buildVersion, hostname
 }</span>
 
 // main wires the hostname and logger helpers together, installs the logger as
-// the slog/log default, and hands control to the cobra command tree.
+// the slog/log default, and hands control to the command dispatcher.
 func main() <span class="cov0" title="0">{
         // loggerLevel controls the global logging level for the application
         loggerLevel := new(slog.LevelVar) // Info by default
@@ -193,210 +193,412 @@ func main() <span class="cov0" title="0">{
 		<pre class="file" id="file1" style="display: none">package cmd
 
 import (
+        "errors"
+        "flag"
+        "fmt"
+        "io"
         "log/slog"
         "os"
-        "strings"
-
-        "github.com/spf13/cobra"
-        "github.com/spf13/viper"
+        "path/filepath"
 )
 
-var (
-        cfgFile        string
-        edmLogger      *slog.Logger
-        edmLoggerLevel *slog.LevelVar
-        exitProcess    = os.Exit
-        userHomeDir    = os.UserHomeDir
-
-        viperSetConfigFile     = viper.SetConfigFile
-        viperAddConfigPath     = viper.AddConfigPath
-        viperSetConfigType     = viper.SetConfigType
-        viperSetConfigName     = viper.SetConfigName
-        viperSetEnvPrefix      = viper.SetEnvPrefix
-        viperSetEnvKeyReplacer = viper.SetEnvKeyReplacer
-        viperAutomaticEnv      = viper.AutomaticEnv
-        viperReadInConfig      = viper.ReadInConfig
-        viperConfigFileUsed    = viper.ConfigFileUsed
-)
-
+// envPrefix namespaces the environment variables read by [Execute]: every
+// flag of the "run" command can be set via envPrefix + "_" + the flag name
+// upper-cased with "-" replaced by "_".
 const envPrefix = "DNSTAPIR_EDM"
 
-// rootCmd represents the base command when called without any subcommands
-var rootCmd = &amp;cobra.Command{
-        Use:   "dnstapir-edm",
-        Short: "dnstap(ir) minimiser",
-        Long: `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
-outputting minimised output data.`,
-        // Uncomment the following line if your bare application
-        // has an action associated with it:
-        // Run: func(cmd *cobra.Command, args []string) { },
-}
+var (
+        edmLogger      *slog.Logger
+        edmLoggerLevel *slog.LevelVar
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov4" title="2">{
-        // Set global variables so it can be used from run.go
+        // Seams for tests.
+        exitProcess = os.Exit
+        userHomeDir = os.UserHomeDir
+        osArgs      = func() []string <span class="cov0" title="0">{ return os.Args }</span>
+)
+
+// errUnknownCommand is returned by dispatch for an unrecognized subcommand.
+var errUnknownCommand = errors.New("unknown command")
+
+// Execute parses the command line and dispatches to the matching subcommand.
+//
+// It is called by main.main(). On any error it terminates the process with
+// exit code 1; errors are reported on stderr (or the logger) before exiting.
+func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov3" title="2">{
         edmLogger = logger
         edmLoggerLevel = loggerLevel
-        err := rootCmd.Execute()
-        if err != nil </span><span class="cov1" title="1">{
+        if err := dispatch(osArgs()[1:], os.Stdout, os.Stderr); err != nil </span><span class="cov1" title="1">{
                 exitProcess(1)
         }</span>
 }
 
-func init() <span class="cov1" title="1">{
-        cobra.OnInitialize(initConfig)
+// dispatch routes args (os.Args[1:]) to a subcommand.
+//
+// Root-level flags (--config-file) may appear before the subcommand,
+// matching the systemd unit's "dnstapir-edm --config-file X run" invocation;
+// the "run" command also accepts --config-file after the subcommand, which
+// takes precedence. A bare invocation or "help" prints usage and succeeds;
+// an unrecognized subcommand prints usage on errW and returns an error
+// wrapping [errUnknownCommand].
+func dispatch(args []string, outW, errW io.Writer) (err error) <span class="cov9" title="11">{
+        rootFS := flag.NewFlagSet("dnstapir-edm", flag.ContinueOnError)
+        rootFS.SetOutput(errW)
+        var rootCfgFile string
+        rootFS.StringVar(&amp;rootCfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
+        rootFS.Usage = func() </span><span class="cov3" title="2">{ printUsage(errW, rootFS) }</span>
 
-        // Here you will define your flags and configuration settings.
-        // Cobra supports persistent flags, which, if defined here,
-        // will be global for your application.
-
-        rootCmd.PersistentFlags().StringVar(&amp;cfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
-
-        // Cobra also supports local flags, which will only run
-        // when this action is called directly.
-        // rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-}</span>
-
-// initConfig reads in config file and ENV variables if set.
-func initConfig() <span class="cov10" title="5">{
-        if cfgFile != "" </span><span class="cov8" title="4">{
-                // Use config file from the flag.
-                viperSetConfigFile(cfgFile)
-        }</span> else<span class="cov1" title="1"> {
-                // Find home directory.
-                home, err := userHomeDir()
-                cobra.CheckErr(err)
-
-                // Search config in home directory with name ".edm" (without extension).
-                viperAddConfigPath(home)
-                viperSetConfigType("toml")
-                viperSetConfigName(".dnstapir-edm")
+        // Stdlib flag parsing stops at the first non-flag argument, leaving the
+        // subcommand and its flags in rootFS.Args().
+        <span class="cov9" title="11">err = rootFS.Parse(args)
+        if errors.Is(err, flag.ErrHelp) </span><span class="cov1" title="1">{
+                return nil
+        }</span>
+        <span class="cov9" title="10">if err != nil </span><span class="cov1" title="1">{
+                return err
         }</span>
 
-        <span class="cov10" title="5">configureEnv()
-
-        // If a config file is found, read it in. The running service re-reads
-        // it when reload is requested via SIGHUP.
-        if err := viperReadInConfig(); err == nil </span><span class="cov8" title="4">{
-                edmLogger.Info("using config file", "filename", viperConfigFileUsed())
+        <span class="cov8" title="9">rest := rootFS.Args()
+        if len(rest) == 0 || rest[0] == "help" </span><span class="cov4" title="3">{
+                printUsage(outW, rootFS)
+                return nil
         }</span>
+
+        <span class="cov7" title="6">switch rest[0] </span>{
+        case "run":<span class="cov5" title="4">
+                err = runRun(rest[1:], rootCfgFile, errW)</span>
+        default:<span class="cov3" title="2">
+                fmt.Fprintf(errW, "unknown command %q\n\n", rest[0])
+                printUsage(errW, rootFS)
+                err = fmt.Errorf("%w: %q", errUnknownCommand, rest[0])</span>
+        }
+        <span class="cov7" title="6">return</span>
 }
 
-// configureEnv isolates environment overrides to the [envPrefix] namespace.
-//
-// It binds Viper to environment variables prefixed with [envPrefix], mapping
-// "-" in keys to "_", then enables automatic environment lookups.
-func configureEnv() <span class="cov10" title="5">{
-        viperSetEnvPrefix(envPrefix)
-        viperSetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-        viperAutomaticEnv() // read in environment variables that match
+// printUsage writes the top-level help text: the tool description, the
+// available commands and the root flags.
+func printUsage(w io.Writer, rootFS *flag.FlagSet) <span class="cov8" title="8">{
+        fmt.Fprintln(w, `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
+outputting minimised output data.
+
+Usage:
+  dnstapir-edm [flags] &lt;command&gt; [command flags]
+
+Commands:
+  run     Run dnstapir-edm in dnstap capture mode
+  help    Show this help text
+
+Flags:`)
+        rootFS.SetOutput(w)
+        rootFS.PrintDefaults()
 }</span>
+
+// resolveConfigPath returns the config file to use: explicit when non-empty,
+// otherwise $HOME/.dnstapir-edm.toml.
+func resolveConfigPath(explicit string) (path string, err error) <span class="cov10" title="13">{
+        if explicit != "" </span><span class="cov9" title="10">{
+                return explicit, nil
+        }</span>
+        <span class="cov4" title="3">var home string
+        home, err = userHomeDir()
+        if err == nil </span><span class="cov3" title="2">{
+                path = filepath.Join(home, ".dnstapir-edm.toml")
+        }</span>
+        <span class="cov4" title="3">return</span>
+}
 </pre>
 		
 		<pre class="file" id="file2" style="display: none">package cmd
 
 import (
         "context"
+        "errors"
+        "flag"
+        "fmt"
+        "io"
         "os"
         "os/signal"
+        "strconv"
+        "strings"
         "syscall"
 
         "github.com/dnstapir/edm/pkg/runner"
-        "github.com/spf13/cobra"
-        "github.com/spf13/viper"
 )
 
-// runCmd represents the run command
-var runCmd = &amp;cobra.Command{
-        Use:   "run",
-        Short: "Run dnstapir-edm in dnstap capture mode",
-        Run: func(_ *cobra.Command, _ []string) <span class="cov8" title="1">{
-                runMinimiser()
-        }</span>,
+// newRunFlagSet builds the flagset for the "run" subcommand.
+//
+// Flag values are bound directly to fields of conf, which is first reset to
+// [runner.DefaultConfig] so the flag defaults and the provider's base layer
+// cannot diverge.
+func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) <span class="cov5" title="18">{
+        *conf = runner.DefaultConfig()
+        fs = flag.NewFlagSet("run", flag.ContinueOnError)
+
+        fs.StringVar(&amp;conf.ConfigFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
+
+        fs.BoolVar(&amp;conf.DisableSessionFiles, "disable-session-files", conf.DisableSessionFiles, "do not write out session parquet files")
+        fs.BoolVar(&amp;conf.DisableHistogramSender, "disable-histogram-sender", conf.DisableHistogramSender, "do not check for histogram files to upload to core")
+        fs.BoolVar(&amp;conf.DisableMQTT, "disable-mqtt", conf.DisableMQTT, "disable MQTT message sending")
+        fs.BoolVar(&amp;conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "disable MQTT file based queue")
+        fs.BoolVar(&amp;conf.EnableManualParquetRotation, "enable-manual-parquet-rotation", conf.EnableManualParquetRotation, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
+        fs.BoolVar(&amp;conf.PebbleSync, "pebble-sync", conf.PebbleSync, "fsync seen-qname pebble writes")
+
+        fs.StringVar(&amp;conf.InputUnix, "input-unix", conf.InputUnix, "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
+        fs.StringVar(&amp;conf.InputTCP, "input-tcp", conf.InputTCP, "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
+        fs.StringVar(&amp;conf.InputTLS, "input-tls", conf.InputTLS, "create TLS TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
+        fs.StringVar(&amp;conf.InputTLSCertFile, "input-tls-cert-file", conf.InputTLSCertFile, "file containing cert used for TLS TCP socket")
+        fs.StringVar(&amp;conf.InputTLSKeyFile, "input-tls-key-file", conf.InputTLSKeyFile, "file containing key used for TLS TCP socket")
+        fs.StringVar(&amp;conf.InputTLSClientCAFile, "input-tls-client-ca-file", conf.InputTLSClientCAFile, "file containing CA used for client cert allowed to connect to TLS TCP socket")
+
+        fs.StringVar(&amp;conf.CryptopanKey, "cryptopan-key", conf.CryptopanKey, "override the secret used for Crypto-PAn pseudonymization")
+        fs.StringVar(&amp;conf.CryptopanKeySalt, "cryptopan-key-salt", conf.CryptopanKeySalt, "the salt used for key derivation")
+        fs.StringVar(&amp;conf.WellKnownDomainsFile, "well-known-domains-file", conf.WellKnownDomainsFile, "the DAWG file used for filtering well-known domains")
+        fs.StringVar(&amp;conf.IgnoredClientIPsFile, "ignored-client-ips-file", conf.IgnoredClientIPsFile, "file containing a newline separated list of IPv4/IPv6 CIDRs of DNS clients that will be ignored")
+        fs.StringVar(&amp;conf.IgnoredQuestionNamesFile, "ignored-question-names-file", conf.IgnoredQuestionNamesFile, "a DAWG file containing question section names that will be ignored")
+        fs.StringVar(&amp;conf.DataDir, "data-dir", conf.DataDir, "directory where output data is written")
+        fs.IntVar(&amp;conf.MinimiserWorkers, "minimiser-workers", conf.MinimiserWorkers, "how many minimiser workers to start (0 means same as GOMAXPROCS)")
+
+        fs.StringVar(&amp;conf.MQTTSigningKeyFile, "mqtt-signing-key-file", conf.MQTTSigningKeyFile, "ECSDSA key used for signing MQTT messages")
+        fs.StringVar(&amp;conf.MQTTClientKeyFile, "mqtt-client-key-file", conf.MQTTClientKeyFile, "ECSDSA client key used for authenticating to MQTT bus")
+        fs.StringVar(&amp;conf.MQTTClientCertFile, "mqtt-client-cert-file", conf.MQTTClientCertFile, "ECSDSA client cert used for authenticating to MQTT bus")
+        fs.StringVar(&amp;conf.MQTTServer, "mqtt-server", conf.MQTTServer, "MQTT server we will publish events to")
+        fs.StringVar(&amp;conf.MQTTCAFile, "mqtt-ca-file", conf.MQTTCAFile, "CA cert used for validating MQTT TLS connection, defaults to using OS CA certs")
+        // Stdlib flag has no Uint16Var; parse mqtt-keepalive by hand. The
+        // default is already set by DefaultConfig above.
+        fs.Func("mqtt-keepalive", fmt.Sprintf("Keepalive interval for MQTT connection (default %d)", conf.MQTTKeepalive), func(s string) error </span><span class="cov3" title="5">{
+                v, err := strconv.ParseUint(s, 10, 16)
+                if err == nil </span><span class="cov2" title="3">{
+                        conf.MQTTKeepalive = uint16(v)
+                }</span>
+                <span class="cov3" title="5">return err</span>
+        })
+
+        <span class="cov5" title="18">fs.IntVar(&amp;conf.QnameSeenEntries, "qname-seen-entries", conf.QnameSeenEntries, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
+        fs.IntVar(&amp;conf.CryptopanAddressEntries, "cryptopan-address-entries", conf.CryptopanAddressEntries, "Number of cryptopan pseudonymised addresses stored in LRU cache, 0 disables the cache, need to be changed based on RAM")
+        fs.IntVar(&amp;conf.NewQnameBuffer, "newqname-buffer", conf.NewQnameBuffer, "Number of slots in new_qname publisher channel, if this is filled up we skip new_qname events")
+        fs.IntVar(&amp;conf.HistogramHLLExplicitThreshold, "histogram-hll-explicit-threshold", conf.HistogramHLLExplicitThreshold, "When the number of unique IP addresses is beyond this threshold we will include HLL data for a domain in the histogram parquet file")
+
+        fs.StringVar(&amp;conf.HTTPCAFile, "http-ca-file", conf.HTTPCAFile, "CA cert used for validating aggregate-receiver connection, defaults to using OS CA certs")
+        fs.StringVar(&amp;conf.HTTPSigningKeyFile, "http-signing-key-file", conf.HTTPSigningKeyFile, "ECSDSA key used for signing HTTP messages to aggregate-receiver")
+        fs.StringVar(&amp;conf.HTTPClientKeyFile, "http-client-key-file", conf.HTTPClientKeyFile, "ECSDSA client key used for authenticating to aggregate-receiver")
+        fs.StringVar(&amp;conf.HTTPClientCertFile, "http-client-cert-file", conf.HTTPClientCertFile, "ECSDSA client cert used for authenticating to aggregate-receiver")
+        fs.StringVar(&amp;conf.HTTPURL, "http-url", conf.HTTPURL, "Service we will POST aggregates to")
+
+        fs.BoolVar(&amp;conf.Debug, "debug", conf.Debug, "print debug logging during operation")
+        fs.StringVar(&amp;conf.DebugDnstapFilename, "debug-dnstap-filename", conf.DebugDnstapFilename, "File for dumping unmodified (sensitive) JSON-formatted dnstap packets we are about to process, for debugging")
+        fs.BoolVar(&amp;conf.DebugEnableBlockProfiling, "debug-enable-blockprofiling", conf.DebugEnableBlockProfiling, "Enable profiling of goroutine blocking events")
+        fs.BoolVar(&amp;conf.DebugEnableMutexProfiling, "debug-enable-mutexprofiling", conf.DebugEnableMutexProfiling, "Enable profiling of mutex contention events")
+
+        return</span>
 }
 
-func runMinimiser() <span class="cov8" title="1">{
-        edm, err := runner.NewDnstapMinimiser(runner.ViperConfigProvider{}, edmLogger, runner.WithLoggerLevel(edmLoggerLevel))
-        if err != nil </span><span class="cov8" title="1">{
+// envName returns the environment variable that overrides flagName:
+// [envPrefix] + "_" + the flag name upper-cased with "-" replaced by "_".
+func envName(flagName string) string <span class="cov9" title="582">{
+        return envPrefix + "_" + strings.ToUpper(strings.ReplaceAll(flagName, "-", "_"))
+}</span>
+
+// applyEnvOverrides applies DNSTAPIR_EDM_* environment variables to fs.
+//
+// It must run before fs.Parse so flags given on the command line overwrite
+// values taken from the environment. An environment value that fails the
+// flag's parser is reported as an error naming the variable.
+//
+// "config-file" is excluded: it selects the config path rather than a config
+// value, and the path is resolved from the run/root flags alone (see
+// [buildRunProvider]). The environment never selects the config file, so an
+// explicit --config-file is never shadowed by an env var.
+func applyEnvOverrides(fs *flag.FlagSet) (err error) <span class="cov4" title="17">{
+        fs.VisitAll(func(f *flag.Flag) </span><span class="cov10" title="663">{
+                if err != nil || f.Name == "config-file" </span><span class="cov7" title="83">{
+                        return
+                }</span>
+                <span class="cov9" title="580">if val, ok := os.LookupEnv(envName(f.Name)); ok </span><span class="cov3" title="8">{
+                        if setErr := fs.Set(f.Name, val); setErr != nil </span><span class="cov1" title="2">{
+                                err = fmt.Errorf("invalid value in environment variable %s: %w", envName(f.Name), setErr)
+                        }</span>
+                }
+        })
+        <span class="cov4" title="17">return</span>
+}
+
+// overrideFor returns a [runner.ConfigOverride] copying the named flag's
+// value from src.
+//
+// It returns nil for "config-file" (handled via path resolution, not as an
+// overlay) and for names without a mapping; a test walking every registered
+// flag guards the switch against drifting from newRunFlagSet.
+func overrideFor(name string, src *runner.Config) runner.ConfigOverride <span class="cov6" title="53">{
+        switch name </span>{
+        case "disable-session-files":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DisableSessionFiles = src.DisableSessionFiles }</span>
+        case "disable-histogram-sender":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DisableHistogramSender = src.DisableHistogramSender }</span>
+        case "disable-mqtt":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DisableMQTT = src.DisableMQTT }</span>
+        case "disable-mqtt-filequeue":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DisableMQTTFilequeue = src.DisableMQTTFilequeue }</span>
+        case "enable-manual-parquet-rotation":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.EnableManualParquetRotation = src.EnableManualParquetRotation }</span>
+        case "pebble-sync":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.PebbleSync = src.PebbleSync }</span>
+        case "input-unix":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputUnix = src.InputUnix }</span>
+        case "input-tcp":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputTCP = src.InputTCP }</span>
+        case "input-tls":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputTLS = src.InputTLS }</span>
+        case "input-tls-cert-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputTLSCertFile = src.InputTLSCertFile }</span>
+        case "input-tls-key-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputTLSKeyFile = src.InputTLSKeyFile }</span>
+        case "input-tls-client-ca-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.InputTLSClientCAFile = src.InputTLSClientCAFile }</span>
+        case "cryptopan-key":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.CryptopanKey = src.CryptopanKey }</span>
+        case "cryptopan-key-salt":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.CryptopanKeySalt = src.CryptopanKeySalt }</span>
+        case "well-known-domains-file":<span class="cov1" title="2">
+                return func(c *runner.Config) </span><span class="cov1" title="2">{ c.WellKnownDomainsFile = src.WellKnownDomainsFile }</span>
+        case "ignored-client-ips-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.IgnoredClientIPsFile = src.IgnoredClientIPsFile }</span>
+        case "ignored-question-names-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.IgnoredQuestionNamesFile = src.IgnoredQuestionNamesFile }</span>
+        case "data-dir":<span class="cov1" title="2">
+                return func(c *runner.Config) </span><span class="cov2" title="3">{ c.DataDir = src.DataDir }</span>
+        case "minimiser-workers":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MinimiserWorkers = src.MinimiserWorkers }</span>
+        case "mqtt-signing-key-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MQTTSigningKeyFile = src.MQTTSigningKeyFile }</span>
+        case "mqtt-client-key-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MQTTClientKeyFile = src.MQTTClientKeyFile }</span>
+        case "mqtt-client-cert-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MQTTClientCertFile = src.MQTTClientCertFile }</span>
+        case "mqtt-server":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MQTTServer = src.MQTTServer }</span>
+        case "mqtt-ca-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.MQTTCAFile = src.MQTTCAFile }</span>
+        case "mqtt-keepalive":<span class="cov2" title="3">
+                return func(c *runner.Config) </span><span class="cov2" title="3">{ c.MQTTKeepalive = src.MQTTKeepalive }</span>
+        case "qname-seen-entries":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.QnameSeenEntries = src.QnameSeenEntries }</span>
+        case "cryptopan-address-entries":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.CryptopanAddressEntries = src.CryptopanAddressEntries }</span>
+        case "newqname-buffer":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.NewQnameBuffer = src.NewQnameBuffer }</span>
+        case "histogram-hll-explicit-threshold":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HistogramHLLExplicitThreshold = src.HistogramHLLExplicitThreshold }</span>
+        case "http-ca-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HTTPCAFile = src.HTTPCAFile }</span>
+        case "http-signing-key-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HTTPSigningKeyFile = src.HTTPSigningKeyFile }</span>
+        case "http-client-key-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HTTPClientKeyFile = src.HTTPClientKeyFile }</span>
+        case "http-client-cert-file":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HTTPClientCertFile = src.HTTPClientCertFile }</span>
+        case "http-url":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.HTTPURL = src.HTTPURL }</span>
+        case "debug":<span class="cov2" title="4">
+                return func(c *runner.Config) </span><span class="cov3" title="5">{ c.Debug = src.Debug }</span>
+        case "debug-dnstap-filename":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DebugDnstapFilename = src.DebugDnstapFilename }</span>
+        case "debug-enable-blockprofiling":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DebugEnableBlockProfiling = src.DebugEnableBlockProfiling }</span>
+        case "debug-enable-mutexprofiling":<span class="cov1" title="1">
+                return func(c *runner.Config) </span><span class="cov1" title="1">{ c.DebugEnableMutexProfiling = src.DebugEnableMutexProfiling }</span>
+        }
+        <span class="cov3" title="8">return nil</span>
+}
+
+// buildRunProvider parses the run command's flags plus environment overrides
+// and returns the configured provider.
+//
+// rootCfgFile is a --config-file given before the subcommand; run's own
+// --config-file flag wins over it, and neither is settable via the
+// environment (see [applyEnvOverrides]). For every other flag the environment
+// is applied to the flagset before fs.Parse so the precedence is CLI flag
+// over environment variable over config file over flag default. fs.Visit
+// afterwards enumerates exactly the union of env-set and CLI-set flags, which
+// becomes the immutable override layer re-applied on every config reload.
+func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provider *runner.FileConfigProvider, err error) <span class="cov4" title="17">{
+        // flagConf escapes into the override closures, which outlive this call.
+        flagConf := new(runner.Config)
+        fs := newRunFlagSet(flagConf)
+        fs.SetOutput(errW)
+
+        // fs.Parse reports parse errors (and usage) on errW itself; the other
+        // failures below do not, so they are reported at the end to avoid a
+        // silent non-zero exit. parseReported tracks the one already-reported
+        // path so it is not printed twice.
+        parseReported := false
+        err = applyEnvOverrides(fs)
+        if err == nil </span><span class="cov4" title="15">{
+                if perr := fs.Parse(args); perr != nil </span><span class="cov2" title="3">{
+                        err = perr
+                        parseReported = true
+                }</span>
+        }
+        <span class="cov4" title="17">if err == nil &amp;&amp; fs.NArg() &gt; 0 </span><span class="cov1" title="2">{
+                err = fmt.Errorf("unexpected argument(s): %q", fs.Args())
+        }</span>
+
+        <span class="cov4" title="17">var path string
+        if err == nil </span><span class="cov4" title="10">{
+                explicit := flagConf.ConfigFile
+                if explicit == "" </span><span class="cov2" title="3">{
+                        explicit = rootCfgFile
+                }</span>
+                <span class="cov4" title="10">path, err = resolveConfigPath(explicit)</span>
+        }
+
+        <span class="cov4" title="17">if err == nil </span><span class="cov4" title="10">{
+                var overrides []runner.ConfigOverride
+                fs.Visit(func(f *flag.Flag) </span><span class="cov4" title="14">{
+                        if o := overrideFor(f.Name, flagConf); o != nil </span><span class="cov3" title="7">{
+                                overrides = append(overrides, o)
+                        }</span>
+                })
+                <span class="cov4" title="10">provider = runner.NewFileConfigProvider(path, overrides...)</span>
+        }
+
+        <span class="cov4" title="17">if err != nil &amp;&amp; !parseReported &amp;&amp; !errors.Is(err, flag.ErrHelp) </span><span class="cov2" title="4">{
+                fmt.Fprintln(errW, err)
+        }</span>
+        <span class="cov4" title="17">return</span>
+}
+
+// runRun implements the "run" subcommand.
+func runRun(args []string, rootCfgFile string, errW io.Writer) (err error) <span class="cov2" title="4">{
+        var provider *runner.FileConfigProvider
+        provider, err = buildRunProvider(args, rootCfgFile, errW)
+        if errors.Is(err, flag.ErrHelp) </span><span class="cov1" title="1">{
+                return nil
+        }</span>
+        <span class="cov2" title="3">if err == nil </span><span class="cov1" title="2">{
+                edmLogger.Info("using config file", "filename", provider.Path())
+                err = runMinimiser(provider)
+        }</span>
+        <span class="cov2" title="3">return</span>
+}
+
+// runMinimiser constructs the minimiser from provider and runs it until
+// SIGINT or SIGTERM. Errors are logged before being returned.
+func runMinimiser(provider runner.ConfigProvider) (err error) <span class="cov2" title="3">{
+        var edm *runner.DnstapMinimiser
+        edm, err = runner.NewDnstapMinimiser(provider, edmLogger, runner.WithLoggerLevel(edmLoggerLevel))
+        if err != nil </span><span class="cov2" title="3">{
                 edmLogger.Error("unable to init", "error", err)
-                exitProcess(1)
                 return
         }</span>
 
         <span class="cov0" title="0">ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
         defer stop()
 
-        if err := edm.Run(ctx); err != nil </span><span class="cov0" title="0">{
+        err = edm.Run(ctx)
+        if err != nil </span><span class="cov0" title="0">{
                 edmLogger.Error("edm: run failed", "error", err)
-                exitProcess(1)
         }</span>
+        <span class="cov0" title="0">return</span>
 }
-
-func init() <span class="cov8" title="1">{
-        rootCmd.AddCommand(runCmd)
-
-        // Here you will define your flags and configuration settings.
-
-        // Cobra supports Persistent Flags which will work for this command
-        // and all subcommands, e.g.:
-        // runCmd.PersistentFlags().String("foo", "", "A help for foo")
-
-        // Cobra supports local flags which will only run when this command
-        // is called directly, e.g.:
-        // runCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-
-        runCmd.Flags().Bool("disable-session-files", false, "do not write out session parquet files")
-        runCmd.Flags().Bool("disable-histogram-sender", false, "do not check for histogram files to upload to core")
-        runCmd.Flags().Bool("disable-mqtt", false, "disable MQTT message sending")
-        runCmd.Flags().Bool("disable-mqtt-filequeue", false, "disable MQTT file based queue")
-        runCmd.Flags().Bool("enable-manual-parquet-rotation", false, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
-        runCmd.Flags().Bool("pebble-sync", false, "fsync seen-qname pebble writes")
-
-        runCmd.Flags().String("input-unix", "", "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
-        runCmd.Flags().String("input-tcp", "", "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
-        runCmd.Flags().String("input-tls", "", "create TLS TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
-        runCmd.MarkFlagsMutuallyExclusive("input-unix", "input-tcp", "input-tls")
-
-        runCmd.Flags().String("input-tls-cert-file", "", "file containing cert used for TLS TCP socket")
-        runCmd.Flags().String("input-tls-key-file", "", "file containing key used for TLS TCP socket")
-        runCmd.MarkFlagsRequiredTogether("input-tls", "input-tls-cert-file", "input-tls-key-file")
-
-        runCmd.Flags().String("input-tls-client-ca-file", "", "file containing CA used for client cert allowed to connect to TLS TCP socket")
-
-        runCmd.Flags().String("cryptopan-key", "", "override the secret used for Crypto-PAn pseudonymization")
-
-        runCmd.Flags().String("cryptopan-key-salt", "edm-kdf-salt-val", "the salt used for key derivation")
-        runCmd.Flags().String("well-known-domains-file", "well-known-domains.dawg", "the DAWG file used for filtering well-known domains")
-        runCmd.Flags().String("ignored-client-ips-file", "", "file containing a newline separated list of IPv4/IPv6 CIDRs of DNS clients that will be ignored")
-        runCmd.Flags().String("ignored-question-names-file", "", "a DAWG file containing question section names that will be ignored")
-        runCmd.Flags().String("data-dir", "/var/lib/dnstapir/edm", "directory where output data is written")
-        runCmd.Flags().Int("minimiser-workers", 1, "how many minimiser workers to start (0 means same as GOMAXPROCS)")
-        runCmd.Flags().String("mqtt-signing-key-file", "edm-mqtt-signer-key.pem", "ECSDSA key used for signing MQTT messages")
-        runCmd.Flags().String("mqtt-client-key-file", "edm-mqtt-client-key.pem", "ECSDSA client key used for authenticating to MQTT bus")
-        runCmd.Flags().String("mqtt-client-cert-file", "edm-mqtt-client.pem", "ECSDSA client cert used for authenticating to MQTT bus")
-        runCmd.Flags().String("mqtt-server", "127.0.0.1:8883", "MQTT server we will publish events to")
-        runCmd.Flags().String("mqtt-ca-file", "", "CA cert used for validating MQTT TLS connection, defaults to using OS CA certs")
-
-        runCmd.Flags().Int("mqtt-keepalive", 30, "Keepalive interval for MQTT connection")
-        runCmd.Flags().Int("qname-seen-entries", 10000000, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
-        runCmd.Flags().Int("cryptopan-address-entries", 10000000, "Number of cryptopan pseudonymised addresses stored in LRU cache, 0 disables the cache, need to be changed based on RAM")
-        runCmd.Flags().Int("newqname-buffer", 1000, "Number of slots in new_qname publisher channel, if this is filled up we skip new_qname events")
-        runCmd.Flags().Int("histogram-hll-explicit-threshold", 20, "When the number of unique IP addresses is beyond this threshold we will include HLL data for a domain in the histogram parquet file")
-        runCmd.Flags().String("http-ca-file", "", "CA cert used for validating aggregate-receiver connection, defaults to using OS CA certs")
-        runCmd.Flags().String("http-signing-key-file", "edm-http-signer-key.pem", "ECSDSA key used for signing HTTP messages to aggregate-receiver")
-        runCmd.Flags().String("http-client-key-file", "edm-http-client-key.pem", "ECSDSA client key used for authenticating to aggregate-receiver")
-        runCmd.Flags().String("http-client-cert-file", "edm-http-client.pem", "ECSDSA client cert used for authenticating to aggregate-receiver")
-        runCmd.Flags().String("http-url", "https://127.0.0.1:8443", "Service we will POST aggregates to")
-
-        // Debug options
-        runCmd.Flags().Bool("debug", false, "print debug logging during operation")
-        runCmd.Flags().String("debug-dnstap-filename", "", "File for dumping unmodified (sensitive) JSON-formatted dnstap packets we are about to process, for debugging")
-        runCmd.Flags().Bool("debug-enable-blockprofiling", false, "Enable profiling of goroutine blocking events")
-        runCmd.Flags().Bool("debug-enable-mutexprofiling", false, "Enable profiling of mutex contention events")
-
-        cobra.CheckErr(viper.BindPFlags(runCmd.Flags()))
-}</span>
 </pre>
 		
 		<pre class="file" id="file3" style="display: none">package protocols
@@ -607,32 +809,32 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 }
 
 // Send sends histogram data via signed HTTP message to aggregate-receiver.
-func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="12">{
+func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error <span class="cov8" title="11">{
         fs := as.fs
         if fs == nil </span><span class="cov0" title="0">{
                 fs = osFileSystem{}
         }</span>
-        <span class="cov8" title="12">clock := as.clock
+        <span class="cov8" title="11">clock := as.clock
         if clock == nil </span><span class="cov0" title="0">{
                 clock = realClock{}
         }</span>
 
-        <span class="cov8" title="12">fileName = filepath.Clean(fileName)
+        <span class="cov8" title="11">fileName = filepath.Clean(fileName)
         file, err := fs.Open(fileName)
         if err != nil </span><span class="cov1" title="1">{
                 return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
         }</span>
-        <span class="cov8" title="11">defer func() </span><span class="cov8" title="11">{
+        <span class="cov8" title="10">defer func() </span><span class="cov8" title="10">{
                 if cerr := file.Close(); cerr != nil </span><span class="cov0" title="0">{
                         as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
                 }</span>
         }()
 
-        <span class="cov8" title="11">fileInfo, err := file.Stat()
+        <span class="cov8" title="10">fileInfo, err := file.Stat()
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
         }</span>
-        <span class="cov8" title="11">fileSize := fileInfo.Size()
+        <span class="cov8" title="10">fileSize := fileInfo.Size()
 
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
@@ -641,7 +843,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         }</span>
 
         // Send signed HTTP POST message
-        <span class="cov8" title="11">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
+        <span class="cov8" title="10">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
         if err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
         }</span>
@@ -653,7 +855,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov8" title="11">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov8" title="10">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
@@ -675,7 +877,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         startTime := clock.Now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := clock.Now().Sub(startTime)
-        if err != nil </span><span class="cov5" title="4">{
+        if err != nil </span><span class="cov4" title="3">{
                 return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
         }</span>
         <span class="cov7" title="7">defer res.Body.Close()
@@ -719,12 +921,12 @@ func (as realAggregateSender) CloseIdleConnections() <span class="cov1" title="1
 //
 // Sub-second precision is preserved as a fractional seconds component.
 // Non-positive durations yield "PT0S".
-func iso8601Duration(duration time.Duration) string <span class="cov10" title="17">{
+func iso8601Duration(duration time.Duration) string <span class="cov10" title="16">{
         if duration &lt;= 0 </span><span class="cov3" title="2">{
                 return "PT0S"
         }</span>
 
-        <span class="cov9" title="15">total := int64(duration / time.Second)
+        <span class="cov9" title="14">total := int64(duration / time.Second)
         nanoseconds := duration % time.Second
 
         hours := total / 3600
@@ -736,10 +938,10 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
         if hours &gt; 0 </span><span class="cov1" title="1">{
                 res += strconv.FormatInt(hours, 10) + "H"
         }</span>
-        <span class="cov9" title="15">if minutes &gt; 0 </span><span class="cov8" title="11">{
+        <span class="cov9" title="14">if minutes &gt; 0 </span><span class="cov8" title="10">{
                 res += strconv.FormatInt(minutes, 10) + "M"
         }</span>
-        <span class="cov9" title="15">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
+        <span class="cov9" title="14">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span><span class="cov6" title="5">{
                 if nanoseconds == 0 </span><span class="cov5" title="4">{
                         res += strconv.FormatInt(seconds, 10)
                 }</span> else<span class="cov1" title="1"> {
@@ -749,7 +951,7 @@ func iso8601Duration(duration time.Duration) string <span class="cov10" title="1
                 <span class="cov6" title="5">res += "S"</span>
         }
 
-        <span class="cov9" title="15">return res</span>
+        <span class="cov9" title="14">return res</span>
 }
 
 func (edm *DnstapMinimiser) setupHistogramSender() error <span class="cov8" title="10">{
@@ -856,10 +1058,12 @@ func (edm *DnstapMinimiser) loadMQTTClientCert() error <span class="cov4" title=
 		<pre class="file" id="file6" style="display: none">package runner
 
 import (
+        "bytes"
         "errors"
         "fmt"
+        "os"
 
-        "github.com/spf13/viper"
+        "github.com/pelletier/go-toml/v2"
 )
 
 // Labels 0-9
@@ -867,50 +1071,49 @@ const defaultLabelLimit = 10
 
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
-// The struct tags are part of the Viper-backed CLI contract and stay in sync
-// with the flags in pkg/cmd. Validation rules are enforced by
-// [Config.Validate].
+// The toml struct tags name the config file keys and stay in sync with the
+// flags in pkg/cmd. Validation rules are enforced by [Config.Validate].
 type Config struct {
-        ConfigFile                    string `mapstructure:"config-file"`
-        DisableSessionFiles           bool   `mapstructure:"disable-session-files"`
-        DisableHistogramSender        bool   `mapstructure:"disable-histogram-sender" reload:"true"`
-        DisableMQTT                   bool   `mapstructure:"disable-mqtt"`
-        DisableMQTTFilequeue          bool   `mapstructure:"disable-mqtt-filequeue"`
-        EnableManualParquetRotation   bool   `mapstructure:"enable-manual-parquet-rotation"`
-        PebbleSync                    bool   `mapstructure:"pebble-sync" reload:"true"`
-        InputUnix                     string `mapstructure:"input-unix"`
-        InputTCP                      string `mapstructure:"input-tcp"`
-        InputTLS                      string `mapstructure:"input-tls"`
-        InputTLSCertFile              string `mapstructure:"input-tls-cert-file"`
-        InputTLSKeyFile               string `mapstructure:"input-tls-key-file"`
-        InputTLSClientCAFile          string `mapstructure:"input-tls-client-ca-file"`
-        CryptopanKey                  string `mapstructure:"cryptopan-key" reload:"true"`
-        CryptopanKeySalt              string `mapstructure:"cryptopan-key-salt" reload:"true"`
-        WellKnownDomainsFile          string `mapstructure:"well-known-domains-file"`
-        HistogramHLLExplicitThreshold int    `mapstructure:"histogram-hll-explicit-threshold"`
-        IgnoredClientIPsFile          string `mapstructure:"ignored-client-ips-file" reload:"true"`
-        IgnoredQuestionNamesFile      string `mapstructure:"ignored-question-names-file" reload:"true"`
-        DataDir                       string `mapstructure:"data-dir"`
-        MinimiserWorkers              int    `mapstructure:"minimiser-workers"`
-        MQTTSigningKeyFile            string `mapstructure:"mqtt-signing-key-file"`
-        MQTTClientKeyFile             string `mapstructure:"mqtt-client-key-file" reload:"true"`
-        MQTTClientCertFile            string `mapstructure:"mqtt-client-cert-file" reload:"true"`
-        MQTTServer                    string `mapstructure:"mqtt-server"`
-        MQTTCAFile                    string `mapstructure:"mqtt-ca-file"`
-        MQTTKeepalive                 uint16 `mapstructure:"mqtt-keepalive"`
-        MQTTSignWorkers               int    `mapstructure:"mqtt-sign-workers"`
-        QnameSeenEntries              int    `mapstructure:"qname-seen-entries"`
-        CryptopanAddressEntries       int    `mapstructure:"cryptopan-address-entries"`
-        NewQnameBuffer                int    `mapstructure:"newqname-buffer"`
-        HTTPCAFile                    string `mapstructure:"http-ca-file"`
-        HTTPSigningKeyFile            string `mapstructure:"http-signing-key-file"`
-        HTTPClientKeyFile             string `mapstructure:"http-client-key-file" reload:"true"`
-        HTTPClientCertFile            string `mapstructure:"http-client-cert-file" reload:"true"`
-        HTTPURL                       string `mapstructure:"http-url"`
-        Debug                         bool   `mapstructure:"debug"`
-        DebugDnstapFilename           string `mapstructure:"debug-dnstap-filename"`
-        DebugEnableBlockProfiling     bool   `mapstructure:"debug-enable-blockprofiling"`
-        DebugEnableMutexProfiling     bool   `mapstructure:"debug-enable-mutexprofiling"`
+        ConfigFile                    string `toml:"config-file"`
+        DisableSessionFiles           bool   `toml:"disable-session-files"`
+        DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
+        DisableMQTT                   bool   `toml:"disable-mqtt"`
+        DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
+        EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
+        PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
+        InputUnix                     string `toml:"input-unix"`
+        InputTCP                      string `toml:"input-tcp"`
+        InputTLS                      string `toml:"input-tls"`
+        InputTLSCertFile              string `toml:"input-tls-cert-file"`
+        InputTLSKeyFile               string `toml:"input-tls-key-file"`
+        InputTLSClientCAFile          string `toml:"input-tls-client-ca-file"`
+        CryptopanKey                  string `toml:"cryptopan-key" reload:"true"`
+        CryptopanKeySalt              string `toml:"cryptopan-key-salt" reload:"true"`
+        WellKnownDomainsFile          string `toml:"well-known-domains-file"`
+        HistogramHLLExplicitThreshold int    `toml:"histogram-hll-explicit-threshold"`
+        IgnoredClientIPsFile          string `toml:"ignored-client-ips-file" reload:"true"`
+        IgnoredQuestionNamesFile      string `toml:"ignored-question-names-file" reload:"true"`
+        DataDir                       string `toml:"data-dir"`
+        MinimiserWorkers              int    `toml:"minimiser-workers"`
+        MQTTSigningKeyFile            string `toml:"mqtt-signing-key-file"`
+        MQTTClientKeyFile             string `toml:"mqtt-client-key-file" reload:"true"`
+        MQTTClientCertFile            string `toml:"mqtt-client-cert-file" reload:"true"`
+        MQTTServer                    string `toml:"mqtt-server"`
+        MQTTCAFile                    string `toml:"mqtt-ca-file"`
+        MQTTKeepalive                 uint16 `toml:"mqtt-keepalive"`
+        MQTTSignWorkers               int    `toml:"mqtt-sign-workers"`
+        QnameSeenEntries              int    `toml:"qname-seen-entries"`
+        CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"`
+        NewQnameBuffer                int    `toml:"newqname-buffer"`
+        HTTPCAFile                    string `toml:"http-ca-file"`
+        HTTPSigningKeyFile            string `toml:"http-signing-key-file"`
+        HTTPClientKeyFile             string `toml:"http-client-key-file" reload:"true"`
+        HTTPClientCertFile            string `toml:"http-client-cert-file" reload:"true"`
+        HTTPURL                       string `toml:"http-url"`
+        Debug                         bool   `toml:"debug"`
+        DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
+        DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
+        DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
 }
 
 // Validate checks the configuration rules for Config.
@@ -920,7 +1123,7 @@ type Config struct {
 // matching with [errors.Is]. Violations of the exactly-one-input rule
 // additionally wrap the same error identities returned by the dnstap input
 // setup. Messages use the CLI flag / config key spelling.
-func (conf Config) Validate() (err error) <span class="cov5" title="36">{
+func (conf Config) Validate() (err error) <span class="cov5" title="39">{
         var errs []error
 
         for _, f := range []struct{ key, value string }{
@@ -929,26 +1132,26 @@ func (conf Config) Validate() (err error) <span class="cov5" title="36">{
                 {"cryptopan-key-salt", conf.CryptopanKeySalt},
                 {"well-known-domains-file", conf.WellKnownDomainsFile},
                 {"data-dir", conf.DataDir},
-        } </span><span class="cov7" title="180">{
+        } </span><span class="cov7" title="195">{
                 if f.value == "" </span><span class="cov3" title="7">{
                         errs = append(errs, fmt.Errorf("%s must be set", f.key))
                 }</span>
         }
 
-        <span class="cov5" title="36">inputs := 0
-        for _, in := range []string{conf.InputUnix, conf.InputTCP, conf.InputTLS} </span><span class="cov7" title="108">{
-                if in != "" </span><span class="cov5" title="41">{
+        <span class="cov5" title="39">inputs := 0
+        for _, in := range []string{conf.InputUnix, conf.InputTCP, conf.InputTLS} </span><span class="cov7" title="117">{
+                if in != "" </span><span class="cov5" title="44">{
                         inputs++
                 }</span>
         }
-        <span class="cov5" title="36">switch </span>{
+        <span class="cov5" title="39">switch </span>{
         case inputs == 0:<span class="cov1" title="1">
                 errs = append(errs, fmt.Errorf("%w: set one of input-unix, input-tcp or input-tls", errNoInputConfigured))</span>
         case inputs &gt; 1:<span class="cov3" title="5">
                 errs = append(errs, fmt.Errorf("%w: set only one of input-unix, input-tcp or input-tls", errMultipleInputsConfigured))</span>
         }
 
-        <span class="cov5" title="36">if conf.InputTLS != "" </span><span class="cov3" title="7">{
+        <span class="cov5" title="39">if conf.InputTLS != "" </span><span class="cov3" title="7">{
                 if conf.InputTLSCertFile == "" </span><span class="cov1" title="2">{
                         errs = append(errs, errors.New("input-tls-cert-file must be set when input-tls is used"))
                 }</span>
@@ -957,46 +1160,46 @@ func (conf Config) Validate() (err error) <span class="cov5" title="36">{
                 }</span>
         }
 
-        <span class="cov5" title="36">if conf.HistogramHLLExplicitThreshold &lt; 1 </span><span class="cov2" title="3">{
+        <span class="cov5" title="39">if conf.HistogramHLLExplicitThreshold &lt; 1 </span><span class="cov2" title="3">{
                 errs = append(errs, errors.New("histogram-hll-explicit-threshold must be greater than 0"))
         }</span>
-        <span class="cov5" title="36">if conf.CryptopanAddressEntries &lt; 0 </span><span class="cov1" title="1">{
+        <span class="cov5" title="39">if conf.CryptopanAddressEntries &lt; 0 </span><span class="cov1" title="1">{
                 errs = append(errs, errors.New("cryptopan-address-entries must not be negative"))
         }</span>
 
-        <span class="cov5" title="36">if !conf.DisableMQTT </span><span class="cov5" title="32">{
+        <span class="cov5" title="39">if !conf.DisableMQTT </span><span class="cov5" title="36">{
                 for _, f := range []struct{ key, value string }{
                         {"mqtt-signing-key-file", conf.MQTTSigningKeyFile},
                         {"mqtt-client-key-file", conf.MQTTClientKeyFile},
                         {"mqtt-client-cert-file", conf.MQTTClientCertFile},
                         {"mqtt-server", conf.MQTTServer},
-                } </span><span class="cov7" title="128">{
+                } </span><span class="cov7" title="144">{
                         if f.value == "" </span><span class="cov2" title="4">{
                                 errs = append(errs, fmt.Errorf("%s must be set unless disable-mqtt is true", f.key))
                         }</span>
                 }
-                <span class="cov5" title="32">if conf.MQTTKeepalive == 0 </span><span class="cov1" title="1">{
+                <span class="cov5" title="36">if conf.MQTTKeepalive == 0 </span><span class="cov1" title="1">{
                         errs = append(errs, errors.New("mqtt-keepalive must be set unless disable-mqtt is true"))
                 }</span>
         }
 
-        <span class="cov5" title="36">if !conf.DisableHistogramSender </span><span class="cov5" title="32">{
+        <span class="cov5" title="39">if !conf.DisableHistogramSender </span><span class="cov5" title="36">{
                 for _, f := range []struct{ key, value string }{
                         {"http-signing-key-file", conf.HTTPSigningKeyFile},
                         {"http-client-key-file", conf.HTTPClientKeyFile},
                         {"http-client-cert-file", conf.HTTPClientCertFile},
                         {"http-url", conf.HTTPURL},
-                } </span><span class="cov7" title="128">{
+                } </span><span class="cov7" title="144">{
                         if f.value == "" </span><span class="cov3" title="5">{
                                 errs = append(errs, fmt.Errorf("%s must be set unless disable-histogram-sender is true", f.key))
                         }</span>
                 }
         }
 
-        <span class="cov5" title="36">if len(errs) &gt; 0 </span><span class="cov5" title="27">{
+        <span class="cov5" title="39">if len(errs) &gt; 0 </span><span class="cov5" title="27">{
                 err = fmt.Errorf("%w: %w", ErrInvalidConfig, errors.Join(errs...))
         }</span>
-        <span class="cov5" title="36">return</span>
+        <span class="cov5" title="39">return</span>
 }
 
 // ConfigProvider supplies the current runner configuration.
@@ -1007,32 +1210,116 @@ type ConfigProvider interface {
         GetConfig() (Config, error)
 }
 
-// ViperConfigProvider reads [Config] from the package-level Viper instance.
-type ViperConfigProvider struct{}
+// DefaultConfig returns the built-in defaults for [Config].
+//
+// It is the single source of truth for both the "run" command flag defaults
+// and the base layer [FileConfigProvider] starts from before applying the
+// config file and startup overrides.
+func DefaultConfig() (conf Config) <span class="cov5" title="44">{
+        conf = Config{
+                CryptopanKeySalt:              "edm-kdf-salt-val",
+                WellKnownDomainsFile:          "well-known-domains.dawg",
+                DataDir:                       "/var/lib/dnstapir/edm",
+                MinimiserWorkers:              1,
+                MQTTSigningKeyFile:            "edm-mqtt-signer-key.pem",
+                MQTTClientKeyFile:             "edm-mqtt-client-key.pem",
+                MQTTClientCertFile:            "edm-mqtt-client.pem",
+                MQTTServer:                    "127.0.0.1:8883",
+                MQTTKeepalive:                 30,
+                QnameSeenEntries:              10_000_000,
+                CryptopanAddressEntries:       10_000_000,
+                NewQnameBuffer:                1000,
+                HistogramHLLExplicitThreshold: 20,
+                HTTPSigningKeyFile:            "edm-http-signer-key.pem",
+                HTTPClientKeyFile:             "edm-http-client-key.pem",
+                HTTPClientCertFile:            "edm-http-client.pem",
+                HTTPURL:                       "https://127.0.0.1:8443",
+        }
+        return
+}</span>
 
-// GetConfig reads and validates Config from Viper.
-func (vc ViperConfigProvider) GetConfig() (Config, error) <span class="cov1" title="2">{
-        conf := Config{}
+// ConfigOverride applies one flag- or environment-derived value to a Config.
+//
+// Overrides are captured once at startup and re-applied on every config
+// reload, so command line and environment values always win over the config
+// file even after the file changes.
+type ConfigOverride func(*Config)
 
-        // Re-read the config file on every call so a SIGHUP-triggered reload
-        // always observes the current file contents rather than whatever Viper
-        // cached at startup.
-        err := viper.ReadInConfig()
-        if err != nil </span><span class="cov0" title="0">{
-                return Config{}, fmt.Errorf("getViperConfig: unable to read in config: %w", err)
+// FileConfigProvider reads [Config] from a TOML file, layering it as
+// [DefaultConfig] values overwritten by file contents overwritten by
+// overrides.
+//
+// It implements [ConfigProvider] and is safe for repeated GetConfig calls
+// from the runner's config reload goroutine.
+type FileConfigProvider struct {
+        path      string
+        overrides []ConfigOverride
+}
+
+// NewFileConfigProvider returns a provider reading the TOML file at path.
+func NewFileConfigProvider(path string, overrides ...ConfigOverride) *FileConfigProvider <span class="cov3" title="9">{
+        return &amp;FileConfigProvider{path: path, overrides: overrides}
+}</span>
+
+// Path returns the config file path the provider reads from.
+func (p *FileConfigProvider) Path() string <span class="cov1" title="1">{
+        return p.path
+}</span>
+
+// GetConfig reads and validates the configuration.
+//
+// The file is re-read on every call so a SIGHUP-triggered reload always
+// observes the current file contents. Unknown keys in the config file are
+// rejected; the returned error wraps [toml.StrictMissingError]. A decode or
+// strict-mode failure additionally carries go-toml's human-readable detail
+// (the offending key and source line). Validation failures wrap
+// [ErrInvalidConfig].
+func (p *FileConfigProvider) GetConfig() (conf Config, err error) <span class="cov3" title="9">{
+        var data []byte
+        data, err = os.ReadFile(p.path)
+        if err == nil </span><span class="cov3" title="8">{
+                conf = DefaultConfig()
+                dec := toml.NewDecoder(bytes.NewReader(data))
+                dec.DisallowUnknownFields()
+                err = dec.Decode(&amp;conf)
         }</span>
+        <span class="cov3" title="9">if err == nil </span><span class="cov3" title="5">{
+                for _, override := range p.overrides </span><span class="cov1" title="2">{
+                        override(&amp;conf)
+                }</span>
+                <span class="cov3" title="5">conf.ConfigFile = p.path
+                err = conf.Validate()</span>
+        }
+        <span class="cov3" title="9">if err != nil </span><span class="cov3" title="5">{
+                conf = Config{}
+                if detail := tomlErrorDetail(err); detail != "" </span><span class="cov2" title="3">{
+                        err = fmt.Errorf("GetConfig: %w\n%s", err, detail)
+                }</span> else<span class="cov1" title="2"> {
+                        err = fmt.Errorf("GetConfig: %w", err)
+                }</span>
+        }
+        <span class="cov3" title="9">return</span>
+}
 
-        <span class="cov1" title="2">err = viper.UnmarshalExact(&amp;conf)
-        if err != nil </span><span class="cov0" title="0">{
-                return Config{}, fmt.Errorf("getViperConfig: unable to unmarshal config: %w", err)
+// tomlErrorDetail returns go-toml's human-readable rendering of a decode or
+// strict-mode error, naming the offending key and source location. It
+// returns "" for errors that are not go-toml decode errors.
+//
+// go-toml's Error method is intentionally terse (for example "strict mode:
+// fields in the document are missing in the target struct"), so the detailed
+// rendering from its String method is surfaced alongside it. [toml.StrictMissingError]
+// is checked before [toml.DecodeError] because the former unwraps to the
+// latter and its String covers every missing field at once.
+func tomlErrorDetail(err error) string <span class="cov3" title="5">{
+        var strictErr *toml.StrictMissingError
+        if errors.As(err, &amp;strictErr) </span><span class="cov1" title="1">{
+                return strictErr.String()
         }</span>
-
-        <span class="cov1" title="2">err = conf.Validate()
-        if err != nil </span><span class="cov1" title="1">{
-                return Config{}, fmt.Errorf("getViperConfig: %w", err)
+        <span class="cov2" title="4">var decErr *toml.DecodeError
+        if errors.As(err, &amp;decErr) </span><span class="cov1" title="2">{
+                return decErr.String()
         }</span>
-
-        <span class="cov1" title="1">return conf, nil</span>
+        <span class="cov1" title="2">return ""</span>
 }
 
 func (edm *DnstapMinimiser) updateConfig() error <span class="cov7" title="144">{
@@ -1290,9 +1577,9 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
         <span class="cov7" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
-                for </span><span class="cov7" title="11">{
+                for </span><span class="cov7" title="12">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
                                 processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
                                 processWKDUpdate(wu)</span>
@@ -1332,9 +1619,9 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
         }
 
 <span class="cov7" title="9">collectorLoop:
-        for </span><span class="cov10" title="27">{
+        for </span><span class="cov10" title="26">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov5" title="5">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov4" title="4">
                         processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
@@ -1785,7 +2072,7 @@ func fillDependencies(deps dependencies) dependencies <span class="cov5" title="
 
 type osFileSystem struct{}
 
-func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="227">{
+func (osFileSystem) Open(name string) (fsFile, error) <span class="cov5" title="226">{
         return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 }</span>
 
@@ -1801,7 +2088,7 @@ func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" tit
         return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }</span>
 
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60014">{
+func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60012">{
         return os.ReadDir(name)
 }</span>
 
@@ -1823,11 +2110,11 @@ func (osFileSystem) Remove(name string) error <span class="cov3" title="12">{
 
 type realClock struct{}
 
-func (realClock) Now() time.Time <span class="cov4" title="54">{
+func (realClock) Now() time.Time <span class="cov4" title="52">{
         return time.Now()
 }</span>
 
-func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="7">{
+func (realClock) After(d time.Duration) &lt;-chan time.Time <span class="cov2" title="6">{
         return time.After(d)
 }</span>
 
@@ -1839,7 +2126,7 @@ type realTicker struct {
         *time.Ticker
 }
 
-func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62091">{
+func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62088">{
         return rt.Ticker.C
 }</span>
 
@@ -2533,7 +2820,7 @@ func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg
         <span class="cov4" title="5">edm.log.Info("histogramWriter: exiting loop")</span>
 }
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov6" title="13">{
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov7" title="13">{
         defer wg.Done()
 
         backoffDuration := edm.deps.HistogramSenderBackoff
@@ -2550,15 +2837,15 @@ func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir strin
                 stateString = "disabled"
         }</span>
 
-        <span class="cov6" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
+        <span class="cov7" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov10" title="47">{
+        for </span><span class="cov10" title="45">{
                 select </span>{
-                case &lt;-ticker.C():<span class="cov9" title="35">
+                case &lt;-ticker.C():<span class="cov9" title="33">
                         if conf.DisableHistogramSender </span><span class="cov8" title="21">{
                                 continue</span>
                         }
-                        <span class="cov7" title="14">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+                        <span class="cov6" title="12">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -2567,17 +2854,17 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov7" title="14">for _, dirEntry := range dirEntries </span><span class="cov6" title="10">{
+                        <span class="cov6" title="12">for _, dirEntry := range dirEntries </span><span class="cov6" title="9">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov6" title="10">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov6" title="10">{
+                                <span class="cov6" title="9">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov6" title="9">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
                                         if err != nil </span><span class="cov4" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
-                                        <span class="cov4" title="5">duration := stopTS.Sub(startTS)
+                                        <span class="cov4" title="4">duration := stopTS.Sub(startTS)
 
                                         absPath := filepath.Join(outboxDir, dirEntry.Name())
                                         absPathSent := filepath.Join(sentDir, dirEntry.Name())
@@ -2593,15 +2880,15 @@ timerLoop:
                                                 edm.log.Error("histogramSender: aggregate sender is not initialized")
                                                 continue</span>
                                         }
-                                        <span class="cov4" title="5">err = as.Send(ctx, absPath, startTS, duration)
-                                        if err != nil </span><span class="cov4" title="4">{
+                                        <span class="cov4" title="4">err = as.Send(ctx, absPath, startTS, duration)
+                                        if err != nil </span><span class="cov3" title="3">{
                                                 edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
                                                 select </span>{
-                                                case &lt;-edm.deps.Clock.After(backoffDuration):<span class="cov2" title="2"></span>
+                                                case &lt;-edm.deps.Clock.After(backoffDuration):<span class="cov1" title="1"></span>
                                                 case &lt;-ctx.Done():<span class="cov2" title="2">
                                                         break timerLoop</span>
                                                 }
-                                                <span class="cov2" title="2">continue</span>
+                                                <span class="cov1" title="1">continue</span>
                                         }
                                         <span class="cov1" title="1">err = edm.renameFile(absPath, absPathSent)
                                         if err != nil </span><span class="cov0" title="0">{
@@ -2626,7 +2913,7 @@ timerLoop:
                         break timerLoop</span>
                 }
         }
-        <span class="cov6" title="13">edm.log.Info("histogramSender: exiting loop")</span>
+        <span class="cov7" title="13">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
 // Unfortunately the hll library does not expose what format
@@ -2866,13 +3153,13 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" t
         // as that would race with hot-path readers still holding it. Reloads
         // leave the old finder for the GC to reclaim once no reader references
         // it (see the ignoredQuestions field comment on DnstapMinimiser).
-        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
                 edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
         }</span> else<span class="cov4" title="68"> {
                 edm.ignoredQuestions.Store(nil)
         }</span>
 
-        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
         }</span> else<span class="cov4" title="68"> {
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
@@ -2925,7 +3212,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         // Starts out as nil. We only set it to an initialized IPSet if there is at
         // least one ignored client CIDR present in the input file.
         <span class="cov5" title="211">var ipset *netipx.IPSet
-        if numCIDRs &gt; 0 </span><span class="cov4" title="142">{
+        if numCIDRs &gt; 0 </span><span class="cov5" title="142">{
                 ipset, err = b.IPSet()
                 if err != nil </span><span class="cov0" title="0">{
                         return fmt.Errorf("setIgnoredClientIPs: IPSet creation failed: %w", err)
@@ -2935,7 +3222,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">edm.ignoredClientsIPSet.Store(ipset)
         edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
-        if ipset != nil </span><span class="cov4" title="142">{
+        if ipset != nil </span><span class="cov5" title="142">{
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
         }</span> else<span class="cov4" title="69"> {
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
@@ -2944,7 +3231,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov8" title="10866">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="35051">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -2955,15 +3242,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov8" title="10909">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov9" title="35094">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov7" title="5727">{
+        if ipset == nil </span><span class="cov9" title="29142">{
                 return false
         }</span>
-        <span class="cov7" title="5182">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov8" title="5952">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -2973,30 +3260,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov7" title="5178">if ipset.Contains(clientIP) </span><span class="cov7" title="2693">{
+        <span class="cov8" title="5948">if ipset.Contains(clientIP) </span><span class="cov7" title="3084">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov7" title="2485">return false</span>
+        <span class="cov7" title="2864">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="103406">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="38751">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov9" title="47326">{
+        if holder == nil </span><span class="cov9" title="20578">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov9" title="56080">for _, question := range msg.Question </span><span class="cov9" title="56082">{
+        <span class="cov9" title="18173">for _, question := range msg.Question </span><span class="cov9" title="18175">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov8" title="17071">{
+                if dawgIndex != dawgNotFound </span><span class="cov8" title="5834">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov9" title="39009">return false</span>
+        <span class="cov9" title="12339">return false</span>
 }
 </pre>
 		
@@ -3732,7 +4019,7 @@ func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) <span class="
         }
 }
 
-func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="17">{
+func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="16">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3740,22 +4027,22 @@ func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Tim
                 err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
                 return
         }</span>
-        <span class="cov9" title="16">times := strings.Split(nameParts[1], "_")
+        <span class="cov9" title="15">times := strings.Split(nameParts[1], "_")
         if len(times) != 2 </span><span class="cov6" title="6">{
                 err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
                 return
         }</span>
-        <span class="cov7" title="10">startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
+        <span class="cov7" title="9">startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
         if err != nil </span><span class="cov3" title="2">{
                 err = fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
                 return
         }</span>
-        <span class="cov7" title="8">stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
+        <span class="cov6" title="7">stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
         if err != nil </span><span class="cov3" title="2">{
                 err = fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
                 return
         }</span>
-        <span class="cov6" title="6">return</span>
+        <span class="cov5" title="5">return</span>
 }
 
 func buildParquetFilenames(baseDir string, baseName string, timeStart time.Time, timeStop time.Time) (string, string) <span class="cov5" title="5">{
@@ -3959,7 +4246,7 @@ func (edm *DnstapMinimiser) applyUpdate(startConf Config) <span class="cov4" tit
 
                 if !reflect.DeepEqual(oldVal, newVal) </span><span class="cov3" title="6">{
                         if field.Tag.Get("reload") != "true" </span><span class="cov1" title="1">{
-                                edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("mapstructure"))
+                                edm.log.Warn("configUpdater: modified configuration requires restart", "struct_field", field.Name, "config_key", field.Tag.Get("toml"))
                         }</span>
                 }
         }
@@ -5173,26 +5460,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="56105">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="18198">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="50254">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="15993">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="72690">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="23265">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov8" title="11235">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="3644">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="44870">return dawgIndex, false</span>
+        <span class="cov9" title="14554">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5215,7 +5502,7 @@ func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) 
         return dawgIndex, suffixMatch, snap.dawgModTime
 }</span>
 
-func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov2" title="12">{
+func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov3" title="12">{
         defer wg.Done()
 
         for wu := range wkd.retryCh </span><span class="cov1" title="3">{
@@ -5242,11 +5529,11 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync
                 <span class="cov1" title="1">wkd.updateCh &lt;- wu</span>
         }
 
-        <span class="cov2" title="11">edm.log.Info("updateRetryer: exiting loop")
+        <span class="cov3" title="11">edm.log.Info("updateRetryer: exiting loop")
         close(wkd.retryerDone)</span>
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov2" title="10">{
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov3" title="10">{
         wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
@@ -5266,7 +5553,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }</span>
 
         // Counters based on header
-        <span class="cov2" title="10">switch msg.Rcode </span>{
+        <span class="cov3" title="10">switch msg.Rcode </span>{
         case dns.RcodeSuccess:<span class="cov2" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
@@ -5278,7 +5565,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov2" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov2" title="9">{
+        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov2" title="9">{
                 switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:<span class="cov2" title="5">
                         wu.ACount++</span>
@@ -5295,7 +5582,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 wu.NonINCount++
         }</span>
 
-        <span class="cov2" title="10">wkd.updateCh &lt;- wu</span>
+        <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov2" title="9">{
