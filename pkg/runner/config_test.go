@@ -2,14 +2,131 @@ package runner
 
 import (
 	"errors"
-	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/spf13/viper"
+	"github.com/pelletier/go-toml/v2"
 )
+
+// writeConfigFile writes data to a temp TOML file and returns its path.
+func writeConfigFile(t *testing.T, data string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "edm.toml")
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// minimalConfigData is the smallest config file content that passes
+// Config.Validate when layered over DefaultConfig.
+const minimalConfigData = "cryptopan-key = \"secret\"\ninput-unix = \"/tmp/dnstap.sock\"\n"
+
+func TestFileConfigProvider(t *testing.T) {
+	t.Run("defaults layered under file", func(t *testing.T) {
+		path := writeConfigFile(t, minimalConfigData+"data-dir = \"/srv/edm\"\n")
+		conf, err := NewFileConfigProvider(path).GetConfig()
+		if err != nil {
+			t.Fatalf("GetConfig: %s", err)
+		}
+		if conf.DataDir != "/srv/edm" {
+			t.Fatalf("DataDir = %q, want file value", conf.DataDir)
+		}
+		def := DefaultConfig()
+		if conf.MQTTServer != def.MQTTServer || conf.QnameSeenEntries != def.QnameSeenEntries {
+			t.Fatalf("defaults not applied: %#v", conf)
+		}
+		if conf.ConfigFile != path {
+			t.Fatalf("ConfigFile = %q, want %q", conf.ConfigFile, path)
+		}
+	})
+
+	t.Run("overrides win over file on every read", func(t *testing.T) {
+		path := writeConfigFile(t, minimalConfigData+"debug = false\n")
+		provider := NewFileConfigProvider(path, func(c *Config) { c.Debug = true })
+		for range 2 {
+			conf, err := provider.GetConfig()
+			if err != nil {
+				t.Fatalf("GetConfig: %s", err)
+			}
+			if !conf.Debug {
+				t.Fatal("override did not win over file value")
+			}
+		}
+	})
+
+	t.Run("unknown key is rejected with detail", func(t *testing.T) {
+		path := writeConfigFile(t, minimalConfigData+"no-such-key = true\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		var strictErr *toml.StrictMissingError
+		if !errors.As(err, &strictErr) {
+			t.Fatalf("GetConfig = %v, want *toml.StrictMissingError", err)
+		}
+		// The surfaced detail must name the offending key; the bare
+		// StrictMissingError.Error() does not.
+		if !strings.Contains(err.Error(), "no-such-key") {
+			t.Fatalf("GetConfig error %q should name the unknown key", err)
+		}
+	})
+
+	t.Run("malformed TOML is rejected with detail", func(t *testing.T) {
+		// An unterminated string is a syntax error, surfaced as a
+		// *toml.DecodeError rather than a strict-mode error.
+		path := writeConfigFile(t, "cryptopan-key = \"oops\ninput-unix = \"/tmp/dnstap.sock\"\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		var decErr *toml.DecodeError
+		if !errors.As(err, &decErr) {
+			t.Fatalf("GetConfig = %v, want *toml.DecodeError", err)
+		}
+		// The surfaced error must carry go-toml's detailed rendering (source
+		// line + caret) that DecodeError.String() produces and the bare
+		// DecodeError.Error() omits.
+		if !strings.Contains(err.Error(), decErr.String()) {
+			t.Fatalf("GetConfig error %q should surface the decode detail", err)
+		}
+	})
+
+	t.Run("type mismatch is rejected with detail", func(t *testing.T) {
+		// mqtt-keepalive is a uint16; a string value is a decode error.
+		path := writeConfigFile(t, minimalConfigData+"mqtt-keepalive = \"not-an-int\"\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		var decErr *toml.DecodeError
+		if !errors.As(err, &decErr) {
+			t.Fatalf("GetConfig = %v, want *toml.DecodeError for a type mismatch", err)
+		}
+		if !strings.Contains(err.Error(), "mqtt-keepalive") {
+			t.Fatalf("GetConfig error %q should name the offending key", err)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.toml")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		if !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("GetConfig = %v, want fs.ErrNotExist", err)
+		}
+	})
+
+	t.Run("validation failure wraps ErrInvalidConfig", func(t *testing.T) {
+		path := writeConfigFile(t, "input-unix = \"/tmp/dnstap.sock\"\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		if !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("GetConfig = %v, want ErrInvalidConfig", err)
+		}
+		if !strings.Contains(err.Error(), "cryptopan-key must be set") {
+			t.Fatalf("GetConfig = %v, want message containing %q", err, "cryptopan-key must be set")
+		}
+	})
+
+	t.Run("Path returns the configured path", func(t *testing.T) {
+		if got := NewFileConfigProvider("/etc/edm.toml").Path(); got != "/etc/edm.toml" {
+			t.Fatalf("Path() = %q", got)
+		}
+	})
+}
 
 // validValidateConfig returns a Config that passes [Config.Validate]. It
 // builds on defaultTestConfig, filling in the fields that helper leaves
@@ -318,39 +435,5 @@ func TestConfigValidate(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestViperConfigProviderGetConfigInvalidConfig(t *testing.T) {
-	// Reset global Viper state up front too, so leaked singleton state from
-	// an earlier test cannot affect this one (UnmarshalExact reads it all).
-	viper.Reset()
-	t.Cleanup(viper.Reset)
-
-	dir := t.TempDir()
-	configFile := filepath.Join(dir, "edm.toml")
-	// cryptopan-key is deliberately left out so [Config.Validate] rejects
-	// the otherwise complete configuration.
-	configData := fmt.Sprintf(`
-config-file = %q
-disable-histogram-sender = true
-disable-mqtt = true
-input-unix = "/run/edm/dnstap.sock"
-cryptopan-key-salt = "aabbccddeeffgghh"
-well-known-domains-file = "well-known-domains.dawg"
-histogram-hll-explicit-threshold = 20
-data-dir = %q
-`, configFile, dir)
-	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	viper.SetConfigFile(configFile)
-
-	_, err := ViperConfigProvider{}.GetConfig()
-	if !errors.Is(err, ErrInvalidConfig) {
-		t.Fatalf("GetConfig() err = %v, want errors.Is(err, ErrInvalidConfig)", err)
-	}
-	if !strings.Contains(err.Error(), "cryptopan-key must be set") {
-		t.Fatalf("GetConfig() err = %v, want message containing %q", err, "cryptopan-key must be set")
 	}
 }

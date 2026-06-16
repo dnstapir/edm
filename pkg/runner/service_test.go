@@ -12,8 +12,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/spf13/viper"
 )
 
 func TestNewDnstapMinimiserAPI(t *testing.T) {
@@ -82,8 +80,6 @@ func TestDnstapMinimiserRunGuards(t *testing.T) {
 }
 
 func TestRunWithDisabledSenders(t *testing.T) {
-	t.Cleanup(viper.Reset)
-
 	ctx, cancel := context.WithCancel(t.Context())
 
 	dir := t.TempDir()
@@ -108,7 +104,6 @@ newqname-buffer = 1
 	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	viper.SetConfigFile(configFile)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	level := new(slog.LevelVar)
@@ -136,7 +131,7 @@ newqname-buffer = 1
 			return input
 		},
 	}
-	edm, err := NewDnstapMinimiser(ViperConfigProvider{}, logger, WithLoggerLevel(level), withDependencies(deps))
+	edm, err := NewDnstapMinimiser(NewFileConfigProvider(configFile), logger, WithLoggerLevel(level), withDependencies(deps))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +175,6 @@ func TestRunReturnsDnstapInputRuntimeError(t *testing.T) {
 
 func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapMinimiser {
 	t.Helper()
-	runCoreCleanup(t)
 	tc := runCoreTC(t)
 	deps := newTestDependencies()
 	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {

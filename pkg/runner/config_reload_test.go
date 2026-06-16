@@ -205,10 +205,13 @@ func TestConfigUpdaterBranches(t *testing.T) {
 			startConf := edm.getConfig()
 			next := startConf
 			// DataDir has no reload:"true" tag, so changing it triggers the
-			// "requires restart" warning.
+			// "requires restart" warning. The warning names the changed key
+			// from its toml tag, so the message must carry "data-dir" (an
+			// empty config_key would mean the wrong struct tag was read).
 			next.DataDir = "/tmp/edm-changed"
 			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
-				return strings.Contains(buf.String(), "requires restart")
+				return strings.Contains(buf.String(), "requires restart") &&
+					strings.Contains(buf.String(), `"config_key":"data-dir"`)
 			})
 		})
 	})

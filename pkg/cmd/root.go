@@ -1,102 +1,115 @@
 package cmd
 
 import (
+	"errors"
+	"flag"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
-	"strings"
-
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
+	"path/filepath"
 )
 
-var (
-	cfgFile        string
-	edmLogger      *slog.Logger
-	edmLoggerLevel *slog.LevelVar
-	exitProcess    = os.Exit
-	userHomeDir    = os.UserHomeDir
-
-	viperSetConfigFile     = viper.SetConfigFile
-	viperAddConfigPath     = viper.AddConfigPath
-	viperSetConfigType     = viper.SetConfigType
-	viperSetConfigName     = viper.SetConfigName
-	viperSetEnvPrefix      = viper.SetEnvPrefix
-	viperSetEnvKeyReplacer = viper.SetEnvKeyReplacer
-	viperAutomaticEnv      = viper.AutomaticEnv
-	viperReadInConfig      = viper.ReadInConfig
-	viperConfigFileUsed    = viper.ConfigFileUsed
-)
-
+// envPrefix namespaces the environment variables read by [Execute]: every
+// flag of the "run" command can be set via envPrefix + "_" + the flag name
+// upper-cased with "-" replaced by "_".
 const envPrefix = "DNSTAPIR_EDM"
 
-// rootCmd represents the base command when called without any subcommands
-var rootCmd = &cobra.Command{
-	Use:   "dnstapir-edm",
-	Short: "dnstap(ir) minimiser",
-	Long: `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
-outputting minimised output data.`,
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
-}
+var (
+	edmLogger      *slog.Logger
+	edmLoggerLevel *slog.LevelVar
 
-// Execute adds all child commands to the root command and sets flags appropriately.
-// This is called by main.main(). It only needs to happen once to the rootCmd.
+	// Seams for tests.
+	exitProcess = os.Exit
+	userHomeDir = os.UserHomeDir
+	osArgs      = func() []string { return os.Args }
+)
+
+// errUnknownCommand is returned by dispatch for an unrecognized subcommand.
+var errUnknownCommand = errors.New("unknown command")
+
+// Execute parses the command line and dispatches to the matching subcommand.
+//
+// It is called by main.main(). On any error it terminates the process with
+// exit code 1; errors are reported on stderr (or the logger) before exiting.
 func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) {
-	// Set global variables so it can be used from run.go
 	edmLogger = logger
 	edmLoggerLevel = loggerLevel
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := dispatch(osArgs()[1:], os.Stdout, os.Stderr); err != nil {
 		exitProcess(1)
 	}
 }
 
-func init() {
-	cobra.OnInitialize(initConfig)
-
-	// Here you will define your flags and configuration settings.
-	// Cobra supports persistent flags, which, if defined here,
-	// will be global for your application.
-
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
-
-	// Cobra also supports local flags, which will only run
-	// when this action is called directly.
-	// rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-}
-
-// initConfig reads in config file and ENV variables if set.
-func initConfig() {
-	if cfgFile != "" {
-		// Use config file from the flag.
-		viperSetConfigFile(cfgFile)
-	} else {
-		// Find home directory.
-		home, err := userHomeDir()
-		cobra.CheckErr(err)
-
-		// Search config in home directory with name ".edm" (without extension).
-		viperAddConfigPath(home)
-		viperSetConfigType("toml")
-		viperSetConfigName(".dnstapir-edm")
-	}
-
-	configureEnv()
-
-	// If a config file is found, read it in. The running service re-reads
-	// it when reload is requested via SIGHUP.
-	if err := viperReadInConfig(); err == nil {
-		edmLogger.Info("using config file", "filename", viperConfigFileUsed())
-	}
-}
-
-// configureEnv isolates environment overrides to the [envPrefix] namespace.
+// dispatch routes args (os.Args[1:]) to a subcommand.
 //
-// It binds Viper to environment variables prefixed with [envPrefix], mapping
-// "-" in keys to "_", then enables automatic environment lookups.
-func configureEnv() {
-	viperSetEnvPrefix(envPrefix)
-	viperSetEnvKeyReplacer(strings.NewReplacer("-", "_"))
-	viperAutomaticEnv() // read in environment variables that match
+// Root-level flags (--config-file) may appear before the subcommand,
+// matching the systemd unit's "dnstapir-edm --config-file X run" invocation;
+// the "run" command also accepts --config-file after the subcommand, which
+// takes precedence. A bare invocation or "help" prints usage and succeeds;
+// an unrecognized subcommand prints usage on errW and returns an error
+// wrapping [errUnknownCommand].
+func dispatch(args []string, outW, errW io.Writer) (err error) {
+	rootFS := flag.NewFlagSet("dnstapir-edm", flag.ContinueOnError)
+	rootFS.SetOutput(errW)
+	var rootCfgFile string
+	rootFS.StringVar(&rootCfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
+	rootFS.Usage = func() { printUsage(errW, rootFS) }
+
+	// Stdlib flag parsing stops at the first non-flag argument, leaving the
+	// subcommand and its flags in rootFS.Args().
+	err = rootFS.Parse(args)
+	if errors.Is(err, flag.ErrHelp) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	rest := rootFS.Args()
+	if len(rest) == 0 || rest[0] == "help" {
+		printUsage(outW, rootFS)
+		return nil
+	}
+
+	switch rest[0] {
+	case "run":
+		err = runRun(rest[1:], rootCfgFile, errW)
+	default:
+		fmt.Fprintf(errW, "unknown command %q\n\n", rest[0])
+		printUsage(errW, rootFS)
+		err = fmt.Errorf("%w: %q", errUnknownCommand, rest[0])
+	}
+	return
+}
+
+// printUsage writes the top-level help text: the tool description, the
+// available commands and the root flags.
+func printUsage(w io.Writer, rootFS *flag.FlagSet) {
+	fmt.Fprintln(w, `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
+outputting minimised output data.
+
+Usage:
+  dnstapir-edm [flags] <command> [command flags]
+
+Commands:
+  run     Run dnstapir-edm in dnstap capture mode
+  help    Show this help text
+
+Flags:`)
+	rootFS.SetOutput(w)
+	rootFS.PrintDefaults()
+}
+
+// resolveConfigPath returns the config file to use: explicit when non-empty,
+// otherwise $HOME/.dnstapir-edm.toml.
+func resolveConfigPath(explicit string) (path string, err error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	var home string
+	home, err = userHomeDir()
+	if err == nil {
+		path = filepath.Join(home, ".dnstapir-edm.toml")
+	}
+	return
 }
