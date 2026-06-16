@@ -58,12 +58,41 @@ func TestFileConfigProvider(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown key is rejected", func(t *testing.T) {
+	t.Run("unknown key is rejected with detail", func(t *testing.T) {
 		path := writeConfigFile(t, minimalConfigData+"no-such-key = true\n")
 		_, err := NewFileConfigProvider(path).GetConfig()
 		var strictErr *toml.StrictMissingError
 		if !errors.As(err, &strictErr) {
 			t.Fatalf("GetConfig = %v, want *toml.StrictMissingError", err)
+		}
+		// The surfaced detail must name the offending key; the bare
+		// StrictMissingError.Error() does not.
+		if !strings.Contains(err.Error(), "no-such-key") {
+			t.Fatalf("GetConfig error %q should name the unknown key", err)
+		}
+	})
+
+	t.Run("malformed TOML is rejected with detail", func(t *testing.T) {
+		// An unterminated string is a syntax error, surfaced as a
+		// *toml.DecodeError rather than a strict-mode error.
+		path := writeConfigFile(t, "cryptopan-key = \"oops\ninput-unix = \"/tmp/dnstap.sock\"\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		var decErr *toml.DecodeError
+		if !errors.As(err, &decErr) {
+			t.Fatalf("GetConfig = %v, want *toml.DecodeError", err)
+		}
+	})
+
+	t.Run("type mismatch is rejected with detail", func(t *testing.T) {
+		// mqtt-keepalive is a uint16; a string value is a decode error.
+		path := writeConfigFile(t, minimalConfigData+"mqtt-keepalive = \"not-an-int\"\n")
+		_, err := NewFileConfigProvider(path).GetConfig()
+		var decErr *toml.DecodeError
+		if !errors.As(err, &decErr) {
+			t.Fatalf("GetConfig = %v, want *toml.DecodeError for a type mismatch", err)
+		}
+		if !strings.Contains(err.Error(), "mqtt-keepalive") {
+			t.Fatalf("GetConfig error %q should name the offending key", err)
 		}
 	})
 

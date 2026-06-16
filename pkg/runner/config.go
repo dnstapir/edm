@@ -213,8 +213,10 @@ func (p *FileConfigProvider) Path() string {
 //
 // The file is re-read on every call so a SIGHUP-triggered reload always
 // observes the current file contents. Unknown keys in the config file are
-// rejected; the returned error wraps [toml.StrictMissingError]. Validation
-// failures wrap [ErrInvalidConfig].
+// rejected; the returned error wraps [toml.StrictMissingError]. A decode or
+// strict-mode failure additionally carries go-toml's human-readable detail
+// (the offending key and source line). Validation failures wrap
+// [ErrInvalidConfig].
 func (p *FileConfigProvider) GetConfig() (conf Config, err error) {
 	var data []byte
 	data, err = os.ReadFile(p.path)
@@ -233,9 +235,34 @@ func (p *FileConfigProvider) GetConfig() (conf Config, err error) {
 	}
 	if err != nil {
 		conf = Config{}
-		err = fmt.Errorf("GetConfig: %w", err)
+		if detail := tomlErrorDetail(err); detail != "" {
+			err = fmt.Errorf("GetConfig: %w\n%s", err, detail)
+		} else {
+			err = fmt.Errorf("GetConfig: %w", err)
+		}
 	}
 	return
+}
+
+// tomlErrorDetail returns go-toml's human-readable rendering of a decode or
+// strict-mode error, naming the offending key and source location. It
+// returns "" for errors that are not go-toml decode errors.
+//
+// go-toml's Error method is intentionally terse (for example "strict mode:
+// fields in the document are missing in the target struct"), so the detailed
+// rendering from its String method is surfaced alongside it. [toml.StrictMissingError]
+// is checked before [toml.DecodeError] because the former unwraps to the
+// latter and its String covers every missing field at once.
+func tomlErrorDetail(err error) string {
+	var strictErr *toml.StrictMissingError
+	if errors.As(err, &strictErr) {
+		return strictErr.String()
+	}
+	var decErr *toml.DecodeError
+	if errors.As(err, &decErr) {
+		return decErr.String()
+	}
+	return ""
 }
 
 func (edm *DnstapMinimiser) updateConfig() error {
