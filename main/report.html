@@ -1607,7 +1607,7 @@ func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" tit
         return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }</span>
 
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60012">{
+func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60013">{
         return os.ReadDir(name)
 }</span>
 
@@ -1649,7 +1649,7 @@ type realTicker struct {
         *time.Ticker
 }
 
-func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62089">{
+func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62090">{
         return rt.Ticker.C
 }</span>
 
@@ -2372,13 +2372,13 @@ func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir strin
 
         <span class="cov7" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov10" title="45">{
+        for </span><span class="cov10" title="46">{
                 select </span>{
-                case &lt;-ticker.C():<span class="cov9" title="33">
+                case &lt;-ticker.C():<span class="cov9" title="34">
                         if conf.DisableHistogramSender </span><span class="cov8" title="21">{
                                 continue</span>
                         }
-                        <span class="cov6" title="12">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+                        <span class="cov7" title="13">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -2387,13 +2387,13 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov6" title="12">for _, dirEntry := range dirEntries </span><span class="cov5" title="8">{
+                        <span class="cov7" title="13">for _, dirEntry := range dirEntries </span><span class="cov6" title="9">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
-                                <span class="cov5" title="8">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov5" title="8">{
+                                <span class="cov6" title="9">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span><span class="cov6" title="9">{
                                         startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
-                                        if err != nil </span><span class="cov4" title="4">{
+                                        if err != nil </span><span class="cov4" title="5">{
                                                 edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
                                                 continue</span>
                                         }
@@ -2764,7 +2764,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="26138">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="43965">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -2775,15 +2775,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov10" title="26181">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov10" title="44008">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov9" title="20273">{
+        if ipset == nil </span><span class="cov8" title="4955">{
                 return false
         }</span>
-        <span class="cov8" title="5908">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov9" title="39053">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -2793,30 +2793,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov8" title="5904">if ipset.Contains(clientIP) </span><span class="cov8" title="3066">{
+        <span class="cov9" title="39049">if ipset.Contains(clientIP) </span><span class="cov9" title="22038">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov8" title="2838">return false</span>
+        <span class="cov9" title="17011">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov8" title="6297">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov8" title="10611">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov8" title="4557">{
+        if holder == nil </span><span class="cov8" title="4227">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov7" title="1740">for _, question := range msg.Question </span><span class="cov7" title="1742">{
+        <span class="cov8" title="6384">for _, question := range msg.Question </span><span class="cov8" title="6386">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov6" title="533">{
+                if dawgIndex != dawgNotFound </span><span class="cov7" title="1454">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov7" title="1207">return false</span>
+        <span class="cov8" title="4930">return false</span>
 }
 </pre>
 		
@@ -3541,7 +3541,7 @@ func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) <span class="
         }
 }
 
-func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="15">{
+func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) <span class="cov9" title="16">{
         // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
         trimmedName := strings.TrimSuffix(name, ".parquet")
         nameParts := strings.SplitN(trimmedName, "-", 2)
@@ -3549,8 +3549,8 @@ func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Tim
                 err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
                 return
         }</span>
-        <span class="cov8" title="14">times := strings.Split(nameParts[1], "_")
-        if len(times) != 2 </span><span class="cov5" title="5">{
+        <span class="cov9" title="15">times := strings.Split(nameParts[1], "_")
+        if len(times) != 2 </span><span class="cov6" title="6">{
                 err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
                 return
         }</span>
@@ -5165,7 +5165,7 @@ import (
 
         "github.com/miekg/dns"
         "github.com/smhanov/dawg"
-        "github.com/spaolacci/murmur3"
+        "github.com/twmb/murmur3"
 )
 
 const dawgNotFound = -1
@@ -5221,26 +5221,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="1765">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="6409">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="1563">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="6214">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="2294">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="8792">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov7" title="346">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="1274">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="1419">return dawgIndex, false</span>
+        <span class="cov9" title="5135">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5257,7 +5257,7 @@ type wkdUpdate struct {
         retryLimit  int
 }
 
-func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov4" title="15">{
+func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) <span class="cov3" title="15">{
         snap := wkd.snap.Load()
         dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
         return dawgIndex, suffixMatch, snap.dawgModTime
@@ -5315,7 +5315,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Counters based on header
         <span class="cov3" title="10">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov3" title="7">
+        case dns.RcodeSuccess:<span class="cov2" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
@@ -5346,7 +5346,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov3" title="6">{
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov2" title="6">{
         dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
