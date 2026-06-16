@@ -14,7 +14,7 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/spaolacci/murmur3"
+	"github.com/twmb/murmur3"
 	"go4.org/netipx"
 	"google.golang.org/protobuf/proto"
 )

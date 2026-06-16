@@ -17,9 +17,9 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/segmentio/go-hll v1.0.1
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
-	github.com/spaolacci/murmur3 v1.1.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
+	github.com/twmb/murmur3 v1.1.8
 	github.com/yaronf/httpsign v0.5.1
 	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
