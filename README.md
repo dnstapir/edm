@@ -52,17 +52,15 @@ against. A reload that fails to read a file logs an error and keeps the
 previous state. Changes to config keys that are not reloadable are logged with
 a warning saying a restart is required.
 
-Update a file by writing the new version to a temporary file and **renaming**
-it into the configured path (an atomic replace), then send `SIGHUP`. Do not
-edit or overwrite a file in place: the well-known-domains and
-ignored-question-names DAWG files are memory-mapped, and changing the bytes
-under a live mapping can crash the process (`SIGBUS`) or corrupt in-flight
-lookups. On reload `dnstapir-edm` copies each DAWG into a private
-`dawg-staging` directory under `data-dir` and memory-maps that copy, so the
-running service is insulated from later changes to the source file; for a
-large DAWG, keep the source on the same filesystem as `data-dir` so the extra
-copy is local. The operator is still responsible for delivering each source
-file atomically.
+Updating a DAWG is safe while the service runs. `dnstapir-edm` copies each
+memory-mapped DAWG (`well-known-domains-file`, `ignored-question-names-file`)
+into a private `dawg-staging` directory under `data-dir` and memory-maps that
+copy, so overwriting the source file — in place or by atomic rename — cannot
+disturb the live mapping or crash the service. Send `SIGHUP` once the new file
+is completely written; a signal received mid-write makes that one reload fail
+and keep the previous DAWG, so re-send it after the write finishes. For a
+large DAWG, keep the source on the same filesystem as `data-dir` so the staged
+copy is local.
 
 ### Inspecting the resulting files
 For inspecting the content you can use e.g. [DuckDB](https://duckdb.org) like
