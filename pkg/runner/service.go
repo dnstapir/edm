@@ -133,6 +133,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		}
 	}
 
+	// Clear any DAWG copies orphaned by a previous process before the first
+	// staged load below reads from the staging directory.
+	if err := edm.prepareDawgStaging(); err != nil {
+		return fmt.Errorf("unable to prepare DAWG staging directory: %w", err)
+	}
+
 	if err := edm.setIgnoredClientIPs(); err != nil {
 		return fmt.Errorf("unable to configure ignored client IPs: %w", err)
 	}
@@ -288,7 +294,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 
 	dawgFile := startConf.WellKnownDomainsFile
 
-	dawgFinder, dawgModTime, err := edm.deps.DawgLoader.LoadDawgFile(dawgFile)
+	dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(dawgFile)
 	if err != nil {
 		return fmt.Errorf("DawgLoader.LoadDawgFile failed: %w", err)
 	}

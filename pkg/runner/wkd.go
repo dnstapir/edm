@@ -205,7 +205,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
 	// operator fixes the file and sends a new SIGHUP.
 	if edm.dawgReloadRequested.CompareAndSwap(true, false) {
 		var err error
-		dawgFinder, dawgModTime, err = edm.deps.DawgLoader.LoadDawgFile(dawgFile)
+		dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
 		if err != nil {
 			return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
 		}

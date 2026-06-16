@@ -48,10 +48,19 @@ at: the Crypto-PAn key material, the ignored client IPs and ignored question
 names lists, the MQTT/HTTP client certificates and the well-known-domains
 DAWG file. The DAWG swap takes effect at the next histogram rotation (within
 a minute) since the collected histogram data is tied to the DAWG it was built
-against. Send the signal after all file changes are completely written. A
-reload that fails to read a file logs an error and keeps the previous state.
-Changes to config keys that are not reloadable are logged with a warning
-saying a restart is required.
+against. A reload that fails to read a file logs an error and keeps the
+previous state. Changes to config keys that are not reloadable are logged with
+a warning saying a restart is required.
+
+Updating a DAWG is safe while the service runs. `dnstapir-edm` copies each
+memory-mapped DAWG (`well-known-domains-file`, `ignored-question-names-file`)
+into a private `dawg-staging` directory under `data-dir` and memory-maps that
+copy, so overwriting the source file — in place or by atomic rename — cannot
+disturb the live mapping or crash the service. Send `SIGHUP` once the new file
+is completely written; a signal received mid-write makes that one reload fail
+and keep the previous DAWG, so re-send it after the write finishes. For a
+large DAWG, keep the source on the same filesystem as `data-dir` so the staged
+copy is local.
 
 ### Inspecting the resulting files
 For inspecting the content you can use e.g. [DuckDB](https://duckdb.org) like
