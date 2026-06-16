@@ -117,7 +117,7 @@ func TestConfigValidate(t *testing.T) {
 	}{
 		{
 			name:   "valid baseline",
-			mutate: func(c *Config) {},
+			mutate: func(*Config) {},
 		},
 		{
 			name: "valid with senders disabled and fields cleared",
