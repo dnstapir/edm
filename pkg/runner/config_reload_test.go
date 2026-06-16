@@ -122,7 +122,7 @@ func TestConfigUpdater(t *testing.T) {
 // to the process reaches configUpdater through a signal.Notify channel wired
 // the same way as in Run and triggers a reload.
 func TestConfigUpdaterSIGHUP(t *testing.T) {
-	edm := newSynctestDnstapMinimiser(t, defaultTC)
+	edm := newTestDnstapMinimiser(t, defaultTC)
 	startConf := edm.getConfig()
 	nextConf := startConf
 	nextConf.CryptopanKey = "key-sighup"
@@ -205,10 +205,13 @@ func TestConfigUpdaterBranches(t *testing.T) {
 			startConf := edm.getConfig()
 			next := startConf
 			// DataDir has no reload:"true" tag, so changing it triggers the
-			// "requires restart" warning.
+			// "requires restart" warning. The warning names the changed key
+			// from its toml tag, so the message must carry "data-dir" (an
+			// empty config_key would mean the wrong struct tag was read).
 			next.DataDir = "/tmp/edm-changed"
 			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
-				return strings.Contains(buf.String(), "requires restart")
+				return strings.Contains(buf.String(), "requires restart") &&
+					strings.Contains(buf.String(), `"config_key":"data-dir"`)
 			})
 		})
 	})
@@ -290,4 +293,27 @@ func TestConfigUpdaterBranches(t *testing.T) {
 			})
 		})
 	})
+}
+
+// TestWritableDataDirSurvivesReload pins that the writable data-dir installed
+// by the test constructors lives in the config provider, not only in the
+// cached Config. A SIGHUP reload re-reads Config from the provider through
+// updateConfig, so a data-dir held only in the cache would revert to the
+// read-only placeholder and break DAWG staging on the next rotation.
+func TestWritableDataDirSurvivesReload(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+
+	dir := edm.getConfig().DataDir
+	if dir == placeholderDataDir {
+		t.Fatalf("constructor left the placeholder data-dir %q in place", dir)
+	}
+
+	// updateConfig re-reads Config from the provider exactly as an SIGHUP
+	// reload does; the writable path must survive the round-trip.
+	if err := edm.updateConfig(); err != nil {
+		t.Fatalf("updateConfig: %s", err)
+	}
+	if got := edm.getConfig().DataDir; got != dir {
+		t.Fatalf("data-dir after reload = %q, want %q", got, dir)
+	}
 }

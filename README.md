@@ -58,9 +58,7 @@ into a private `dawg-staging` directory under `data-dir` and memory-maps that
 copy, so overwriting the source file — in place or by atomic rename — cannot
 disturb the live mapping or crash the service. Send `SIGHUP` once the new file
 is completely written; a signal received mid-write makes that one reload fail
-and keep the previous DAWG, so re-send it after the write finishes. For a
-large DAWG, keep the source on the same filesystem as `data-dir` so the staged
-copy is local.
+and keep the previous DAWG, so re-send it after the write finishes.
 
 ### Inspecting the resulting files
 For inspecting the content you can use e.g. [DuckDB](https://duckdb.org) like

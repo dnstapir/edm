@@ -28,8 +28,8 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/lestrrat-go/jwx/v2/jwa"
-	"github.com/lestrrat-go/jwx/v2/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
@@ -100,12 +100,12 @@ var (
 )
 
 // testConfiger is a ConfigProvider backed by a complete Config value. Tests
-// build on defaultTestConfig (which mirrors DefaultConfig) and override
-// individual fields rather than going through the config file decoding
+// build on defaultTestConfig (which mirrors pkg/cmd/run.go's flag defaults)
+// and override individual fields rather than going through the TOML decoding
 // pipeline. Embedding Config promotes every field so a test can do
 // `tc := defaultTC; tc.MQTTServer = "..."` directly.
 //
-// testConfiger is test-only; production wires FileConfigProvider.
+// testConfiger is test-only; production wires [FileConfigProvider].
 type testConfiger struct {
 	Config
 }
@@ -163,12 +163,14 @@ func newDefaultTC() testConfiger {
 }
 
 // useWritableDataDir replaces the default placeholder data-dir with a writable
-// temp dir so DAWG staging (which copies into data-dir) works. Tests that set
-// their own DataDir before or after construction are left untouched.
-func useWritableDataDir(t testing.TB, edm *DnstapMinimiser) {
+// temp dir so DAWG staging (which copies into data-dir) works. It mutates the
+// config provider before construction so the writable path also survives a
+// SIGHUP reload, which re-reads Config from the provider. Tests that set their
+// own DataDir are left untouched.
+func useWritableDataDir(t testing.TB, tc *testConfiger) {
 	t.Helper()
-	if edm.conf.DataDir == placeholderDataDir {
-		edm.conf.DataDir = t.TempDir()
+	if tc.DataDir == placeholderDataDir {
+		tc.DataDir = t.TempDir()
 	}
 }
 
@@ -180,6 +182,7 @@ func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 
 func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -188,13 +191,13 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
 
 func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
@@ -203,7 +206,6 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
@@ -232,6 +234,7 @@ func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser 
 
 func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
 	t.Helper()
+	useWritableDataDir(t, &tc)
 
 	deps := newTestDependencies()
 
@@ -239,7 +242,6 @@ func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger 
 	if err != nil {
 		t.Fatalf("unable to setup edm: %s", err)
 	}
-	useWritableDataDir(t, edm)
 
 	return edm
 }
@@ -356,7 +358,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	key, err := jwk.FromRaw(priv)
+	key, err := jwk.Import(priv)
 	if err != nil {
 		testJWKJSONErr = err
 		return
@@ -365,7 +367,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA); err != nil {
+	if err := key.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
 		testJWKJSONErr = err
 		return
 	}
