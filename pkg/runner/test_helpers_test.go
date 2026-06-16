@@ -115,6 +115,11 @@ func (tc testConfiger) GetConfig() (Config, error) {
 	return tc.Config, nil
 }
 
+// placeholderDataDir is the non-writable data-dir defaultTestConfig uses as a
+// stand-in. The test minimiser constructors swap it for a writable temp dir
+// (see useWritableDataDir) so DAWG staging, which copies into data-dir, works.
+const placeholderDataDir = "/var/lib/dnstapir/edm"
+
 // defaultTestConfig returns a config populated with pkg/cmd/run.go's flag
 // defaults for the scalar/path fields. URL- and address-typed fields
 // (MQTTServer, HTTPURL) are deliberately left empty because run.go's
@@ -124,12 +129,6 @@ func (tc testConfiger) GetConfig() (Config, error) {
 //
 // testConfiger does not call [Config.Validate], so the unset required
 // fields do not block construction.
-
-// placeholderDataDir is the non-writable data-dir defaultTestConfig uses as a
-// stand-in. The test minimiser constructors swap it for a writable temp dir
-// (see useWritableDataDir) so DAWG staging, which copies into data-dir, works.
-const placeholderDataDir = "/var/lib/dnstapir/edm"
-
 func defaultTestConfig() Config {
 	return Config{
 		ConfigFile:                    "edm.toml",

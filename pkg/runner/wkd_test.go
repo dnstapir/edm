@@ -203,6 +203,7 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 		t.Fatalf("newWellKnownDomainsTracker: %s", err)
 	}
 	edm := discardEDM()
+	edm.conf.DataDir = t.TempDir()
 
 	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %s", err)
