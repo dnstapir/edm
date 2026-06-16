@@ -18,7 +18,7 @@ const defaultLabelLimit = 10
 // flags in pkg/cmd. Validation rules are enforced by [Config.Validate].
 type Config struct {
 	ConfigFile                    string `toml:"config-file"`
-	DisableSessionFiles           bool   `toml:"disable-session-files"`
+	DisableSessionFiles           bool   `toml:"disable-session-files" reload:"true"`
 	DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `toml:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
@@ -32,7 +32,7 @@ type Config struct {
 	InputTLSClientCAFile          string `toml:"input-tls-client-ca-file"`
 	CryptopanKey                  string `toml:"cryptopan-key" reload:"true"`
 	CryptopanKeySalt              string `toml:"cryptopan-key-salt" reload:"true"`
-	WellKnownDomainsFile          string `toml:"well-known-domains-file"`
+	WellKnownDomainsFile          string `toml:"well-known-domains-file" reload:"true"`
 	HistogramHLLExplicitThreshold int    `toml:"histogram-hll-explicit-threshold"`
 	IgnoredClientIPsFile          string `toml:"ignored-client-ips-file" reload:"true"`
 	IgnoredQuestionNamesFile      string `toml:"ignored-question-names-file" reload:"true"`
