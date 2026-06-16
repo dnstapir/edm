@@ -93,9 +93,15 @@ func envName(flagName string) string {
 // It must run before fs.Parse so flags given on the command line overwrite
 // values taken from the environment. An environment value that fails the
 // flag's parser is reported as an error naming the variable.
+//
+// "config-file" is excluded: it selects the config path rather than a config
+// value, and the path is resolved from the run/root flags alone (see
+// [buildRunProvider]). This keeps an explicit --config-file from being
+// shadowed by the environment and matches the pre-migration behavior, where
+// the environment never chose the config file.
 func applyEnvOverrides(fs *flag.FlagSet) (err error) {
 	fs.VisitAll(func(f *flag.Flag) {
-		if err != nil {
+		if err != nil || f.Name == "config-file" {
 			return
 		}
 		if val, ok := os.LookupEnv(envName(f.Name)); ok {
@@ -199,11 +205,12 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 // and returns the configured provider.
 //
 // rootCfgFile is a --config-file given before the subcommand; run's own
-// --config-file flag wins over it. The environment is applied to the flagset
-// before fs.Parse so the precedence is CLI flag over environment variable
-// over config file over flag default. fs.Visit afterwards enumerates exactly
-// the union of env-set and CLI-set flags, which becomes the immutable
-// override layer re-applied on every config reload.
+// --config-file flag wins over it, and neither is settable via the
+// environment (see [applyEnvOverrides]). For every other flag the environment
+// is applied to the flagset before fs.Parse so the precedence is CLI flag
+// over environment variable over config file over flag default. fs.Visit
+// afterwards enumerates exactly the union of env-set and CLI-set flags, which
+// becomes the immutable override layer re-applied on every config reload.
 func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provider *runner.FileConfigProvider, err error) {
 	// flagConf escapes into the override closures, which outlive this call.
 	flagConf := new(runner.Config)

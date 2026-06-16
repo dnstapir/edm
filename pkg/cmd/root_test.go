@@ -79,19 +79,15 @@ func TestDispatch(t *testing.T) {
 			wantErrSub: "Usage:",
 		},
 		{
-			name: "run --help succeeds",
-			args: []string{"run", "--help"},
+			name:       "run --help prints run flags",
+			args:       []string{"run", "--help"},
+			wantErrSub: "cryptopan-key",
 		},
 		{
 			name:       "unknown command errors",
 			args:       []string{"frobnicate"},
 			wantErr:    errUnknownCommand,
 			wantErrSub: `unknown command "frobnicate"`,
-		},
-		{
-			name:    "bad root flag errors",
-			args:    []string{"--no-such-flag"},
-			wantErr: nil, // flag package synthesizes its own error
 		},
 	}
 
@@ -105,7 +101,7 @@ func TestDispatch(t *testing.T) {
 			if tc.wantErr != nil && !errors.Is(err, tc.wantErr) {
 				t.Fatalf("dispatch() = %v, want errors.Is(err, %v)", err, tc.wantErr)
 			}
-			if tc.wantErr == nil && tc.name != "bad root flag errors" && err != nil {
+			if tc.wantErr == nil && err != nil {
 				t.Fatalf("dispatch() = %v, want nil", err)
 			}
 			if tc.wantOutSub != "" && !strings.Contains(outW.String(), tc.wantOutSub) {
@@ -142,6 +138,39 @@ func TestDispatchRunReportsMissingConfigFile(t *testing.T) {
 	err = dispatch([]string{"--config-file", missing, "run", "--config-file", missingRun}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), missingRun) {
 		t.Fatalf("dispatch() = %v, want error mentioning %q", err, missingRun)
+	}
+}
+
+// TestConfigFileNotSettableViaEnv pins that DNSTAPIR_EDM_CONFIG_FILE does not
+// select the config path: an explicit --config-file must win over it, and with
+// no flag the environment value is ignored entirely (the path falls back to
+// the home default). This matches the pre-migration viper behavior.
+func TestConfigFileNotSettableViaEnv(t *testing.T) {
+	restoreCmdGlobals(t)
+	edmLogger, edmLoggerLevel = testLogger()
+
+	configFile := writeTestConfig(t, "")
+	bogus := filepath.Join(t.TempDir(), "from-env.toml")
+	t.Setenv("DNSTAPIR_EDM_CONFIG_FILE", bogus)
+
+	// A root-level --config-file must win over the env var, not be shadowed.
+	provider, err := buildRunProvider(nil, configFile, io.Discard)
+	if err != nil {
+		t.Fatalf("buildRunProvider: %s", err)
+	}
+	if provider.Path() != configFile {
+		t.Fatalf("Path() = %q, want %q (env must not override --config-file)", provider.Path(), configFile)
+	}
+
+	// With no --config-file at all, the env var is ignored and the path falls
+	// back to the home default rather than the env value.
+	userHomeDir = func() (string, error) { return "/home/tester", nil }
+	provider, err = buildRunProvider(nil, "", io.Discard)
+	if err != nil {
+		t.Fatalf("buildRunProvider: %s", err)
+	}
+	if want := "/home/tester/.dnstapir-edm.toml"; provider.Path() != want {
+		t.Fatalf("Path() = %q, want %q (env must be ignored)", provider.Path(), want)
 	}
 }
 
@@ -333,6 +362,29 @@ func TestBuildRunProviderReportsErrors(t *testing.T) {
 			t.Fatal("buildRunProvider succeeded, want error")
 		}
 		if !strings.Contains(errW.String(), "unexpected argument") {
+			t.Fatalf("error not reported to writer: %q", errW.String())
+		}
+	})
+
+	// mqtt-keepalive is the only flag with a hand-written parser (fs.Func),
+	// so it is the only CLI value that can fail to parse; both the
+	// non-numeric and the uint16-overflow paths must error and name the flag.
+	t.Run("invalid mqtt-keepalive value", func(t *testing.T) {
+		var errW bytes.Buffer
+		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "not-a-number"}, "", &errW); err == nil {
+			t.Fatal("buildRunProvider succeeded, want error")
+		}
+		if !strings.Contains(errW.String(), "mqtt-keepalive") {
+			t.Fatalf("error not reported to writer: %q", errW.String())
+		}
+	})
+
+	t.Run("out-of-range mqtt-keepalive value", func(t *testing.T) {
+		var errW bytes.Buffer
+		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "70000"}, "", &errW); err == nil {
+			t.Fatal("buildRunProvider succeeded with overflowing keepalive, want error")
+		}
+		if !strings.Contains(errW.String(), "mqtt-keepalive") {
 			t.Fatalf("error not reported to writer: %q", errW.String())
 		}
 	})

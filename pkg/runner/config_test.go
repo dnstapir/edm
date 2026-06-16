@@ -81,6 +81,12 @@ func TestFileConfigProvider(t *testing.T) {
 		if !errors.As(err, &decErr) {
 			t.Fatalf("GetConfig = %v, want *toml.DecodeError", err)
 		}
+		// The surfaced error must carry go-toml's detailed rendering (source
+		// line + caret) that DecodeError.String() produces and the bare
+		// DecodeError.Error() omits.
+		if !strings.Contains(err.Error(), decErr.String()) {
+			t.Fatalf("GetConfig error %q should surface the decode detail", err)
+		}
 	})
 
 	t.Run("type mismatch is rejected with detail", func(t *testing.T) {

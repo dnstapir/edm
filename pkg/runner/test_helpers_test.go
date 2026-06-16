@@ -120,34 +120,29 @@ func (tc testConfiger) GetConfig() (Config, error) {
 // (see useWritableDataDir) so DAWG staging, which copies into data-dir, works.
 const placeholderDataDir = "/var/lib/dnstapir/edm"
 
-// defaultTestConfig returns a config populated with pkg/cmd/run.go's flag
-// defaults for the scalar/path fields. URL- and address-typed fields
-// (MQTTServer, HTTPURL) are deliberately left empty because run.go's
-// defaults (`127.0.0.1:8883`, etc.) are bare host:port values that fail
-// `url.Parse` for autopaho/HTTP — those defaults are only useful once a
-// scheme is added at the CLI layer, so tests must opt in by setting them.
+// defaultTestConfig returns a config built from the production defaults
+// ([DefaultConfig]) so the two cannot drift, with three test-specific
+// adjustments:
 //
-// testConfiger does not call [Config.Validate], so the unset required
-// fields do not block construction.
+//   - ConfigFile is pinned ([DefaultConfig] leaves it empty) so it has a
+//     stable value for tests that read it.
+//   - DataDir is pinned to [placeholderDataDir] so the minimiser constructors
+//     swap it for a writable temp dir (see useWritableDataDir).
+//   - The URL- and address-typed fields (MQTTServer, HTTPURL) are cleared
+//     because their defaults (`127.0.0.1:8883`, etc.) are bare host:port
+//     values that fail `url.Parse` for autopaho/HTTP — those defaults are only
+//     useful once a scheme is added at the CLI layer, so tests opt in by
+//     setting them.
+//
+// testConfiger does not call [Config.Validate], so the unset required fields
+// do not block construction.
 func defaultTestConfig() Config {
-	return Config{
-		ConfigFile:                    "edm.toml",
-		WellKnownDomainsFile:          "well-known-domains.dawg",
-		DataDir:                       placeholderDataDir,
-		MinimiserWorkers:              1,
-		CryptopanKeySalt:              "edm-kdf-salt-val",
-		QnameSeenEntries:              10_000_000,
-		CryptopanAddressEntries:       10_000_000,
-		NewQnameBuffer:                1000,
-		HistogramHLLExplicitThreshold: 20,
-		MQTTSigningKeyFile:            "edm-mqtt-signer-key.pem",
-		MQTTClientKeyFile:             "edm-mqtt-client-key.pem",
-		MQTTClientCertFile:            "edm-mqtt-client.pem",
-		MQTTKeepalive:                 30,
-		HTTPSigningKeyFile:            "edm-http-signer-key.pem",
-		HTTPClientKeyFile:             "edm-http-client-key.pem",
-		HTTPClientCertFile:            "edm-http-client.pem",
-	}
+	c := DefaultConfig()
+	c.ConfigFile = "edm.toml"
+	c.DataDir = placeholderDataDir
+	c.MQTTServer = ""
+	c.HTTPURL = ""
+	return c
 }
 
 // newDefaultTC builds the testConfiger used by most tests. It starts from
