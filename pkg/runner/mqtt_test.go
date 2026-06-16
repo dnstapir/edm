@@ -191,6 +191,69 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 	})
 }
 
+// TestMqttSignWorkerSkipsKeyWithoutAlgorithm pins the no-algorithm branch:
+// when the signing key reports no algorithm (Algorithm returns ok=false),
+// the worker logs and skips the message instead of signing or exiting.
+//
+// Like the wrong-algorithm case, a skipped message must not terminate the
+// long-lived worker, so the test also confirms a later well-formed message
+// is signed once the algorithm is restored.
+func TestMqttSignWorkerSkipsKeyWithoutAlgorithm(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		defer cleanupTestMinimiser(edm)
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+
+		priv, pub := testJWKPair(t)
+
+		// Drop the algorithm so Algorithm() reports ok=false and the
+		// worker takes the no-algorithm skip path.
+		if err := priv.Remove(jwk.AlgorithmKey); err != nil {
+			t.Fatalf("remove Algorithm: %s", err)
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go edm.mqttSignWorker(ctx, &wg, priv)
+
+		// The worker cannot sign this message and must skip it.
+		edm.mqttPubCh <- []byte("no-alg-payload")
+
+		synctest.Wait()
+		select {
+		case got := <-edm.mqttSignedCh:
+			t.Fatalf("mqttSignedCh unexpectedly received: %q", got)
+		default:
+		}
+
+		// Restoring the algorithm lets the worker sign a later message,
+		// proving the skip did not terminate the goroutine.
+		if err := priv.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil {
+			t.Fatalf("restore Algorithm: %s", err)
+		}
+		good := []byte(`{"ok":true}`)
+		edm.mqttPubCh <- good
+
+		select {
+		case signed := <-edm.mqttSignedCh:
+			got, err := jws.Verify(signed, jws.WithKey(jwa.EdDSA(), pub))
+			if err != nil {
+				t.Fatalf("jws.Verify: %s", err)
+			}
+			if string(got) != string(good) {
+				t.Fatalf("payload mismatch have: %s want: %s", got, good)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for signed message after recovery")
+		}
+
+		close(edm.mqttPubCh)
+		waitOrFail(t, &wg, 2*time.Second, "mqttSignWorker did not exit cleanly")
+	})
+}
+
 type blockingMQTTConnectionManager struct {
 	publishStarted chan []byte
 	release        chan struct{}

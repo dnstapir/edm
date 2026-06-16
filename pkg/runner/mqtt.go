@@ -161,13 +161,12 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGroup, mqttJWK jwk.Key) {
 	defer wg.Done()
 	for unsignedMsg := range edm.mqttPubCh {
-		// The algorithm is read per message so a key whose alg field
-		// is cleared or replaced mid-run is picked up; a key without
-		// an algorithm cannot be signed with, so such messages are
-		// logged and skipped.
+		// The signing algorithm is read from the key for each message.
+		// A key without an algorithm cannot be used to sign, so the
+		// message is logged and skipped rather than aborting the worker.
 		alg, ok := mqttJWK.Algorithm()
 		if !ok {
-			edm.log.Error("mqttSignWorker: failed to create JWS message", "error", "JWK has no algorithm set")
+			edm.log.Error("mqttSignWorker: skipping message, JWK has no algorithm set")
 			continue
 		}
 		signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(alg, mqttJWK))

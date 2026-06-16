@@ -468,9 +468,10 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 		return nil, err
 	}
 
-	// A missing crv leaves the zero EllipticCurveAlgorithm, which fails
-	// the curve check below just like an unknown curve, so the ok values
-	// can be discarded.
+	// jwk.ParseKey rejects an OKP key without a crv, so the ok value is
+	// always true here. Even if it were not, Crv reports an invalid curve
+	// that fails the Ed25519/Ed448 check below, so the ok value can be
+	// discarded.
 	var crv jwa.EllipticCurveAlgorithm
 	switch key := jwkKey.(type) {
 	case jwk.OKPPrivateKey:
