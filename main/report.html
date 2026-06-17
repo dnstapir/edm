@@ -57,9 +57,9 @@
 				
 				<option value="file0">github.com/dnstapir/edm/cmd/dnstapir-edm/main.go (73.3%)</option>
 				
-				<option value="file1">github.com/dnstapir/edm/pkg/cmd/root.go (97.2%)</option>
+				<option value="file1">github.com/dnstapir/edm/pkg/cmd/root.go (96.3%)</option>
 				
-				<option value="file2">github.com/dnstapir/edm/pkg/cmd/run.go (96.6%)</option>
+				<option value="file2">github.com/dnstapir/edm/pkg/cmd/run.go (95.7%)</option>
 				
 				<option value="file3">github.com/dnstapir/edm/pkg/protocols/protocols.go (100.0%)</option>
 				
@@ -71,7 +71,7 @@
 				
 				<option value="file7">github.com/dnstapir/edm/pkg/runner/cryptopan.go (95.5%)</option>
 				
-				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (90.3%)</option>
+				<option value="file8">github.com/dnstapir/edm/pkg/runner/data_collector.go (88.3%)</option>
 				
 				<option value="file9">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (77.4%)</option>
 				
@@ -193,6 +193,7 @@ func main() <span class="cov0" title="0">{
 		<pre class="file" id="file1" style="display: none">package cmd
 
 import (
+        "bytes"
         "errors"
         "flag"
         "fmt"
@@ -200,6 +201,8 @@ import (
         "log/slog"
         "os"
         "path/filepath"
+
+        "github.com/dnstapir/edm/pkg/runner"
 )
 
 // envPrefix namespaces the environment variables read by [Execute]: every
@@ -224,7 +227,7 @@ var errUnknownCommand = errors.New("unknown command")
 //
 // It is called by main.main(). On any error it terminates the process with
 // exit code 1; errors are reported on stderr (or the logger) before exiting.
-func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov3" title="2">{
+func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov2" title="2">{
         edmLogger = logger
         edmLoggerLevel = loggerLevel
         if err := dispatch(osArgs()[1:], os.Stdout, os.Stderr); err != nil </span><span class="cov1" title="1">{
@@ -240,43 +243,55 @@ func Execute(logger *slog.Logger, loggerLevel *slog.LevelVar) <span class="cov3"
 // takes precedence. A bare invocation or "help" prints usage and succeeds;
 // an unrecognized subcommand prints usage on errW and returns an error
 // wrapping [errUnknownCommand].
-func dispatch(args []string, outW, errW io.Writer) (err error) <span class="cov9" title="11">{
+func dispatch(args []string, outW, errW io.Writer) (err error) <span class="cov4" title="12">{
         rootFS := flag.NewFlagSet("dnstapir-edm", flag.ContinueOnError)
         rootFS.SetOutput(errW)
         var rootCfgFile string
         rootFS.StringVar(&amp;rootCfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
-        rootFS.Usage = func() </span><span class="cov3" title="2">{ printUsage(errW, rootFS) }</span>
+        var usage bytes.Buffer
+        rootFS.Usage = func() </span><span class="cov2" title="3">{
+                usage.Reset()
+                printUsage(&amp;usage, rootFS)
+        }</span>
 
         // Stdlib flag parsing stops at the first non-flag argument, leaving the
         // subcommand and its flags in rootFS.Args().
-        <span class="cov9" title="11">err = rootFS.Parse(args)
-        if errors.Is(err, flag.ErrHelp) </span><span class="cov1" title="1">{
-                return nil
+        <span class="cov4" title="12">err = rootFS.Parse(args)
+        if errors.Is(err, flag.ErrHelp) </span><span class="cov2" title="2">{
+                _, err = io.Copy(outW, &amp;usage)
+                return
         }</span>
-        <span class="cov9" title="10">if err != nil </span><span class="cov1" title="1">{
-                return err
-        }</span>
+        <span class="cov4" title="10">if err != nil </span><span class="cov1" title="1">{
+                if _, copyErr := io.Copy(errW, &amp;usage); copyErr != nil </span><span class="cov0" title="0">{
+                        err = errors.Join(err, copyErr)
+                }</span>
+                <span class="cov1" title="1">return err</span>
+        }
 
-        <span class="cov8" title="9">rest := rootFS.Args()
-        if len(rest) == 0 || rest[0] == "help" </span><span class="cov4" title="3">{
+        <span class="cov4" title="9">rest := rootFS.Args()
+        if len(rest) == 0 || rest[0] == "help" </span><span class="cov2" title="3">{
                 printUsage(outW, rootFS)
                 return nil
         }</span>
 
-        <span class="cov7" title="6">switch rest[0] </span>{
-        case "run":<span class="cov5" title="4">
-                err = runRun(rest[1:], rootCfgFile, errW)</span>
-        default:<span class="cov3" title="2">
+        <span class="cov3" title="6">switch rest[0] </span>{
+        case "run":<span class="cov3" title="4">
+                err = runRun(rest[1:], rootCfgFile, outW, errW)</span>
+        default:<span class="cov2" title="2">
                 fmt.Fprintf(errW, "unknown command %q\n\n", rest[0])
                 printUsage(errW, rootFS)
                 err = fmt.Errorf("%w: %q", errUnknownCommand, rest[0])</span>
         }
-        <span class="cov7" title="6">return</span>
+        <span class="cov3" title="6">return</span>
 }
 
 // printUsage writes the top-level help text: the tool description, the
-// available commands and the root flags.
-func printUsage(w io.Writer, rootFS *flag.FlagSet) <span class="cov8" title="8">{
+// available commands, the root flags and the full set of "run" command flags.
+//
+// The "run" command carries every operational flag, so its flagset is built
+// and printed here too; that keeps "help"/"-help" documenting the complete
+// flag set and prevents the help text from drifting from [newRunFlagSet].
+func printUsage(w io.Writer, rootFS *flag.FlagSet) <span class="cov4" title="9">{
         fmt.Fprintln(w, `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
 outputting minimised output data.
 
@@ -290,26 +305,50 @@ Commands:
 Flags:`)
         rootFS.SetOutput(w)
         rootFS.PrintDefaults()
+
+        fmt.Fprintln(w, "\nRun command flags:")
+        runFS := newRunFlagSet(new(runner.Config))
+        printFlagDefaultsExcept(w, runFS, "config-file")
 }</span>
+
+// printFlagDefaultsExcept prints a flag set using the stdlib formatter while
+// omitting names that are documented elsewhere in the same usage text.
+func printFlagDefaultsExcept(w io.Writer, fs *flag.FlagSet, excluded ...string) <span class="cov4" title="9">{
+        skip := make(map[string]struct{}, len(excluded))
+        for _, name := range excluded </span><span class="cov4" title="9">{
+                skip[name] = struct{}{}
+        }</span>
+
+        <span class="cov4" title="9">filtered := flag.NewFlagSet(fs.Name(), flag.ContinueOnError)
+        filtered.SetOutput(w)
+        fs.VisitAll(func(f *flag.Flag) </span><span class="cov10" title="351">{
+                if _, ok := skip[f.Name]; ok </span><span class="cov4" title="9">{
+                        return
+                }</span>
+                <span class="cov9" title="342">filtered.Var(f.Value, f.Name, f.Usage)</span>
+        })
+        <span class="cov4" title="9">filtered.PrintDefaults()</span>
+}
 
 // resolveConfigPath returns the config file to use: explicit when non-empty,
 // otherwise $HOME/.dnstapir-edm.toml.
-func resolveConfigPath(explicit string) (path string, err error) <span class="cov10" title="13">{
-        if explicit != "" </span><span class="cov9" title="10">{
+func resolveConfigPath(explicit string) (path string, err error) <span class="cov4" title="13">{
+        if explicit != "" </span><span class="cov4" title="10">{
                 return explicit, nil
         }</span>
-        <span class="cov4" title="3">var home string
+        <span class="cov2" title="3">var home string
         home, err = userHomeDir()
-        if err == nil </span><span class="cov3" title="2">{
+        if err == nil </span><span class="cov2" title="2">{
                 path = filepath.Join(home, ".dnstapir-edm.toml")
         }</span>
-        <span class="cov4" title="3">return</span>
+        <span class="cov2" title="3">return</span>
 }
 </pre>
 		
 		<pre class="file" id="file2" style="display: none">package cmd
 
 import (
+        "bytes"
         "context"
         "errors"
         "flag"
@@ -329,7 +368,7 @@ import (
 // Flag values are bound directly to fields of conf, which is first reset to
 // [runner.DefaultConfig] so the flag defaults and the provider's base layer
 // cannot diverge.
-func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) <span class="cov5" title="18">{
+func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) <span class="cov5" title="27">{
         *conf = runner.DefaultConfig()
         fs = flag.NewFlagSet("run", flag.ContinueOnError)
 
@@ -372,7 +411,7 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) <span class="cov5" ti
                 <span class="cov3" title="5">return err</span>
         })
 
-        <span class="cov5" title="18">fs.IntVar(&amp;conf.QnameSeenEntries, "qname-seen-entries", conf.QnameSeenEntries, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
+        <span class="cov5" title="27">fs.IntVar(&amp;conf.QnameSeenEntries, "qname-seen-entries", conf.QnameSeenEntries, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
         fs.IntVar(&amp;conf.CryptopanAddressEntries, "cryptopan-address-entries", conf.CryptopanAddressEntries, "Number of cryptopan pseudonymised addresses stored in LRU cache, 0 disables the cache, need to be changed based on RAM")
         fs.IntVar(&amp;conf.NewQnameBuffer, "newqname-buffer", conf.NewQnameBuffer, "Number of slots in new_qname publisher channel, if this is filled up we skip new_qname events")
         fs.IntVar(&amp;conf.HistogramHLLExplicitThreshold, "histogram-hll-explicit-threshold", conf.HistogramHLLExplicitThreshold, "When the number of unique IP addresses is beyond this threshold we will include HLL data for a domain in the histogram parquet file")
@@ -519,17 +558,22 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride <span cl
 // over environment variable over config file over flag default. fs.Visit
 // afterwards enumerates exactly the union of env-set and CLI-set flags, which
 // becomes the immutable override layer re-applied on every config reload.
-func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provider *runner.FileConfigProvider, err error) <span class="cov4" title="17">{
+func buildRunProvider(args []string, rootCfgFile string, outW, errW io.Writer) (provider *runner.FileConfigProvider, err error) <span class="cov4" title="17">{
         // flagConf escapes into the override closures, which outlive this call.
         flagConf := new(runner.Config)
         fs := newRunFlagSet(flagConf)
         fs.SetOutput(errW)
+        var usage bytes.Buffer
+        fs.Usage = func() </span><span class="cov2" title="3">{
+                usage.Reset()
+                printFlagSetUsage(&amp;usage, fs)
+        }</span>
 
-        // fs.Parse reports parse errors (and usage) on errW itself; the other
-        // failures below do not, so they are reported at the end to avoid a
-        // silent non-zero exit. parseReported tracks the one already-reported
-        // path so it is not printed twice.
-        parseReported := false
+        // fs.Parse reports parse errors on errW itself and captures usage for the
+        // final stdout/stderr decision; the other failures below do not, so they
+        // are reported at the end to avoid a silent non-zero exit. parseReported
+        // tracks the already-reported path so the error is not printed twice.
+        <span class="cov4" title="17">parseReported := false
         err = applyEnvOverrides(fs)
         if err == nil </span><span class="cov4" title="15">{
                 if perr := fs.Parse(args); perr != nil </span><span class="cov2" title="3">{
@@ -560,16 +604,31 @@ func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provid
                 <span class="cov4" title="10">provider = runner.NewFileConfigProvider(path, overrides...)</span>
         }
 
-        <span class="cov4" title="17">if err != nil &amp;&amp; !parseReported &amp;&amp; !errors.Is(err, flag.ErrHelp) </span><span class="cov2" title="4">{
-                fmt.Fprintln(errW, err)
-        }</span>
+        <span class="cov4" title="17">switch </span>{
+        case errors.Is(err, flag.ErrHelp):<span class="cov1" title="1">
+                if _, copyErr := io.Copy(outW, &amp;usage); copyErr != nil </span><span class="cov0" title="0">{
+                        err = copyErr
+                }</span>
+        case err != nil &amp;&amp; parseReported:<span class="cov1" title="2">
+                if _, copyErr := io.Copy(errW, &amp;usage); copyErr != nil </span><span class="cov0" title="0">{
+                        err = errors.Join(err, copyErr)
+                }</span>
+        case err != nil:<span class="cov2" title="4">
+                fmt.Fprintln(errW, err)</span>
+        }
         <span class="cov4" title="17">return</span>
 }
 
+func printFlagSetUsage(w io.Writer, fs *flag.FlagSet) <span class="cov2" title="3">{
+        fmt.Fprintf(w, "Usage of %s:\n", fs.Name())
+        fs.SetOutput(w)
+        fs.PrintDefaults()
+}</span>
+
 // runRun implements the "run" subcommand.
-func runRun(args []string, rootCfgFile string, errW io.Writer) (err error) <span class="cov2" title="4">{
+func runRun(args []string, rootCfgFile string, outW, errW io.Writer) (err error) <span class="cov2" title="4">{
         var provider *runner.FileConfigProvider
-        provider, err = buildRunProvider(args, rootCfgFile, errW)
+        provider, err = buildRunProvider(args, rootCfgFile, outW, errW)
         if errors.Is(err, flag.ErrHelp) </span><span class="cov1" title="1">{
                 return nil
         }</span>
@@ -1489,7 +1548,7 @@ import (
 )
 
 // runMinimiser generates data and it is collected into datasets here
-func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) <span class="cov7" title="9">{
+func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) <span class="cov6" title="9">{
         defer wg.Done()
 
         // Keep track of if we have recorded any dnstap packets in session data
@@ -1522,7 +1581,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 sessionUpdated = true</span>
         }
 
-        <span class="cov7" title="9">flushSessions := func(startTime time.Time, rotationTime time.Time) </span><span class="cov7" title="11">{
+        <span class="cov6" title="9">flushSessions := func(startTime time.Time, rotationTime time.Time) </span><span class="cov7" title="11">{
                 if !sessionUpdated </span><span class="cov5" title="6">{
                         return
                 }</span>
@@ -1536,7 +1595,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 edm.sessionWriterCh &lt;- ps</span>
         }
 
-        <span class="cov7" title="9">processWKDUpdate := func(wu wkdUpdate) </span><span class="cov4" title="3">{
+        <span class="cov6" title="9">processWKDUpdate := func(wu wkdUpdate) </span><span class="cov3" title="3">{
                 // It is possible an update sitting in the queue has
                 // been created with an outdated dawgModTime due to a
                 // call to rotateTracker(). If this is the case we need
@@ -1552,11 +1611,11 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                         <span class="cov0" title="0">return</span>
                 }
 
-                <span class="cov4" title="3">if _, exists := wkd.m[wu.dawgIndex]; !exists </span><span class="cov4" title="3">{
+                <span class="cov3" title="3">if _, exists := wkd.m[wu.dawgIndex]; !exists </span><span class="cov3" title="3">{
                         wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
                 }</span>
 
-                <span class="cov4" title="3">wkd.m[wu.dawgIndex].OKCount += wu.OKCount
+                <span class="cov3" title="3">wkd.m[wu.dawgIndex].OKCount += wu.OKCount
                 wkd.m[wu.dawgIndex].NXCount += wu.NXCount
                 wkd.m[wu.dawgIndex].FailCount += wu.FailCount
                 wkd.m[wu.dawgIndex].ACount += wu.ACount
@@ -1567,8 +1626,8 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
                 wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
 
-                if wu.ip.IsValid() </span><span class="cov4" title="3">{
-                        if wu.ip.Unmap().Is4() </span><span class="cov4" title="3">{
+                if wu.ip.IsValid() </span><span class="cov3" title="3">{
+                        if wu.ip.Unmap().Is4() </span><span class="cov3" title="3">{
                                 wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
                         }</span> else<span class="cov0" title="0"> {
                                 wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
@@ -1576,12 +1635,12 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 }
         }
 
-        <span class="cov7" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
-                for </span><span class="cov7" title="12">{
+        <span class="cov6" title="9">drainCollectorQueues := func() </span><span class="cov7" title="10">{
+                for </span><span class="cov7" title="10">{
                         select </span>{
-                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov1" title="1">
+                        case sd := &lt;-edm.sessionCollectorCh:<span class="cov0" title="0">
                                 processSession(sd)</span>
-                        case wu := &lt;-wkd.updateCh:<span class="cov1" title="1">
+                        case wu := &lt;-wkd.updateCh:<span class="cov0" title="0">
                                 processWKDUpdate(wu)</span>
                         default:<span class="cov7" title="10">
                                 return</span>
@@ -1589,7 +1648,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 }
         }
 
-        <span class="cov7" title="9">rotateCollectedData := func(sessionStart time.Time, histogramStart time.Time, rotationTime time.Time) error </span><span class="cov4" title="3">{
+        <span class="cov6" title="9">rotateCollectedData := func(sessionStart time.Time, histogramStart time.Time, rotationTime time.Time) error </span><span class="cov3" title="3">{
                 flushSessions(sessionStart, rotationTime)
 
                 prevWKD, err := wkd.rotateTracker(edm, dawgFile, histogramStart, rotationTime)
@@ -1605,7 +1664,7 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 <span class="cov2" title="2">return nil</span>
         }
 
-        <span class="cov7" title="9">flushHistogram := func(startTime time.Time, rotationTime time.Time) </span><span class="cov6" title="8">{
+        <span class="cov6" title="9">flushHistogram := func(startTime time.Time, rotationTime time.Time) </span><span class="cov6" title="8">{
                 if len(wkd.m) == 0 </span><span class="cov6" title="7">{
                         return
                 }</span>
@@ -1618,13 +1677,13 @@ func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDoma
                 wkd.m = map[int]*histogramData{}</span>
         }
 
-<span class="cov7" title="9">collectorLoop:
-        for </span><span class="cov10" title="26">{
+<span class="cov6" title="9">collectorLoop:
+        for </span><span class="cov10" title="28">{
                 select </span>{
-                case sd := &lt;-edm.sessionCollectorCh:<span class="cov4" title="4">
+                case sd := &lt;-edm.sessionCollectorCh:<span class="cov5" title="5">
                         processSession(sd)</span>
 
-                case wu := &lt;-wkd.updateCh:<span class="cov2" title="2">
+                case wu := &lt;-wkd.updateCh:<span class="cov3" title="3">
                         processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C():<span class="cov1" title="1">
@@ -2088,7 +2147,7 @@ func (osFileSystem) ReadFile(name string) ([]byte, error) <span class="cov4" tit
         return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }</span>
 
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60014">{
+func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) <span class="cov9" title="60013">{
         return os.ReadDir(name)
 }</span>
 
@@ -2126,7 +2185,7 @@ type realTicker struct {
         *time.Ticker
 }
 
-func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62090">{
+func (rt realTicker) C() &lt;-chan time.Time <span class="cov10" title="62091">{
         return rt.Ticker.C
 }</span>
 
@@ -2820,7 +2879,7 @@ func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg
         <span class="cov4" title="5">edm.log.Info("histogramWriter: exiting loop")</span>
 }
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov6" title="13">{
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) <span class="cov7" title="13">{
         defer wg.Done()
 
         backoffDuration := edm.deps.HistogramSenderBackoff
@@ -2837,15 +2896,15 @@ func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir strin
                 stateString = "disabled"
         }</span>
 
-        <span class="cov6" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
+        <span class="cov7" title="13">edm.log.Info("histogramSender: starting", "state", stateString)
 timerLoop:
-        for </span><span class="cov10" title="47">{
+        for </span><span class="cov10" title="46">{
                 select </span>{
-                case &lt;-ticker.C():<span class="cov9" title="35">
+                case &lt;-ticker.C():<span class="cov9" title="34">
                         if conf.DisableHistogramSender </span><span class="cov8" title="21">{
                                 continue</span>
                         }
-                        <span class="cov7" title="14">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+                        <span class="cov7" title="13">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
                         if err != nil </span><span class="cov0" title="0">{
                                 if errors.Is(err, fs.ErrNotExist) </span><span class="cov0" title="0">{
                                         // The directory has not been created yet, this is OK
@@ -2854,7 +2913,7 @@ timerLoop:
                                 <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
                                 continue</span>
                         }
-                        <span class="cov7" title="14">for _, dirEntry := range dirEntries </span><span class="cov6" title="10">{
+                        <span class="cov7" title="13">for _, dirEntry := range dirEntries </span><span class="cov6" title="10">{
                                 if dirEntry.IsDir() </span><span class="cov0" title="0">{
                                         continue</span>
                                 }
@@ -2913,7 +2972,7 @@ timerLoop:
                         break timerLoop</span>
                 }
         }
-        <span class="cov6" title="13">edm.log.Info("histogramSender: exiting loop")</span>
+        <span class="cov7" title="13">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
 // Unfortunately the hll library does not expose what format
@@ -3153,13 +3212,13 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" t
         // as that would race with hot-path readers still holding it. Reloads
         // leave the old finder for the GC to reclaim once no reader references
         // it (see the ignoredQuestions field comment on DnstapMinimiser).
-        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
                 edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
         }</span> else<span class="cov4" title="68"> {
                 edm.ignoredQuestions.Store(nil)
         }</span>
 
-        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov4" title="142">{
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
         }</span> else<span class="cov4" title="68"> {
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
@@ -3212,7 +3271,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         // Starts out as nil. We only set it to an initialized IPSet if there is at
         // least one ignored client CIDR present in the input file.
         <span class="cov5" title="211">var ipset *netipx.IPSet
-        if numCIDRs &gt; 0 </span><span class="cov5" title="142">{
+        if numCIDRs &gt; 0 </span><span class="cov4" title="142">{
                 ipset, err = b.IPSet()
                 if err != nil </span><span class="cov0" title="0">{
                         return fmt.Errorf("setIgnoredClientIPs: IPSet creation failed: %w", err)
@@ -3222,7 +3281,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">edm.ignoredClientsIPSet.Store(ipset)
         edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
-        if ipset != nil </span><span class="cov5" title="142">{
+        if ipset != nil </span><span class="cov4" title="142">{
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
         }</span> else<span class="cov4" title="69"> {
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
@@ -3231,7 +3290,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title
         <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="23322">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov8" title="27016">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -3242,15 +3301,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov9" title="23365">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov8" title="27059">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov8" title="5527">{
+        if ipset == nil </span><span class="cov8" title="22825">{
                 return false
         }</span>
-        <span class="cov9" title="17838">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov7" title="4234">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -3260,30 +3319,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov9" title="17834">if ipset.Contains(clientIP) </span><span class="cov8" title="9868">{
+        <span class="cov7" title="4230">if ipset.Contains(clientIP) </span><span class="cov6" title="2202">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov8" title="7966">return false</span>
+        <span class="cov6" title="2028">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="43744">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="153322">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov9" title="20376">{
+        if holder == nil </span><span class="cov9" title="148666">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov9" title="23368">for _, question := range msg.Question </span><span class="cov9" title="23370">{
+        <span class="cov7" title="4656">for _, question := range msg.Question </span><span class="cov7" title="4658">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov8" title="8664">{
+                if dawgIndex != dawgNotFound </span><span class="cov6" title="1426">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov9" title="14704">return false</span>
+        <span class="cov7" title="3230">return false</span>
 }
 </pre>
 		
@@ -5446,7 +5505,7 @@ type wellKnownDomainsData struct {
         dawgFinder   dawg.Finder
 }
 
-func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov3" title="22">{
+func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov4" title="22">{
         wkd := &amp;wellKnownDomainsTracker{
                 m:           map[int]*histogramData{},
                 updateCh:    make(chan wkdUpdate, 10000),
@@ -5460,26 +5519,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="23393">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="4681">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="19397">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="4176">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="28760">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="6056">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov8" title="4683">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="936">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="18710">return dawgIndex, false</span>
+        <span class="cov9" title="3745">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5505,7 +5564,7 @@ func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) 
 func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov3" title="12">{
         defer wg.Done()
 
-        for wu := range wkd.retryCh </span><span class="cov1" title="3">{
+        for wu := range wkd.retryCh </span><span class="cov2" title="3">{
                 wu.retry++
                 if wu.retry &gt;= wu.retryLimit </span><span class="cov1" title="1">{
                         edm.log.Info("ignoring wkd update since retry counter hit retry limit", "retry", wu.retry, "retry_limit", wu.retryLimit)
@@ -5545,7 +5604,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Create hash from IP address for use in HLL data
         ip, ok := netip.AddrFromSlice(ipBytes)
-        if ok </span><span class="cov2" title="9">{
+        if ok </span><span class="cov3" title="9">{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
                 wu.hllHash = murmur3.Sum64(ipBytes)
@@ -5554,7 +5613,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Counters based on header
         <span class="cov3" title="10">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov2" title="7">
+        case dns.RcodeSuccess:<span class="cov3" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
@@ -5565,7 +5624,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov2" title="9">{
+        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov3" title="9">{
                 switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:<span class="cov2" title="5">
                         wu.ACount++</span>
@@ -5585,7 +5644,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov2" title="9">{
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov3" title="9">{
         dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
@@ -5600,7 +5659,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
         if edm.dawgReloadRequested.CompareAndSwap(true, false) </span><span class="cov2" title="4">{
                 var err error
                 dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
-                if err != nil </span><span class="cov1" title="3">{
+                if err != nil </span><span class="cov2" title="3">{
                         return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
                 }</span>
                 <span class="cov1" title="1">dawgFileChanged = true
