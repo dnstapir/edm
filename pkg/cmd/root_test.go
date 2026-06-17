@@ -57,37 +57,46 @@ func TestDispatch(t *testing.T) {
 	edmLogger, edmLoggerLevel = testLogger()
 
 	tests := []struct {
-		name       string
-		args       []string
-		wantErr    error
-		wantOutSub string
-		wantErrSub string
+		name         string
+		args         []string
+		wantErr      error
+		wantOutSub   []string
+		wantErrSub   []string
+		wantErrEmpty bool
 	}{
 		{
-			name:       "no args prints usage",
+			name:       "no args prints usage with run flags",
 			args:       nil,
-			wantOutSub: "Usage:",
+			wantOutSub: []string{"Usage:", "cryptopan-key"},
 		},
 		{
-			name:       "help prints usage",
+			name:       "help prints usage with run flags",
 			args:       []string{"help"},
-			wantOutSub: "Usage:",
+			wantOutSub: []string{"Usage:", "cryptopan-key"},
 		},
 		{
-			name:       "root --help prints usage on stderr",
-			args:       []string{"--help"},
-			wantErrSub: "Usage:",
+			name:         "root -help prints usage with run flags on stdout",
+			args:         []string{"-help"},
+			wantOutSub:   []string{"Usage:", "cryptopan-key"},
+			wantErrEmpty: true,
 		},
 		{
-			name:       "run --help prints run flags",
-			args:       []string{"run", "--help"},
-			wantErrSub: "cryptopan-key",
+			name:         "root --help prints usage with run flags on stdout",
+			args:         []string{"--help"},
+			wantOutSub:   []string{"Usage:", "cryptopan-key"},
+			wantErrEmpty: true,
+		},
+		{
+			name:         "run --help prints run flags on stdout",
+			args:         []string{"run", "--help"},
+			wantOutSub:   []string{"cryptopan-key"},
+			wantErrEmpty: true,
 		},
 		{
 			name:       "unknown command errors",
 			args:       []string{"frobnicate"},
 			wantErr:    errUnknownCommand,
-			wantErrSub: `unknown command "frobnicate"`,
+			wantErrSub: []string{`unknown command "frobnicate"`},
 		},
 	}
 
@@ -104,11 +113,18 @@ func TestDispatch(t *testing.T) {
 			if tc.wantErr == nil && err != nil {
 				t.Fatalf("dispatch() = %v, want nil", err)
 			}
-			if tc.wantOutSub != "" && !strings.Contains(outW.String(), tc.wantOutSub) {
-				t.Fatalf("stdout %q does not contain %q", outW.String(), tc.wantOutSub)
+			for _, want := range tc.wantOutSub {
+				if !strings.Contains(outW.String(), want) {
+					t.Fatalf("stdout %q does not contain %q", outW.String(), want)
+				}
 			}
-			if tc.wantErrSub != "" && !strings.Contains(errW.String(), tc.wantErrSub) {
-				t.Fatalf("stderr %q does not contain %q", errW.String(), tc.wantErrSub)
+			for _, want := range tc.wantErrSub {
+				if !strings.Contains(errW.String(), want) {
+					t.Fatalf("stderr %q does not contain %q", errW.String(), want)
+				}
+			}
+			if tc.wantErrEmpty && errW.Len() != 0 {
+				t.Fatalf("stderr = %q, want empty", errW.String())
 			}
 		})
 	}
@@ -154,7 +170,7 @@ func TestConfigFileNotSettableViaEnv(t *testing.T) {
 	t.Setenv("DNSTAPIR_EDM_CONFIG_FILE", bogus)
 
 	// A root-level --config-file must win over the env var, not be shadowed.
-	provider, err := buildRunProvider(nil, configFile, io.Discard)
+	provider, err := buildRunProvider(nil, configFile, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("buildRunProvider: %s", err)
 	}
@@ -165,7 +181,7 @@ func TestConfigFileNotSettableViaEnv(t *testing.T) {
 	// With no --config-file at all, the env var is ignored and the path falls
 	// back to the home default rather than the env value.
 	userHomeDir = func() (string, error) { return "/home/tester", nil }
-	provider, err = buildRunProvider(nil, "", io.Discard)
+	provider, err = buildRunProvider(nil, "", io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("buildRunProvider: %s", err)
 	}
@@ -280,7 +296,7 @@ func TestBuildRunProviderPrecedence(t *testing.T) {
 			}
 			configFile := writeTestConfig(t, tc.extra)
 
-			provider, err := buildRunProvider(append([]string{"--config-file", configFile}, tc.args...), "", io.Discard)
+			provider, err := buildRunProvider(append([]string{"--config-file", configFile}, tc.args...), "", io.Discard, io.Discard)
 			if err != nil {
 				t.Fatalf("buildRunProvider: %s", err)
 			}
@@ -300,7 +316,7 @@ func TestBuildRunProviderOverridesSurviveReload(t *testing.T) {
 	configFile := writeTestConfig(t, "debug = false\ndata-dir = \"/srv/one\"\n")
 	t.Setenv("DNSTAPIR_EDM_DEBUG", "true")
 
-	provider, err := buildRunProvider([]string{"--config-file", configFile, "--data-dir", "/srv/cli"}, "", io.Discard)
+	provider, err := buildRunProvider([]string{"--config-file", configFile, "--data-dir", "/srv/cli"}, "", io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("buildRunProvider: %s", err)
 	}
@@ -336,7 +352,7 @@ func TestBuildRunProviderOverridesSurviveReload(t *testing.T) {
 func TestApplyEnvOverridesInvalidValue(t *testing.T) {
 	t.Setenv("DNSTAPIR_EDM_DEBUG", "release")
 
-	_, err := buildRunProvider(nil, "", io.Discard)
+	_, err := buildRunProvider(nil, "", io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "DNSTAPIR_EDM_DEBUG") {
 		t.Fatalf("buildRunProvider = %v, want error naming DNSTAPIR_EDM_DEBUG", err)
 	}
@@ -348,7 +364,7 @@ func TestBuildRunProviderReportsErrors(t *testing.T) {
 	t.Run("invalid environment value", func(t *testing.T) {
 		t.Setenv("DNSTAPIR_EDM_DEBUG", "release")
 		var errW bytes.Buffer
-		if _, err := buildRunProvider(nil, "", &errW); err == nil {
+		if _, err := buildRunProvider(nil, "", io.Discard, &errW); err == nil {
 			t.Fatal("buildRunProvider succeeded, want error")
 		}
 		if !strings.Contains(errW.String(), "DNSTAPIR_EDM_DEBUG") {
@@ -358,7 +374,7 @@ func TestBuildRunProviderReportsErrors(t *testing.T) {
 
 	t.Run("unexpected argument", func(t *testing.T) {
 		var errW bytes.Buffer
-		if _, err := buildRunProvider([]string{"surprise"}, "", &errW); err == nil {
+		if _, err := buildRunProvider([]string{"surprise"}, "", io.Discard, &errW); err == nil {
 			t.Fatal("buildRunProvider succeeded, want error")
 		}
 		if !strings.Contains(errW.String(), "unexpected argument") {
@@ -371,7 +387,7 @@ func TestBuildRunProviderReportsErrors(t *testing.T) {
 	// non-numeric and the uint16-overflow paths must error and name the flag.
 	t.Run("invalid mqtt-keepalive value", func(t *testing.T) {
 		var errW bytes.Buffer
-		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "not-a-number"}, "", &errW); err == nil {
+		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "not-a-number"}, "", io.Discard, &errW); err == nil {
 			t.Fatal("buildRunProvider succeeded, want error")
 		}
 		if !strings.Contains(errW.String(), "mqtt-keepalive") {
@@ -381,7 +397,7 @@ func TestBuildRunProviderReportsErrors(t *testing.T) {
 
 	t.Run("out-of-range mqtt-keepalive value", func(t *testing.T) {
 		var errW bytes.Buffer
-		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "70000"}, "", &errW); err == nil {
+		if _, err := buildRunProvider([]string{"--mqtt-keepalive", "70000"}, "", io.Discard, &errW); err == nil {
 			t.Fatal("buildRunProvider succeeded with overflowing keepalive, want error")
 		}
 		if !strings.Contains(errW.String(), "mqtt-keepalive") {
@@ -488,16 +504,20 @@ func TestRunMinimiserInitError(t *testing.T) {
 	}
 }
 
-// TestPrintUsageMentionsRunCommand sanity-checks the usage text mentions
-// the pieces users rely on.
+// TestPrintUsageMentionsRunCommand sanity-checks the usage text mentions the
+// pieces users rely on, including the operational "run" flags so the top-level
+// help documents the full flag set rather than only the root flags.
 func TestPrintUsageMentionsRunCommand(t *testing.T) {
 	out := &bytes.Buffer{}
 	rootFS := flag.NewFlagSet("dnstapir-edm", flag.ContinueOnError)
 	rootFS.String("config-file", "", "config file")
 	printUsage(out, rootFS)
-	for _, want := range []string{"run", "help", "config-file"} {
+	for _, want := range []string{"run", "help", "config-file", "cryptopan-key", "data-dir", "mqtt-server", "debug"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("usage output missing %q:\n%s", want, out.String())
 		}
+	}
+	if got := strings.Count(out.String(), "config-file"); got != 1 {
+		t.Fatalf("usage output contains config-file %d times, want 1:\n%s", got, out.String())
 	}
 }

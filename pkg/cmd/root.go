@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/dnstapir/edm/pkg/runner"
 )
 
 // envPrefix namespaces the environment variables read by [Execute]: every
@@ -53,15 +56,23 @@ func dispatch(args []string, outW, errW io.Writer) (err error) {
 	rootFS.SetOutput(errW)
 	var rootCfgFile string
 	rootFS.StringVar(&rootCfgFile, "config-file", "", "config file for sensitive information (default is $HOME/.dnstapir-edm.toml)")
-	rootFS.Usage = func() { printUsage(errW, rootFS) }
+	var usage bytes.Buffer
+	rootFS.Usage = func() {
+		usage.Reset()
+		printUsage(&usage, rootFS)
+	}
 
 	// Stdlib flag parsing stops at the first non-flag argument, leaving the
 	// subcommand and its flags in rootFS.Args().
 	err = rootFS.Parse(args)
 	if errors.Is(err, flag.ErrHelp) {
-		return nil
+		_, err = io.Copy(outW, &usage)
+		return
 	}
 	if err != nil {
+		if _, copyErr := io.Copy(errW, &usage); copyErr != nil {
+			err = errors.Join(err, copyErr)
+		}
 		return err
 	}
 
@@ -73,7 +84,7 @@ func dispatch(args []string, outW, errW io.Writer) (err error) {
 
 	switch rest[0] {
 	case "run":
-		err = runRun(rest[1:], rootCfgFile, errW)
+		err = runRun(rest[1:], rootCfgFile, outW, errW)
 	default:
 		fmt.Fprintf(errW, "unknown command %q\n\n", rest[0])
 		printUsage(errW, rootFS)
@@ -83,7 +94,11 @@ func dispatch(args []string, outW, errW io.Writer) (err error) {
 }
 
 // printUsage writes the top-level help text: the tool description, the
-// available commands and the root flags.
+// available commands, the root flags and the full set of "run" command flags.
+//
+// The "run" command carries every operational flag, so its flagset is built
+// and printed here too; that keeps "help"/"-help" documenting the complete
+// flag set and prevents the help text from drifting from [newRunFlagSet].
 func printUsage(w io.Writer, rootFS *flag.FlagSet) {
 	fmt.Fprintln(w, `dnstapir-edm is a tool for reading dnstap data, pseudonymizing IP addresses and
 outputting minimised output data.
@@ -98,6 +113,29 @@ Commands:
 Flags:`)
 	rootFS.SetOutput(w)
 	rootFS.PrintDefaults()
+
+	fmt.Fprintln(w, "\nRun command flags:")
+	runFS := newRunFlagSet(new(runner.Config))
+	printFlagDefaultsExcept(w, runFS, "config-file")
+}
+
+// printFlagDefaultsExcept prints a flag set using the stdlib formatter while
+// omitting names that are documented elsewhere in the same usage text.
+func printFlagDefaultsExcept(w io.Writer, fs *flag.FlagSet, excluded ...string) {
+	skip := make(map[string]struct{}, len(excluded))
+	for _, name := range excluded {
+		skip[name] = struct{}{}
+	}
+
+	filtered := flag.NewFlagSet(fs.Name(), flag.ContinueOnError)
+	filtered.SetOutput(w)
+	fs.VisitAll(func(f *flag.Flag) {
+		if _, ok := skip[f.Name]; ok {
+			return
+		}
+		filtered.Var(f.Value, f.Name, f.Usage)
+	})
+	filtered.PrintDefaults()
 }
 
 // resolveConfigPath returns the config file to use: explicit when non-empty,

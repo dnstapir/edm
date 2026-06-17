@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -210,16 +211,21 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 // over environment variable over config file over flag default. fs.Visit
 // afterwards enumerates exactly the union of env-set and CLI-set flags, which
 // becomes the immutable override layer re-applied on every config reload.
-func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provider *runner.FileConfigProvider, err error) {
+func buildRunProvider(args []string, rootCfgFile string, outW, errW io.Writer) (provider *runner.FileConfigProvider, err error) {
 	// flagConf escapes into the override closures, which outlive this call.
 	flagConf := new(runner.Config)
 	fs := newRunFlagSet(flagConf)
 	fs.SetOutput(errW)
+	var usage bytes.Buffer
+	fs.Usage = func() {
+		usage.Reset()
+		printFlagSetUsage(&usage, fs)
+	}
 
-	// fs.Parse reports parse errors (and usage) on errW itself; the other
-	// failures below do not, so they are reported at the end to avoid a
-	// silent non-zero exit. parseReported tracks the one already-reported
-	// path so it is not printed twice.
+	// fs.Parse reports parse errors on errW itself and captures usage for the
+	// final stdout/stderr decision; the other failures below do not, so they
+	// are reported at the end to avoid a silent non-zero exit. parseReported
+	// tracks the already-reported path so the error is not printed twice.
 	parseReported := false
 	err = applyEnvOverrides(fs)
 	if err == nil {
@@ -251,16 +257,31 @@ func buildRunProvider(args []string, rootCfgFile string, errW io.Writer) (provid
 		provider = runner.NewFileConfigProvider(path, overrides...)
 	}
 
-	if err != nil && !parseReported && !errors.Is(err, flag.ErrHelp) {
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		if _, copyErr := io.Copy(outW, &usage); copyErr != nil {
+			err = copyErr
+		}
+	case err != nil && parseReported:
+		if _, copyErr := io.Copy(errW, &usage); copyErr != nil {
+			err = errors.Join(err, copyErr)
+		}
+	case err != nil:
 		fmt.Fprintln(errW, err)
 	}
 	return
 }
 
+func printFlagSetUsage(w io.Writer, fs *flag.FlagSet) {
+	fmt.Fprintf(w, "Usage of %s:\n", fs.Name())
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+}
+
 // runRun implements the "run" subcommand.
-func runRun(args []string, rootCfgFile string, errW io.Writer) (err error) {
+func runRun(args []string, rootCfgFile string, outW, errW io.Writer) (err error) {
 	var provider *runner.FileConfigProvider
-	provider, err = buildRunProvider(args, rootCfgFile, errW)
+	provider, err = buildRunProvider(args, rootCfgFile, outW, errW)
 	if errors.Is(err, flag.ErrHelp) {
 		return nil
 	}
