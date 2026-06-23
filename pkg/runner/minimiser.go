@@ -201,14 +201,11 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 		return nil, time.Unix(0, 0).UTC()
 	}
 
-	queryAddress := formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort)
-	responseAddress := formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort)
-
 	msg := new(dns.Msg)
 	if isQuery {
 		err = msg.Unpack(dt.Message.QueryMessage)
 		if err != nil {
-			edm.log.Error("unable to unpack query message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
+			edm.log.Error("unable to unpack query message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
 			msg = nil
 		}
 		t := edm.dnstapTimestamp(dt.Message.QueryTimeSec, dt.Message.QueryTimeNsec, "dt.Message.QueryTimeSec")
@@ -217,7 +214,7 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 
 	err = msg.Unpack(dt.Message.ResponseMessage)
 	if err != nil {
-		edm.log.Error("unable to unpack response message", "error", err, "query_address", queryAddress, "response_address", responseAddress)
+		edm.log.Error("unable to unpack response message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
 		msg = nil
 	}
 	t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
