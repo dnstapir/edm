@@ -5,6 +5,7 @@ Description=DNS TAPIR Edge DNSTAP Minimiser
 Type=simple
 User=dnstapir-edm
 Group=dnstapir
+WorkingDirectory=/etc/dnstapir/edm
 ExecStart=/usr/bin/dnstapir-edm --config-file /etc/dnstapir/dnstapir-edm.toml run
 ExecReload=/bin/kill -HUP $MAINPID
 
