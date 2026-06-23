@@ -24,6 +24,7 @@ clean:
 	-rm -f DEB_VERSION
 	-rm -f *.tar.gz
 	-rm -f rpm/SOURCES/*.tar.gz
+	-rm -f rpm/SOURCES/dnstapir-edm.toml.sample
 	-rm -rf rpm/{BUILD,BUILDROOT,SPECS,SRPMS,RPMS}
 	@rm -rf deb/usr
 	@rm -rf deb/etc
@@ -43,6 +44,7 @@ srpm: tarball
 	mkdir -p rpm/{BUILD,RPMS,SRPMS,SPECS}
 	sed -e "s/@@VERSION@@/$$(cat RPM_VERSION)/g" $(SPECFILE_IN) > $(SPECFILE_OUT)
 	cp $(OUTPUT).tar.gz rpm/SOURCES/
+	cp dnstapir-edm.toml.sample rpm/SOURCES/
 	rpmbuild -bs --define "%_topdir ./rpm" --undefine=dist $(SPECFILE_OUT)
 	test -z "$(outdir)" || cp rpm/SRPMS/*.src.rpm "$(outdir)"
 
@@ -63,5 +65,6 @@ deb: build versions
 	cp rpm/SOURCES/well-known-domains.dawg deb/etc/dnstapir/edm
 	cp rpm/SOURCES/ignored.dawg deb/etc/dnstapir/edm
 	cp rpm/SOURCES/ignored-ips deb/etc/dnstapir/edm
+	cp dnstapir-edm.toml.sample deb/etc/dnstapir
 	sed -e "s/@@VERSION@@/$$(cat DEB_VERSION)/g" $(DEB_CONTROL_IN) > $(DEB_CONTROL_OUT)
 	dpkg-deb -b deb dnstapir-edm-$$(cat DEB_VERSION).deb
