@@ -564,8 +564,7 @@ func TestHistogramSender(t *testing.T) {
 
 	ctx, cancel := testRunContext(t)
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
+	wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
 	for range 200 {
 		if _, err := os.Stat(filepath.Join(sentDir, name)); err == nil {
 			cancel()
@@ -598,8 +597,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
+			wg.Go(func() { edm.histogramSender(ctx, t.TempDir(), t.TempDir()) })
 			// Let several ticks elapse; nothing happens because the
 			// DisableHistogramSender guard short-circuits.
 			time.Sleep(20 * time.Millisecond)
@@ -630,8 +628,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 
 		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
+		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
@@ -676,8 +673,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 
 		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
+		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if strings.Contains(buf.String(), "unable to send histogram file") {
@@ -724,8 +720,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 
 		ctx, cancel := testRunContext(t)
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
+		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
 
 		// Wait until the send has failed and the sender is in its backoff.
 		deadline := time.Now().Add(2 * time.Second)
@@ -759,8 +754,7 @@ func TestHistogramSenderBranches(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go edm.histogramSender(ctx, t.TempDir(), t.TempDir(), &wg)
+			wg.Go(func() { edm.histogramSender(ctx, t.TempDir(), t.TempDir()) })
 
 			// Wait until the worker has read its startup conf before flipping
 			// edm.conf — otherwise we race the worker's edm.getConfig() at
@@ -804,8 +798,7 @@ func TestHistogramWriterLogsCreateError(t *testing.T) {
 	close(edm.histogramWriterCh)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.histogramWriter(defaultLabelLimit, t.TempDir(), &wg)
+	wg.Go(func() { edm.histogramWriter(defaultLabelLimit, t.TempDir()) })
 	waitForWaitGroup(t, &wg, 5*time.Second, "histogramWriter did not exit")
 
 	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "histogramWriter") {

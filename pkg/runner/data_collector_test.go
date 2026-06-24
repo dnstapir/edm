@@ -18,8 +18,7 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	edm, wkdTracker := newDataCollectorTestFixture(t, "example.com.")
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.dataCollector(&wg, wkdTracker, "unused-in-shutdown-test.dawg")
+	wg.Go(func() { edm.dataCollector(wkdTracker, "unused-in-shutdown-test.dawg") })
 
 	serverID := "serverID"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
@@ -84,12 +83,11 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 	edm, wkdTracker := newDataCollectorTestFixture(t, "example.com.")
 
 	var wg sync.WaitGroup
-	wg.Add(1)
 	// A requested reload of a missing dawg file makes rotateTracker fail,
 	// exercising the path where session data is flushed but histogram
 	// rotation errors out.
 	edm.dawgReloadRequested.Store(true)
-	go edm.dataCollector(&wg, wkdTracker, "missing-dawg-file.dawg")
+	wg.Go(func() { edm.dataCollector(wkdTracker, "missing-dawg-file.dawg") })
 
 	firstServerID := "first"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &firstServerID}
@@ -178,8 +176,7 @@ func TestDataCollector(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.dataCollector(&wg, wkd, path)
+		wg.Go(func() { edm.dataCollector(wkd, path) })
 
 		edm.sessionCollectorCh <- &sessionData{ServerID: ptr("server")}
 		wkd.updateCh <- wkdUpdate{

@@ -298,8 +298,7 @@ func TestUpdateRetryer(t *testing.T) {
 		msg.SetQuestion("example.com.", dns.TypeA)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go wkd.updateRetryer(edm, &wg)
+		wg.Go(func() { wkd.updateRetryer(edm) })
 		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 2}
 		close(wkd.retryCh)
 
@@ -433,8 +432,7 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			msg.SetQuestion("example.com.", dns.TypeA)
 
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go wkd.updateRetryer(edm, &wg)
+			wg.Go(func() { wkd.updateRetryer(edm) })
 			// retry is 1 BEFORE the increment, becomes 2 after — equal to
 			// retryLimit, so the skip arm fires and no resend reaches updateCh.
 			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
@@ -465,8 +463,7 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			msg.SetQuestion("unknown.example.", dns.TypeA)
 
 			var wg sync.WaitGroup
-			wg.Add(1)
-			go wkd.updateRetryer(edm, &wg)
+			wg.Go(func() { wkd.updateRetryer(edm) })
 			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 5}
 			close(wkd.retryCh)
 			wg.Wait()

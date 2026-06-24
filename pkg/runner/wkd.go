@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/netip"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -108,9 +107,7 @@ func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) 
 	return dawgIndex, suffixMatch, snap.dawgModTime
 }
 
-func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	for wu := range wkd.retryCh {
 		wu.retry++
 		if wu.retry >= wu.retryLimit {

@@ -21,8 +21,7 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 	edm, wkdTracker, dawgFile := newManualParquetRotationTestFixture(t, "example.com.")
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.dataCollector(&wg, wkdTracker, dawgFile)
+	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
 	serverID := "serverID"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
