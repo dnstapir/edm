@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,9 +15,8 @@ func sentHistogramExpired(modTime, now time.Time) bool {
 	return now.Sub(modTime) > sentHistogramRetention
 }
 
-func (edm *DnstapMinimiser) diskCleaner(ctx context.Context, wg *sync.WaitGroup, sentDir string) {
+func (edm *DnstapMinimiser) diskCleaner(ctx context.Context, sentDir string) {
 	// We will scan the directory each tick for sent files to remove.
-	defer wg.Done()
 
 	ticker := edm.deps.Clock.NewTicker(edm.deps.DiskCleanerInterval)
 	defer ticker.Stop()

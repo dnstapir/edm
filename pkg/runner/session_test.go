@@ -436,8 +436,7 @@ func TestSessionWriterLogsCreateError(t *testing.T) {
 	close(edm.sessionWriterCh)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go edm.sessionWriter(t.TempDir(), &wg)
+	wg.Go(func() { edm.sessionWriter(t.TempDir()) })
 	// waitForWaitGroup blocks until wg.Done(), establishing happens-before for
 	// the buffer read below (the worker's last write precedes its Done()).
 	waitForWaitGroup(t, &wg, 5*time.Second, "sessionWriter did not exit")

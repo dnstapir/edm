@@ -140,13 +140,11 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 	results := make(chan bool, goroutines)
 
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
 	for range goroutines {
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			results <- edm.qnameSeen(msg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultTC.PebbleSync)
-		}()
+		})
 	}
 
 	close(start)

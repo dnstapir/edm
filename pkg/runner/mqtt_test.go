@@ -50,8 +50,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 		priv, pub := testJWKPair(t)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.mqttSignWorker(ctx, &wg, priv)
+		wg.Go(func() { edm.mqttSignWorker(ctx, priv) })
 
 		payload := []byte(`{"qname":"example.com.","time":"2026-01-02T03:04:05Z"}`)
 		edm.mqttPubCh <- payload
@@ -104,8 +103,7 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 		priv := testJWK(t)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.mqttSignWorker(ctx, &wg, priv)
+		wg.Go(func() { edm.mqttSignWorker(ctx, priv) })
 
 		// Hand the worker exactly one message; it will sign it and then block
 		// trying to enqueue on the (already full) signed channel.
@@ -148,8 +146,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.mqttSignWorker(ctx, &wg, priv)
+		wg.Go(func() { edm.mqttSignWorker(ctx, priv) })
 
 		// Push one "bad" message; the worker will fail to sign and continue.
 		edm.mqttPubCh <- []byte("bad-payload")
@@ -211,8 +208,7 @@ func TestMqttSignWorkerSkipsKeyWithoutAlgorithm(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.mqttSignWorker(ctx, &wg, priv)
+		wg.Go(func() { edm.mqttSignWorker(ctx, priv) })
 
 		// The worker cannot sign this message and must skip it.
 		edm.mqttPubCh <- []byte("no-alg-payload")
@@ -296,8 +292,9 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 			release:        make(chan struct{}),
 		}
 
-		edm.autopahoWg.Add(1)
-		go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+		edm.autopahoWg.Go(func() {
+			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+		})
 
 		edm.mqttSignedCh <- []byte("first")
 		select {
@@ -345,8 +342,9 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 			release:        make(chan struct{}),
 		}
 
-		edm.autopahoWg.Add(1)
-		go edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+		edm.autopahoWg.Go(func() {
+			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+		})
 
 		synctest.Wait()
 
@@ -374,8 +372,9 @@ func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
 			publishErr:  errInjected,
 		}
 
-		edm.autopahoWg.Add(1)
-		go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		edm.autopahoWg.Go(func() {
+			edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		})
 
 		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
 		select {
@@ -411,8 +410,9 @@ func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
 			publishResp: &paho.PublishResponse{ReasonCode: 0x80},
 		}
 
-		edm.autopahoWg.Add(1)
-		go edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		edm.autopahoWg.Go(func() {
+			edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
+		})
 
 		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
 		select {
@@ -601,8 +601,9 @@ func TestMQTTPublishWorkerAwaitError(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
 		conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
 
-		edm.autopahoWg.Add(1)
-		go edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
+		edm.autopahoWg.Go(func() {
+			edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
+		})
 		waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
 	})
 }
@@ -666,8 +667,7 @@ func TestNewQnamePublisher(t *testing.T) {
 		edm.mqttPubCh = make(chan []byte, 1)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.newQnamePublisher(ctx, &wg)
+		wg.Go(func() { edm.newQnamePublisher(ctx) })
 		event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
 		edm.newQnamePublisherCh <- &event
 		close(edm.newQnamePublisherCh)

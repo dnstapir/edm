@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
@@ -296,9 +295,7 @@ func (edm *DnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) 
 	return name, nil
 }
 
-func (edm *DnstapMinimiser) sessionWriter(dataDir string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) sessionWriter(dataDir string) {
 	edm.log.Info("sessionWriter: starting")
 
 	for ps := range edm.sessionWriterCh {

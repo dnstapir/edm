@@ -155,11 +155,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	signal.Notify(hupCh, syscall.SIGHUP)
 	defer signal.Stop(hupCh)
 
-	configUpdaterWg.Add(1)
-	go func() {
-		defer configUpdaterWg.Done()
-		configUpdater(ctx, hupCh, edm)
-	}()
+	configUpdaterWg.Go(func() { configUpdater(ctx, hupCh, edm) })
 
 	pdbDir := filepath.Join(startConf.DataDir, "pebble")
 	seenStore, err := edm.deps.SeenQnameStoreFactory.OpenSeenQnameStore(pdbDir)
@@ -230,24 +226,20 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	var serverWg sync.WaitGroup
 
 	pprofServer := newPprofServer(edm.deps.PprofListenAddr)
-	serverWg.Add(1)
-	go func() {
-		defer serverWg.Done()
+	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			edm.log.Error("pprofServer error", "error", err)
 		}
-	}()
+	})
 
 	metricsServer := edm.newMetricsServer(ctx, edm.deps.MetricsListenAddr, startConf.EnableManualParquetRotation)
-	serverWg.Add(1)
-	go func() {
-		defer serverWg.Done()
+	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(metricsServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			edm.log.Error("metricsServer error", "error", err)
 		}
-	}()
+	})
 
 	// Gracefully shut down both HTTP servers whenever Run returns (early
 	// error paths included), giving each its own deadline so the second
@@ -275,23 +267,17 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
 	sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
-	wg.Add(1)
-	go edm.monitorChannelLen(ctx, &wg)
+	wg.Go(func() { edm.monitorChannelLen(ctx) })
 
 	// Start record writers and data senders in the background
-	wg.Add(1)
-	go edm.sessionWriter(dataDir, &wg)
-	wg.Add(1)
-	go edm.histogramWriter(defaultLabelLimit, outboxDir, &wg)
-	wg.Add(1)
-	go edm.histogramSender(ctx, outboxDir, sentDir, &wg)
+	wg.Go(func() { edm.sessionWriter(dataDir) })
+	wg.Go(func() { edm.histogramWriter(defaultLabelLimit, outboxDir) })
+	wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
 	if !startConf.DisableMQTT {
-		wg.Add(1)
-		go edm.newQnamePublisher(mqttCtx, &wg)
+		wg.Go(func() { edm.newQnamePublisher(mqttCtx) })
 	}
 
-	wg.Add(1)
-	go edm.diskCleaner(ctx, &wg, sentDir)
+	wg.Go(func() { edm.diskCleaner(ctx, sentDir) })
 
 	dawgFile := startConf.WellKnownDomainsFile
 
@@ -329,8 +315,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}
 
 	// Start data collector
-	wg.Add(1)
-	go edm.dataCollector(&wg, wkdTracker, dawgFile)
+	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
 	var minimiserWg sync.WaitGroup
 
@@ -367,8 +352,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		// the worker is currently busy.
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
-		minimiserWg.Add(1)
-		go edm.runMinimiser(ctx, minimiserID, &minimiserWg, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
+		minimiserWg.Go(func() {
+			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
+		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
 
@@ -377,14 +363,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// before the error is read on the shutdown path.
 	var dnstapInputErr error
 	var dnstapInputWg sync.WaitGroup
-	dnstapInputWg.Add(1)
-	go func() {
-		defer dnstapInputWg.Done()
+	dnstapInputWg.Go(func() {
 		if err := dti.ReadInto(ctx, edm.inputChannel); err != nil {
 			dnstapInputErr = err
 			stop()
 		}
-	}()
+	})
 
 	// Wait here until all instances of runMinimiser() is done
 	minimiserWg.Wait()
@@ -645,9 +629,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	return edm, nil
 }
 
-func (edm *DnstapMinimiser) monitorChannelLen(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) monitorChannelLen(ctx context.Context) {
 	ticker := edm.deps.Clock.NewTicker(edm.deps.MonitorChannelInterval)
 	defer ticker.Stop()
 

@@ -7,17 +7,14 @@ import (
 )
 
 // runMinimiser generates data and it is collected into datasets here
-func (edm *DnstapMinimiser) dataCollector(wg *sync.WaitGroup, wkd *wellKnownDomainsTracker, dawgFile string) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile string) {
 	// Keep track of if we have recorded any dnstap packets in session data
 	var sessionUpdated bool
 
 	// Start retryer, handles instances where the received update has a
 	// dawgModTime that is no longer valid becuase it has been rotated.
 	var retryerWg sync.WaitGroup
-	retryerWg.Add(1)
-	go wkd.updateRetryer(edm, &retryerWg)
+	retryerWg.Go(func() { wkd.updateRetryer(edm) })
 
 	sessions := []*sessionData{}
 	sessionIntervalStart := edm.deps.Clock.Now().UTC()
