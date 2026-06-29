@@ -11,7 +11,7 @@ require (
 	github.com/lestrrat-go/jwx/v3 v3.1.1
 	github.com/miekg/dns v1.1.72
 	github.com/parquet-go/parquet-go v0.30.1
-	github.com/pelletier/go-toml/v2 v2.3.1
+	github.com/pelletier/go-toml/v2 v2.4.2
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/segmentio/go-hll v1.0.1
