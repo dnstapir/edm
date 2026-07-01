@@ -13,12 +13,23 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/yaronf/httpsign"
 )
+
+var getUserAgent = sync.OnceValue(func() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return fmt.Sprintf("edm/unknown %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	return fmt.Sprintf("edm/%s %s/%s", bi.Main.Version, runtime.GOOS, runtime.GOARCH)
+})
 
 type realAggregateSender struct {
 	log               *slog.Logger
@@ -145,6 +156,10 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
 	// Expected by aggrec, e.g:
 	// Aggregate-Interval: 2023-11-16T09:24:13+01:00/PT45S
 	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
+
+	// Add a User-Agent based on what version of EDM we are running, eg:
+	// edm/v0.0.0-20260617090550-63aad075ec62 linux/amd64
+	req.Header.Add("User-Agent", getUserAgent())
 
 	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
 	startTime := clock.Now()
