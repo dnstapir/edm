@@ -22,6 +22,7 @@ Source2:       well-known-domains.dawg
 Source3:       ignored.dawg
 Source4:       ignored-ips
 Source5:       dnstapir-edm.sysusers.conf
+Source6:       dnstapir-reloader.service
 BuildRequires: git
 %if 0%{?suse_version}
 BuildRequires: go
@@ -69,6 +70,9 @@ install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ip
 
 # Users and Groups
 install -m 0644 -D %{SOURCE5} %{buildroot}%{_sysusersdir}/dnstapir-edm.conf
+
+# Fixy thing that sends SIGHUP to dnstapir-edm.service after cert renewal
+install -m 0644 %{SOURCE6} %{buildroot}%{_unitdir}
 
 %files
 %license LICENSE
