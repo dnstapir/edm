@@ -37,7 +37,7 @@ jobs:
         env:
           VERSION: ${{ github.event_name == 'release' && github.ref_name || github.sha }}
       - name: Delete untagged containers
-        uses: dataaxiom/ghcr-cleanup-action@cd0cdb900b5dbf3a6f2cc869f0dbb0b8211f50c4
+        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
-          repository: edm/dnstapir-edm
+          repository: dnstapir/edm/dnstapir-edm
           delete-untagged: true
