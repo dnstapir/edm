@@ -216,9 +216,7 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []by
 			origin = fmt.Sprintf(" from %s", conn.RemoteAddr())
 		}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			defer input.untrackConn(conn)
 			defer func() {
 				if err := conn.Close(); err != nil && ctx.Err() == nil {
@@ -231,7 +229,7 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan<- []by
 				input.log.Printf("%s: connection %d%s read failed: %v", conn.LocalAddr(), id, origin, err)
 			}
 			input.log.Printf("%s: closed connection %d%s", conn.LocalAddr(), id, origin)
-		}()
+		})
 	}
 }
 
