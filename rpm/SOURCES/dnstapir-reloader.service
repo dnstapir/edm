@@ -1,0 +1,10 @@
+[Unit]
+Description=DNS TAPIR EDM Reloader
+After=dnstapir-renew.service
+
+[Service]
+Type=oneshot
+ExecStart=systemctl reload dnstapir-edm.service
+
+[Install]
+RequiredBy=dnstapir-renew.service

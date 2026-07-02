@@ -22,6 +22,7 @@ Source2:       well-known-domains.dawg
 Source3:       ignored.dawg
 Source4:       ignored-ips
 Source5:       dnstapir-edm.sysusers.conf
+Source6:       dnstapir-reloader.service
 BuildRequires: git
 %if 0%{?suse_version}
 BuildRequires: go
@@ -69,6 +70,7 @@ install -m 0664 -D %{SOURCE4} %{buildroot}%{_sysconfdir}/dnstapir/edm/ignored-ip
 
 # Users and Groups
 install -m 0644 -D %{SOURCE5} %{buildroot}%{_sysusersdir}/dnstapir-edm.conf
+install -m 0644 %{SOURCE6} %{buildroot}%{_unitdir}
 
 %files
 %license LICENSE
@@ -85,6 +87,7 @@ install -m 0644 -D %{SOURCE5} %{buildroot}%{_sysusersdir}/dnstapir-edm.conf
 %attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored.dawg
 %attr(0664,dnstapir-edm,dnstapir) %{_sysconfdir}/dnstapir/edm/ignored-ips
 %attr(0660,-,dnstapir) %ghost %{_sysconfdir}/dnstapir/dnstapir-edm.toml
+%attr(0644,dnstapir-edm,dnstapir) %{_unitdir}/dnstapir-reloader.service
 
 %attr(0644,root,root) %{_sysusersdir}/dnstapir-edm.conf
 
