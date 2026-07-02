@@ -1,6 +1,7 @@
 name: Build container
 
 on:
+  workflow_dispatch:
   release:
     types:
       - published
