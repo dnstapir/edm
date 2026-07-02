@@ -39,5 +39,5 @@ jobs:
       - name: Delete untagged containers
         uses: dataaxiom/ghcr-cleanup-action@v1.2.2
         with:
-          repository: edm/dnstapir-edm
+          repository: dnstapir/edm/dnstapir-edm
           delete-untagged: true
