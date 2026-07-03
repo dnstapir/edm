@@ -63,5 +63,6 @@ deb: build versions
 	cp rpm/SOURCES/well-known-domains.dawg deb/etc/dnstapir/edm
 	cp rpm/SOURCES/ignored.dawg deb/etc/dnstapir/edm
 	cp rpm/SOURCES/ignored-ips deb/etc/dnstapir/edm
+	cp rpm/SOURCES/dnstapir-reloader.service deb/usr/lib/systemd/system
 	sed -e "s/@@VERSION@@/$$(cat DEB_VERSION)/g" $(DEB_CONTROL_IN) > $(DEB_CONTROL_OUT)
 	dpkg-deb -b deb dnstapir-edm-$$(cat DEB_VERSION).deb
