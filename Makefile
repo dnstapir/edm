@@ -14,7 +14,7 @@ test:
 build: export GOSUMDB=sum.golang.org
 build: export GOTOOLCHAIN=auto
 build:
-	CGO_ENABLED=0 go build -ldflags "-X main.version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
+	CGO_ENABLED=0 go build -ldflags "-X github.com/dnstapir/edm/pkg/buildinfo.Version=$(shell test -f VERSION && cat VERSION || echo dev)" github.com/dnstapir/edm/cmd/dnstapir-edm
 
 clean: SHELL:=/bin/bash
 clean:

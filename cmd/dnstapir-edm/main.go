@@ -7,11 +7,9 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/dnstapir/edm/pkg/buildinfo"
 	"github.com/dnstapir/edm/pkg/cmd"
 )
-
-// version set at build time with -ldflags="-X main.version=v0.0.1"
-var version = "undefined"
 
 // defaultHostname is used when the real hostname cannot be determined.
 const defaultHostname = "dnstapir-edm-hostname-unknown"
@@ -50,7 +48,7 @@ func main() {
 	loggerLevel := new(slog.LevelVar) // Info by default
 
 	// Logger used for all output
-	logger := buildLogger(os.Stderr, loggerLevel, version, resolveHostname(os.Stderr))
+	logger := buildLogger(os.Stderr, loggerLevel, buildinfo.Version, resolveHostname(os.Stderr))
 
 	// This makes any calls to the standard "log" package to use slog as
 	// well
