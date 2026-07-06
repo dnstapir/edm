@@ -2583,7 +2583,7 @@ func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) <span class="cov
 
 // Close closes the listener and every tracked connection. It is idempotent
 // and safe to call concurrently with ReadInto.
-func (input *socketDnstapInput) Close() error <span class="cov6" title="11">{
+func (input *socketDnstapInput) Close() error <span class="cov6" title="10">{
         input.closeOnce.Do(func() </span><span class="cov6" title="10">{
                 input.closeErr = input.listener.Close()
 
@@ -2595,7 +2595,7 @@ func (input *socketDnstapInput) Close() error <span class="cov6" title="11">{
                         }</span>
                 }
         })
-        <span class="cov6" title="11">return input.closeErr</span>
+        <span class="cov6" title="10">return input.closeErr</span>
 }
 
 // ReadInto accepts connections and forwards their dnstap frames to output
@@ -2608,11 +2608,11 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan&lt;- [
 
         go func() </span><span class="cov3" title="3">{
                 select </span>{
-                case &lt;-ctx.Done():<span class="cov3" title="3">
+                case &lt;-ctx.Done():<span class="cov2" title="2">
                         if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span><span class="cov0" title="0">{
                                 input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), err)
                         }</span>
-                case &lt;-done:<span class="cov0" title="0"></span>
+                case &lt;-done:<span class="cov1" title="1"></span>
                 }
         }()
 
@@ -3193,7 +3193,7 @@ import (
         "go4.org/netipx"
 )
 
-func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" title="235">{
+func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov5" title="235">{
         conf := edm.getConfig()
 
         if conf.IgnoredQuestionNamesFile == "" </span><span class="cov3" title="22">{
@@ -3202,8 +3202,8 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" t
                 return nil
         }</span>
 
-        <span class="cov6" title="213">dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
-        if err != nil </span><span class="cov2" title="3">{
+        <span class="cov5" title="213">dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
+        if err != nil </span><span class="cov1" title="3">{
                 if errors.Is(err, errEmptyDawgFile) </span><span class="cov1" title="1">{
                         // Treat the same as unset filename
                         edm.ignoredQuestions.Store(nil)
@@ -3218,22 +3218,22 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error <span class="cov6" t
         // as that would race with hot-path readers still holding it. Reloads
         // leave the old finder for the GC to reclaim once no reader references
         // it (see the ignoredQuestions field comment on DnstapMinimiser).
-        <span class="cov6" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
                 edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
         }</span> else<span class="cov4" title="68"> {
                 edm.ignoredQuestions.Store(nil)
         }</span>
 
-        <span class="cov6" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span><span class="cov5" title="142">{
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
         }</span> else<span class="cov4" title="68"> {
                 edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
         }</span>
 
-        <span class="cov6" title="210">return nil</span>
+        <span class="cov5" title="210">return nil</span>
 }
 
-func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title="236">{
+func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov5" title="236">{
         conf := edm.getConfig()
 
         if conf.IgnoredClientIPsFile == "" </span><span class="cov3" title="21">{
@@ -3243,40 +3243,40 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title
                 return nil
         }</span>
 
-        <span class="cov6" title="215">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
-        if err != nil </span><span class="cov2" title="3">{
+        <span class="cov5" title="215">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
+        if err != nil </span><span class="cov1" title="3">{
                 return fmt.Errorf("setIgnoredClientsIPs: unable to open file: %w", err)
         }</span>
-        <span class="cov6" title="212">defer func() </span><span class="cov6" title="212">{
+        <span class="cov5" title="212">defer func() </span><span class="cov5" title="212">{
                 err := fh.Close()
                 if err != nil </span><span class="cov0" title="0">{
                         edm.log.Error("setIgnoredClientIPs: failed closing fh", "filename", conf.IgnoredClientIPsFile, "error", err)
                 }</span>
         }()
 
-        <span class="cov6" title="212">var b netipx.IPSetBuilder
+        <span class="cov5" title="212">var b netipx.IPSetBuilder
 
         var numCIDRs uint64
         scanner := bufio.NewScanner(fh)
-        for scanner.Scan() </span><span class="cov7" title="853">{
+        for scanner.Scan() </span><span class="cov6" title="853">{
                 if scanner.Text() == "" || strings.HasPrefix(scanner.Text(), "#") </span><span class="cov2" title="4">{
                         // Skip empty lines and comments
                         continue</span>
                 }
-                <span class="cov7" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
+                <span class="cov6" title="849">prefix, err := netip.ParsePrefix(scanner.Text())
                 if err != nil </span><span class="cov1" title="1">{
                         return fmt.Errorf("setIgnoredClientIPs: unable to parse ignored prefix '%s'", scanner.Text())
                 }</span>
-                <span class="cov7" title="848">b.AddPrefix(prefix)
+                <span class="cov6" title="848">b.AddPrefix(prefix)
                 numCIDRs++</span>
         }
-        <span class="cov6" title="211">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
+        <span class="cov5" title="211">if err := scanner.Err(); err != nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("setIgnoredClientIPs: error reading from '%s': %w", conf.IgnoredClientIPsFile, err)
         }</span>
 
         // Starts out as nil. We only set it to an initialized IPSet if there is at
         // least one ignored client CIDR present in the input file.
-        <span class="cov6" title="211">var ipset *netipx.IPSet
+        <span class="cov5" title="211">var ipset *netipx.IPSet
         if numCIDRs &gt; 0 </span><span class="cov5" title="142">{
                 ipset, err = b.IPSet()
                 if err != nil </span><span class="cov0" title="0">{
@@ -3284,7 +3284,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title
                 }</span>
         }
 
-        <span class="cov6" title="211">edm.ignoredClientsIPSet.Store(ipset)
+        <span class="cov5" title="211">edm.ignoredClientsIPSet.Store(ipset)
         edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
         if ipset != nil </span><span class="cov5" title="142">{
@@ -3293,10 +3293,10 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error <span class="cov6" title
                 edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
         }</span>
 
-        <span class="cov6" title="211">return nil</span>
+        <span class="cov5" title="211">return nil</span>
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="6896">{
+func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 <span class="cov9" title="38242">{
         return edm.ignoredClientCIDRsParsed.Load()
 }</span>
 
@@ -3307,15 +3307,15 @@ type dawgFinderHolder struct {
         finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov9" title="6939">{
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span class="cov9" title="38285">{
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
         ipset := edm.ignoredClientsIPSet.Load()
-        if ipset == nil </span><span class="cov8" title="3224">{
+        if ipset == nil </span><span class="cov9" title="32755">{
                 return false
         }</span>
-        <span class="cov8" title="3715">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
+        <span class="cov8" title="5530">clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
         if !ok </span><span class="cov2" title="4">{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
@@ -3325,30 +3325,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool <span clas
                 edm.promClientIPIgnoredError.Inc()
                 return true
         }</span>
-        <span class="cov8" title="3711">if ipset.Contains(clientIP) </span><span class="cov8" title="1929">{
+        <span class="cov8" title="5526">if ipset.Contains(clientIP) </span><span class="cov7" title="2869">{
                 edm.promClientIPIgnored.Inc()
                 return true
         }</span>
-        <span class="cov8" title="1782">return false</span>
+        <span class="cov7" title="2657">return false</span>
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="14594">{
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool <span class="cov10" title="64227">{
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
         holder := edm.ignoredQuestions.Load()
-        if holder == nil </span><span class="cov9" title="10211">{
+        if holder == nil </span><span class="cov9" title="21245">{
                 return false
         }</span>
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="4383">for _, question := range msg.Question </span><span class="cov8" title="4385">{
+        <span class="cov9" title="42982">for _, question := range msg.Question </span><span class="cov9" title="42984">{
                 dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
-                if dawgIndex != dawgNotFound </span><span class="cov7" title="1348">{
+                if dawgIndex != dawgNotFound </span><span class="cov8" title="16470">{
                         edm.promQuestionNameIgnored.Inc()
                         return true
                 }</span>
         }
-        <span class="cov8" title="3035">return false</span>
+        <span class="cov9" title="26512">return false</span>
 }
 </pre>
 		
@@ -5511,7 +5511,7 @@ type wellKnownDomainsData struct {
         dawgFinder   dawg.Finder
 }
 
-func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov4" title="22">{
+func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (*wellKnownDomainsTracker, error) <span class="cov3" title="22">{
         wkd := &amp;wellKnownDomainsTracker{
                 m:           map[int]*histogramData{},
                 updateCh:    make(chan wkdUpdate, 10000),
@@ -5525,26 +5525,26 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
-func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="4408">{
+func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) <span class="cov9" title="43007">{
         // Ignore capitalisation in labels
         name = strings.ToLower(name)
 
         // Try exact match first
         dawgIndex := dawgFinder.IndexOf(name)
 
-        if dawgIndex == dawgNotFound </span><span class="cov9" title="3940">{
+        if dawgIndex == dawgNotFound </span><span class="cov9" title="35142">{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="5699">{
+                for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span><span class="cov10" title="52328">{
                         dawgIndex = dawgFinder.IndexOf(name[index-1:])
-                        if dawgIndex != dawgNotFound </span><span class="cov8" title="895">{
+                        if dawgIndex != dawgNotFound </span><span class="cov8" title="8620">{
                                 return dawgIndex, true
                         }</span>
                 }
         }
 
-        <span class="cov9" title="3513">return dawgIndex, false</span>
+        <span class="cov9" title="34387">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5570,7 +5570,7 @@ func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) 
 func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync.WaitGroup) <span class="cov3" title="12">{
         defer wg.Done()
 
-        for wu := range wkd.retryCh </span><span class="cov2" title="3">{
+        for wu := range wkd.retryCh </span><span class="cov1" title="3">{
                 wu.retry++
                 if wu.retry &gt;= wu.retryLimit </span><span class="cov1" title="1">{
                         edm.log.Info("ignoring wkd update since retry counter hit retry limit", "retry", wu.retry, "retry_limit", wu.retryLimit)
@@ -5594,11 +5594,11 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser, wg *sync
                 <span class="cov1" title="1">wkd.updateCh &lt;- wu</span>
         }
 
-        <span class="cov3" title="11">edm.log.Info("updateRetryer: exiting loop")
+        <span class="cov2" title="11">edm.log.Info("updateRetryer: exiting loop")
         close(wkd.retryerDone)</span>
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov3" title="10">{
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) <span class="cov2" title="10">{
         wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
@@ -5610,7 +5610,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 
         // Create hash from IP address for use in HLL data
         ip, ok := netip.AddrFromSlice(ipBytes)
-        if ok </span><span class="cov3" title="9">{
+        if ok </span><span class="cov2" title="9">{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
                 wu.hllHash = murmur3.Sum64(ipBytes)
@@ -5618,8 +5618,8 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }</span>
 
         // Counters based on header
-        <span class="cov3" title="10">switch msg.Rcode </span>{
-        case dns.RcodeSuccess:<span class="cov3" title="7">
+        <span class="cov2" title="10">switch msg.Rcode </span>{
+        case dns.RcodeSuccess:<span class="cov2" title="7">
                 wu.OKCount++</span>
         case dns.RcodeNameError:<span class="cov1" title="1">
                 wu.NXCount++</span>
@@ -5630,7 +5630,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov3" title="9">{
+        <span class="cov2" title="10">if msg.Question[0].Qclass == dns.ClassINET </span><span class="cov2" title="9">{
                 switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:<span class="cov2" title="5">
                         wu.ACount++</span>
@@ -5647,10 +5647,10 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 wu.NonINCount++
         }</span>
 
-        <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
+        <span class="cov2" title="10">wkd.updateCh &lt;- wu</span>
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov3" title="9">{
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) <span class="cov2" title="9">{
         dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
@@ -5665,7 +5665,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
         if edm.dawgReloadRequested.CompareAndSwap(true, false) </span><span class="cov2" title="4">{
                 var err error
                 dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
-                if err != nil </span><span class="cov2" title="3">{
+                if err != nil </span><span class="cov1" title="3">{
                         return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
                 }</span>
                 <span class="cov1" title="1">dawgFileChanged = true
