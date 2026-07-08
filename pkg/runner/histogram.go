@@ -166,6 +166,7 @@ timerLoop:
 				edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
 				continue
 			}
+			now := time.Now()
 			for _, dirEntry := range dirEntries {
 				if dirEntry.IsDir() {
 					continue
@@ -180,6 +181,15 @@ timerLoop:
 
 					absPath := filepath.Join(outboxDir, dirEntry.Name())
 					absPathSent := filepath.Join(sentDir, dirEntry.Name())
+
+					// files older than 1h are not relevant anymore => discard
+					if now.Sub(stopTS) > 1*time.Hour {
+						err = edm.deps.FileSystem.Remove(absPath)
+						if err != nil {
+							edm.log.Error("histogramSender: unable to remove old histogram file", "error", err)
+						}
+						continue
+					}
 
 					// Make a copy of the struct under lock
 					// so the network communication from
