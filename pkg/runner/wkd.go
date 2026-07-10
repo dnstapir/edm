@@ -77,11 +77,13 @@ func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
 		// Next try to look up suffix matches, so for the name
 		// "www.example.com." we will check for the strings
 		// ".example.com." and ".com.".
-		for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) {
+		for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, 0) {
 			dawgIndex = dawgFinder.IndexOf(name[index-1:])
 			if dawgIndex != dawgNotFound {
 				return dawgIndex, true
 			}
+			// skip ahead last label
+			name = name[index:]
 		}
 	}
 
