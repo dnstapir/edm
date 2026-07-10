@@ -97,14 +97,7 @@ minimiserLoop:
 			// scratch buffer, falling back to allocation only for an
 			// address longer than the scratch buffer (IPv4 and IPv6
 			// both fit).
-			n := len(dt.Message.QueryAddress)
-			var dangerRealClientIP []byte
-			if n <= len(dangerScratch) {
-				dangerRealClientIP = dangerScratch[:n]
-			} else {
-				dangerRealClientIP = make([]byte, n)
-			}
-			copy(dangerRealClientIP, dt.Message.QueryAddress)
+			dangerRealClientIP := append(dangerScratch[:0], dt.Message.QueryAddress...)
 
 			// Detect cryptopan key rotation; purge our local cache so
 			// no IPs anonymised under the old key bleed through.
