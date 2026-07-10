@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 )
 
 func TestQnameSeen(t *testing.T) {
@@ -16,12 +15,11 @@ func TestQnameSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("Example.COM.", dns.TypeA)
-	if edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
+	qname0 := "example.com."
+	if edm.qnameSeen(qname0, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qnameSeen call returned true")
 	}
-	if !edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
+	if !edm.qnameSeen(qname0, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("second qnameSeen call returned false")
 	}
 
@@ -29,13 +27,12 @@ func TestQnameSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
+	if !edm.qnameSeen(qname0, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("qnameSeen did not find qname in pebble")
 	}
 
-	other := new(dns.Msg)
-	other.SetQuestion("other.example.", dns.TypeA)
-	_ = edm.qnameSeen(other, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
+	qnameOther := "other.example."
+	_ = edm.qnameSeen(qnameOther, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
 }
 
 // TestQnameSeenLRUEviction verifies the LRU-evicted bookkeeping arm of
@@ -50,17 +47,15 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := new(dns.Msg)
-	first.SetQuestion("a.example.", dns.TypeA)
-	if edm.qnameSeen(first, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
+	qname1 := "a.example."
+	if edm.qnameSeen(qname1, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qname unexpectedly already-seen")
 	}
 
-	second := new(dns.Msg)
-	second.SetQuestion("b.example.", dns.TypeA)
+	qname2 := "b.example."
 	// Adding the second distinct qname evicts the first from the LRU,
 	// exercising the evicted/promSeenQnameLRUEvicted.Inc() arm.
-	_ = edm.qnameSeen(second, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
+	_ = edm.qnameSeen(qname2, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
 	if cache.Len() != 1 {
 		t.Fatalf("cache len = %d, want 1 after eviction", cache.Len())
 	}
@@ -110,9 +105,7 @@ func TestQnameSeenStoreError(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			msg := new(dns.Msg)
-			msg.SetQuestion("example.com.", dns.TypeA)
-			if got := edm.qnameSeen(msg, cache, tt.store, defaultTC.PebbleSync); got != tt.want {
+			if got := edm.qnameSeen("example.com.", cache, tt.store, defaultTC.PebbleSync); got != tt.want {
 				t.Fatalf("qnameSeen = %t, want %t", got, tt.want)
 			}
 			if tt.store.markCalls != tt.wantMarks {
@@ -132,9 +125,6 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 
 	pdb := newTestPebble(t)
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("race.example.", dns.TypeA)
-
 	const goroutines = 64
 	start := make(chan struct{})
 	results := make(chan bool, goroutines)
@@ -143,7 +133,7 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 	for range goroutines {
 		wg.Go(func() {
 			<-start
-			results <- edm.qnameSeen(msg, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultTC.PebbleSync)
+			results <- edm.qnameSeen("race.example.", seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultTC.PebbleSync)
 		})
 	}
 

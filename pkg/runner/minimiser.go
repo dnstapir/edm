@@ -131,6 +131,9 @@ minimiserLoop:
 				continue
 			}
 
+			// extract and normalize query name zero for later use
+			qname0 := strings.ToLower(msg.Question[0].Name)
+
 			for _, question := range msg.Question {
 				if _, ok := dns.IsDomainName(question.Name); !ok {
 					edm.promInvalidQuestionName.Inc()
@@ -144,13 +147,13 @@ minimiserLoop:
 
 			// We pass on the client address for cardinality
 			// measurements.
-			dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
+			dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(qname0)
 			if dawgIndex != dawgNotFound {
-				wkdTracker.sendUpdate(dangerRealClientIP, msg, dawgIndex, suffixMatch, dawgModTime)
+				wkdTracker.sendUpdate(dangerRealClientIP, msg, qname0, dawgIndex, suffixMatch, dawgModTime)
 				continue
 			}
 
-			if !edm.qnameSeen(msg, seenQnameLRU, seenStore, conf.PebbleSync) {
+			if !edm.qnameSeen(qname0, seenQnameLRU, seenStore, conf.PebbleSync) {
 				if !startConf.DisableMQTT {
 					newQname := protocols.NewQnameEvent(msg, truncatedTimestamp)
 

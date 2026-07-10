@@ -9,7 +9,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/twmb/murmur3"
 )
@@ -23,10 +22,8 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	serverID := "serverID"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
 	ip := netip.MustParseAddr("198.51.100.10")
-	dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
+	dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup("example.com.")
 	wkdTracker.updateCh <- wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,

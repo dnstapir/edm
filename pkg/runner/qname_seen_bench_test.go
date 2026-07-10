@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 )
 
 // BenchmarkQnameSeen measures the qnameSeen hot path: a qname that has already
@@ -25,18 +24,17 @@ func BenchmarkQnameSeen(b *testing.B) {
 	pdb := newTestPebble(b)
 	store := &pebbleSeenQnameStore{db: pdb}
 
-	msgs := make([]*dns.Msg, nQnames)
-	for i := range msgs {
-		m := new(dns.Msg)
-		m.SetQuestion("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
-		msgs[i] = m
+	qnames := make([]string, nQnames)
+	for i := range qnames {
+		qname := "host" + strconv.Itoa(i) + ".example.com."
+		qnames[i] = qname
 		// Record it so the benchmarked calls below all take the seen path.
-		edm.qnameSeen(m, cache, store, defaultTC.PebbleSync)
+		edm.qnameSeen(qname, cache, store, defaultTC.PebbleSync)
 	}
 
 	// Sanity check (in the benchmark goroutine, not the parallel workers): a
 	// seeded qname must report as already seen.
-	if !edm.qnameSeen(msgs[0], cache, store, defaultTC.PebbleSync) {
+	if !edm.qnameSeen(qnames[0], cache, store, defaultTC.PebbleSync) {
 		b.Fatal("seeded qname should report as already seen")
 	}
 
@@ -45,7 +43,7 @@ func BenchmarkQnameSeen(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			edm.qnameSeen(msgs[i%nQnames], cache, store, defaultTC.PebbleSync)
+			edm.qnameSeen(qnames[i%nQnames], cache, store, defaultTC.PebbleSync)
 			i++
 		}
 	})

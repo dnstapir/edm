@@ -466,11 +466,6 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 			ignored:  true,
 		},
 		{
-			name:     "exact match found, case insensitive",
-			question: "eXample.com.",
-			ignored:  true,
-		},
-		{
 			name:     "exact match not found",
 			question: "www.example.com.",
 			ignored:  false,

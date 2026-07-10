@@ -3,7 +3,6 @@ package runner
 import (
 	"fmt"
 	"net/netip"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -65,10 +64,9 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 
 // Try to find a domain name string match in DAWG data and return the index as
 // well as if it was found based on a suffix string or not.
+//
+// assumes that name is normalized
 func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
-	// Ignore capitalisation in labels
-	name = strings.ToLower(name)
-
 	// Try exact match first
 	dawgIndex := dawgFinder.IndexOf(name)
 
@@ -95,15 +93,16 @@ type wkdUpdate struct {
 	suffixMatch bool
 	hllHash     uint64
 	ip          netip.Addr
-	msg         *dns.Msg
+	qname0      string // qname0 should always be normalized
 	dawgModTime time.Time
 	retry       int
 	retryLimit  int
 }
 
-func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) {
+// assumes that qname is normalized
+func (wkd *wellKnownDomainsTracker) lookup(qname string) (int, bool, time.Time) {
 	snap := wkd.snap.Load()
-	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
+	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, qname)
 	return dawgIndex, suffixMatch, snap.dawgModTime
 }
 
@@ -115,7 +114,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 			continue
 		}
 
-		dawgIndex, suffixMatch, dawgModTime := wkd.lookup(wu.msg)
+		dawgIndex, suffixMatch, dawgModTime := wkd.lookup(wu.qname0)
 		if dawgIndex == dawgNotFound {
 			edm.log.Info("ignoring wkd update because name does not exist in updated wkd tracker", "update_dawg_modtime", wu.dawgModTime, "wkd_dawg_modtime", dawgModTime)
 			continue
@@ -136,14 +135,15 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	close(wkd.retryerDone)
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
+// assumes that qname0 is normalized
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, qname0 string, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
 	wu := wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,
 		dawgModTime: dawgModTime,
 		hllHash:     0,
 		retryLimit:  10,
-		msg:         msg,
+		qname0:      qname0,
 	}
 
 	// Create hash from IP address for use in HLL data

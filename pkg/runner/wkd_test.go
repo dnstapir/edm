@@ -37,12 +37,9 @@ func BenchmarkWKDTLookup(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	m := new(dns.Msg)
-	m.SetQuestion("google.com.", dns.TypeA)
-
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		wkdTracker.lookup(m)
+		wkdTracker.lookup("google.com.")
 	}
 }
 
@@ -77,12 +74,6 @@ func TestWKD(t *testing.T) {
 			suffixMatch: false,
 		},
 		{
-			name:        "found exact match, case insensitive",
-			domain:      "eXample.com.",
-			found:       true,
-			suffixMatch: false,
-		},
-		{
 			name:        "missing exact match",
 			domain:      "www.example.com.",
 			found:       false,
@@ -95,20 +86,8 @@ func TestWKD(t *testing.T) {
 			suffixMatch: true,
 		},
 		{
-			name:        "found suffix match, case insensitive",
-			domain:      "wWw.eXample.net.",
-			found:       true,
-			suffixMatch: true,
-		},
-		{
 			name:        "found more nested suffix match",
 			domain:      "example.www.example.net.",
-			found:       true,
-			suffixMatch: true,
-		},
-		{
-			name:        "found more nested suffix match, case insensitive",
-			domain:      "eXample.www.example.net.",
 			found:       true,
 			suffixMatch: true,
 		},
@@ -171,10 +150,7 @@ func TestWKD(t *testing.T) {
 	}
 
 	for _, test := range wkdLookupTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.domain, dns.TypeA)
-
-		dawgIndex, _, _ := wkd.lookup(m)
+		dawgIndex, _, _ := wkd.lookup(test.domain)
 
 		known := dawgIndex != dawgNotFound
 
@@ -243,7 +219,7 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeMX)
 	msg.Rcode = dns.RcodeNameError
-	wkd.sendUpdate(netip.MustParseAddr("198.51.100.20").AsSlice(), msg, 0, false, modTime)
+	wkd.sendUpdate(netip.MustParseAddr("198.51.100.20").AsSlice(), msg, msg.Question[0].Name, 0, false, modTime)
 
 	select {
 	case wu := <-wkd.updateCh:
@@ -294,12 +270,10 @@ func TestUpdateRetryer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		msg := new(dns.Msg)
-		msg.SetQuestion("example.com.", dns.TypeA)
 
 		var wg sync.WaitGroup
 		wg.Go(func() { wkd.updateRetryer(edm) })
-		wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 2}
+		wkd.retryCh <- wkdUpdate{qname0: "example.com.", dawgModTime: time.Unix(1, 0), retryLimit: 2}
 		close(wkd.retryCh)
 
 		select {
@@ -404,7 +378,7 @@ func TestSendUpdateBranches(t *testing.T) {
 			msg.SetQuestion("example.com.", tc.qtype)
 			msg.Question[0].Qclass = tc.qclass
 			msg.Rcode = tc.rcode
-			wkd.sendUpdate(tc.ipBytes, msg, 0, false, time.Unix(2, 0))
+			wkd.sendUpdate(tc.ipBytes, msg, msg.Question[0].Name, 0, false, time.Unix(2, 0))
 			select {
 			case wu := <-wkd.updateCh:
 				tc.check(t, wu)
@@ -428,14 +402,12 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			msg := new(dns.Msg)
-			msg.SetQuestion("example.com.", dns.TypeA)
 
 			var wg sync.WaitGroup
 			wg.Go(func() { wkd.updateRetryer(edm) })
 			// retry is 1 BEFORE the increment, becomes 2 after — equal to
 			// retryLimit, so the skip arm fires and no resend reaches updateCh.
-			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
+			wkd.retryCh <- wkdUpdate{qname0: "example.com.", dawgModTime: time.Unix(1, 0), retry: 1, retryLimit: 2}
 			close(wkd.retryCh)
 			wg.Wait()
 			<-wkd.retryerDone
@@ -459,12 +431,10 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			msg := new(dns.Msg)
-			msg.SetQuestion("unknown.example.", dns.TypeA)
 
 			var wg sync.WaitGroup
 			wg.Go(func() { wkd.updateRetryer(edm) })
-			wkd.retryCh <- wkdUpdate{msg: msg, dawgModTime: time.Unix(1, 0), retryLimit: 5}
+			wkd.retryCh <- wkdUpdate{qname0: "unknown.example.", dawgModTime: time.Unix(1, 0), retryLimit: 5}
 			close(wkd.retryCh)
 			wg.Wait()
 			<-wkd.retryerDone
