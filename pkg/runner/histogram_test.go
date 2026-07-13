@@ -196,9 +196,9 @@ func TestHistogramWriter(t *testing.T) {
 
 	hd := histogramData{
 		dnsLabels: dnsLabels{
-			Label0: ptr("com"),
-			Label1: ptr("example"),
-			Label2: ptr("www"),
+			Label0: new("com"),
+			Label1: new("example"),
+			Label2: new("www"),
 		},
 		StartTime:             10,
 		ACount:                11,
@@ -274,9 +274,9 @@ func BenchmarkHistogramWriter(b *testing.B) {
 
 	hd := histogramData{
 		dnsLabels: dnsLabels{
-			Label0: ptr("com"),
-			Label1: ptr("example"),
-			Label2: ptr("www"),
+			Label0: new("com"),
+			Label1: new("example"),
+			Label2: new("www"),
 		},
 		StartTime:             10,
 		ACount:                11,

@@ -181,7 +181,7 @@ func TestDataCollector(t *testing.T) {
 		wg.Add(1)
 		go edm.dataCollector(&wg, wkd, path)
 
-		edm.sessionCollectorCh <- &sessionData{ServerID: ptr("server")}
+		edm.sessionCollectorCh <- &sessionData{ServerID: new("server")}
 		wkd.updateCh <- wkdUpdate{
 			histogramData: histogramData{ACount: 1, OKCount: 1},
 			dawgIndex:     0,
