@@ -100,22 +100,17 @@ func bitsFromMsg(dns *dns.Msg) uint16 {
 // an empty Qname, nil Qtype and nil Qclass, but other header-derived fields
 // will still be populated.
 func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
-	bits := bitsFromMsg(msg)
-	flags := int(bits)
-
 	event := NewQnameJSON{
 		Type:      NewQnameJSONType,
 		Timestamp: &ts,
-		Flags:     &flags,
+		Flags:     new(int(bitsFromMsg(msg))),
 		Version:   NewQnameJSONVersion,
 	}
 
 	if len(msg.Question) > 0 {
-		qType := int(msg.Question[0].Qtype)
-		qClass := int(msg.Question[0].Qclass)
 		event.Qname = msg.Question[0].Name
-		event.Qtype = &qType
-		event.Qclass = &qClass
+		event.Qtype = new(int(msg.Question[0].Qtype))
+		event.Qclass = new(int(msg.Question[0].Qclass))
 	}
 
 	return event
