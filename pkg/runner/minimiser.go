@@ -193,6 +193,9 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 	}
 
 	msg := new(dns.Msg)
+	// only unpack until and including the question section of the
+	// dns message, ie. not the answers
+	msg.Options = dns.MsgOptionUnpackQuestion
 
 	if isQuery {
 		msg.Data = dt.Message.QueryMessage
