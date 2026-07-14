@@ -127,10 +127,6 @@ func TestEDMIP6BytesToInt(t *testing.T) {
 	}
 }
 
-func ptr[T any](v T) *T {
-	return &v
-}
-
 func BenchmarkSessionWriter(b *testing.B) {
 	b.ReportAllocs()
 
@@ -153,24 +149,24 @@ func BenchmarkSessionWriter(b *testing.B) {
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
-			Label0: ptr("com"),
-			Label1: ptr("example"),
-			Label2: ptr("www"),
+			Label0: new("com"),
+			Label1: new("example"),
+			Label2: new("www"),
 		},
-		ServerID:          ptr("serverID"),
-		QueryTime:         ptr(int64(10)),
-		ResponseTime:      ptr(int64(10)),
+		ServerID:          new("serverID"),
+		QueryTime:         new(int64(10)),
+		ResponseTime:      new(int64(10)),
 		SourceIPv4:        &i32IPInt,
 		DestIPv4:          &i32IPInt,
 		SourceIPv6Network: &ip6NetworkInt,
 		SourceIPv6Host:    &ip6HostInt,
 		DestIPv6Network:   &ip6NetworkInt,
 		DestIPv6Host:      &ip6HostInt,
-		SourcePort:        ptr(int32(1337)),
-		DestPort:          ptr(int32(1337)),
-		DNSProtocol:       ptr(int32(1)),
-		QueryMessage:      ptr("query message"),
-		ResponseMessage:   ptr("response message"),
+		SourcePort:        new(int32(1337)),
+		DestPort:          new(int32(1337)),
+		DNSProtocol:       new(int32(1)),
+		QueryMessage:      new("query message"),
+		ResponseMessage:   new("response message"),
 	}
 
 	for b.Loop() {
@@ -207,24 +203,24 @@ func TestSessionWriter(t *testing.T) {
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
-			Label0: ptr("com"),
-			Label1: ptr("example"),
-			Label2: ptr("www"),
+			Label0: new("com"),
+			Label1: new("example"),
+			Label2: new("www"),
 		},
-		ServerID:          ptr("serverID"),
-		QueryTime:         ptr(int64(10)),
-		ResponseTime:      ptr(int64(10)),
+		ServerID:          new("serverID"),
+		QueryTime:         new(int64(10)),
+		ResponseTime:      new(int64(10)),
 		SourceIPv4:        &i32IPInt,
 		SourceIPv6Network: &ip6NetworkInt,
 		SourceIPv6Host:    &ip6HostInt,
 		DestIPv6Network:   &ip6NetworkInt,
 		DestIPv6Host:      &ip6HostInt,
 		DestIPv4:          &i32IPInt,
-		SourcePort:        ptr(int32(1337)),
-		DestPort:          ptr(int32(1337)),
-		DNSProtocol:       ptr(int32(1)),
-		QueryMessage:      ptr("query message"),
-		ResponseMessage:   ptr("response message"),
+		SourcePort:        new(int32(1337)),
+		DestPort:          new(int32(1337)),
+		DNSProtocol:       new(int32(1)),
+		QueryMessage:      new("query message"),
+		ResponseMessage:   new("response message"),
 	}
 
 	_, err = parquetWriter.Write([]sessionData{sd})
@@ -327,7 +323,7 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 		t.Fatalf("overflow response timestamp = %v, want Unix zero", zeroTS)
 	}
 
-	badMsg, _ := edm.parsePacket(&dnstap.Dnstap{Message: &dnstap.Message{QueryMessage: []byte{1}, QueryTimeSec: ptr(uint64(0)), QueryTimeNsec: ptr(uint32(0))}}, true)
+	badMsg, _ := edm.parsePacket(&dnstap.Dnstap{Message: &dnstap.Message{QueryMessage: []byte{1}, QueryTimeSec: new(uint64(0)), QueryTimeNsec: new(uint32(0))}}, true)
 	if badMsg != nil {
 		t.Fatal("bad query packet returned non-nil message")
 	}

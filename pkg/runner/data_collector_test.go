@@ -178,7 +178,7 @@ func TestDataCollector(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Go(func() { edm.dataCollector(wkd, path) })
 
-		edm.sessionCollectorCh <- &sessionData{ServerID: ptr("server")}
+		edm.sessionCollectorCh <- &sessionData{ServerID: new("server")}
 		wkd.updateCh <- wkdUpdate{
 			histogramData: histogramData{ACount: 1, OKCount: 1},
 			dawgIndex:     0,

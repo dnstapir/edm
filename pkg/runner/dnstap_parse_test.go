@@ -43,8 +43,8 @@ func TestParsePacketAddressFormattingBranches(t *testing.T) {
 		dt := &dnstap.Dnstap{
 			Message: &dnstap.Message{
 				ResponseMessage:  []byte{1, 2, 3},
-				ResponseTimeSec:  ptr(uint64(0)),
-				ResponseTimeNsec: ptr(uint32(0)),
+				ResponseTimeSec:  new(uint64(0)),
+				ResponseTimeNsec: new(uint32(0)),
 			},
 		}
 		badMsg, _ := edm.parsePacket(dt, false)

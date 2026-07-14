@@ -86,8 +86,8 @@ func TestCreateSessionAndHistogramFiles(t *testing.T) {
 	ps := &prevSessions{
 		rotationTime: rotationTime,
 		sessions: []*sessionData{{
-			dnsLabels: dnsLabels{Label0: ptr("com")},
-			ServerID:  ptr("server"),
+			dnsLabels: dnsLabels{Label0: new("com")},
+			ServerID:  new("server"),
 		}},
 	}
 	sessionFile, err := edm.createSessionFile(ps, dataDir)

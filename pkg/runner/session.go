@@ -174,46 +174,35 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 	sd := &sessionData{}
 
 	if dt.Message.QueryPort != nil {
-		if *dt.Message.QueryPort > math.MaxInt32 {
-			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", *dt.Message.QueryPort)
-			var qp int32
-			sd.SourcePort = &qp
-		} else {
-			qp := int32(*dt.Message.QueryPort) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
-			sd.SourcePort = &qp
+		port := *dt.Message.QueryPort
+		if port > math.MaxInt32 {
+			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", port)
+			port = 0
 		}
+		sd.SourcePort = new(int32(port)) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	}
 
 	if dt.Message.ResponsePort != nil {
-		if *dt.Message.ResponsePort > math.MaxInt32 {
-			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", *dt.Message.ResponsePort)
-			var rp int32
-			sd.DestPort = &rp
-		} else {
-			rp := int32(*dt.Message.ResponsePort) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
-			sd.DestPort = &rp
+		port := *dt.Message.ResponsePort
+		if port > math.MaxInt32 {
+			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", port)
+			port = 0
 		}
+		sd.DestPort = new(int32(port)) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	}
 
 	edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &sd.dnsLabels)
 
 	if isQuery {
-		qms := string(dt.Message.QueryMessage)
-		sd.QueryMessage = &qms
-
-		ms := timestamp.UnixMicro()
-		sd.QueryTime = &ms
+		sd.QueryMessage = new(string(dt.Message.QueryMessage))
+		sd.QueryTime = new(timestamp.UnixMicro())
 	} else {
-		rms := string(dt.Message.ResponseMessage)
-		sd.ResponseMessage = &rms
-
-		ms := timestamp.UnixMicro()
-		sd.ResponseTime = &ms
+		sd.ResponseMessage = new(string(dt.Message.ResponseMessage))
+		sd.ResponseTime = new(timestamp.UnixMicro())
 	}
 
 	if len(dt.Identity) != 0 {
-		sID := string(dt.Identity)
-		sd.ServerID = &sID
+		sd.ServerID = new(string(dt.Identity))
 	}
 
 	switch dt.Message.GetSocketFamily() {
@@ -223,8 +212,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 			if err != nil {
 				edm.log.Error("unable to create uint32 from dt.Message.QueryAddress", "error", err)
 			} else {
-				i32SourceIPInt := int32(sourceIPInt) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-				sd.SourceIPv4 = &i32SourceIPInt
+				sd.SourceIPv4 = new(int32(sourceIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
 			}
 		}
 
@@ -233,8 +221,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 			if err != nil {
 				edm.log.Error("unable to create uint32 from dt.Message.ResponseAddress", "error", err)
 			} else {
-				i32DestIPInt := int32(destIPInt) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-				sd.DestIPv4 = &i32DestIPInt
+				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
 			}
 		}
 	case dnstap.SocketFamily_INET6:
@@ -243,10 +230,8 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 			if err != nil {
 				edm.log.Error("unable to create uint64 variables from dt.Message.QueryAddress", "error", err)
 			} else {
-				i64SourceIntNetwork := int64(sourceIPIntNetwork) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				i64SourceIntHost := int64(sourceIPIntHost)       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.SourceIPv6Network = &i64SourceIntNetwork
-				sd.SourceIPv6Host = &i64SourceIntHost
+				sd.SourceIPv6Network = new(int64(sourceIPIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
+				sd.SourceIPv6Host = new(int64(sourceIPIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 			}
 		}
 
@@ -255,10 +240,8 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 			if err != nil {
 				edm.log.Error("unable to create uint64 variables from dt.Message.ResponseAddress", "error", err)
 			} else {
-				i64dIntNetwork := int64(dipIntNetwork) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				i64dIntHost := int64(dipIntHost)       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.DestIPv6Network = &i64dIntNetwork
-				sd.DestIPv6Host = &i64dIntHost
+				sd.DestIPv6Network = new(int64(dipIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
+				sd.DestIPv6Host = new(int64(dipIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 			}
 		}
 	case 0:
@@ -269,8 +252,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 	}
 
 	if dt.Message.SocketProtocol != nil {
-		dnsProtocol := int32(dt.Message.GetSocketProtocol())
-		sd.DNSProtocol = &dnsProtocol
+		sd.DNSProtocol = new(int32(dt.Message.GetSocketProtocol()))
 	}
 
 	return sd
