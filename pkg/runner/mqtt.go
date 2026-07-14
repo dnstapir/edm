@@ -140,26 +140,23 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 	// is closed, each worker exits; when all are done, the last one
 	// closes mqttSignedCh so the publisher knows to drain and exit.
 	var signWg sync.WaitGroup
-	signWg.Add(signWorkers)
-	for i := 0; i < signWorkers; i++ {
-		go edm.mqttSignWorker(ctx, &signWg, mqttJWK)
+	for range signWorkers {
+		signWg.Go(func() { edm.mqttSignWorker(ctx, mqttJWK) })
 	}
 
-	edm.autopahoWg.Add(1)
-	go func() {
-		defer edm.autopahoWg.Done()
+	edm.autopahoWg.Go(func() {
 		signWg.Wait()
 		close(edm.mqttSignedCh)
-	}()
+	})
 
-	edm.autopahoWg.Add(1)
-	go edm.mqttPublishWorker(ctx, cm, topic, usingFileQueue)
+	edm.autopahoWg.Go(func() {
+		edm.mqttPublishWorker(ctx, cm, topic, usingFileQueue)
+	})
 }
 
 // mqttSignWorker drains mqttPubCh, JWS-signs each message, and forwards to
 // mqttSignedCh. Exits when mqttPubCh is closed.
-func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGroup, mqttJWK jwk.Key) {
-	defer wg.Done()
+func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, mqttJWK jwk.Key) {
 	for unsignedMsg := range edm.mqttPubCh {
 		// The signing algorithm is read from the key for each message.
 		// A key without an algorithm cannot be used to sign, so the
@@ -186,8 +183,6 @@ func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, wg *sync.WaitGro
 // matches paho's ConnectionManager expectations; signing remains parallel
 // upstream while broker back-pressure is contained to this publisher.
 func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string, usingFileQueue bool) {
-	defer edm.autopahoWg.Done()
-
 	var (
 		signedMsg []byte
 		ok        bool
@@ -316,9 +311,7 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 	return nil
 }
 
-func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context) {
 	edm.log.Info("newQnamePublisher: starting")
 
 	for newQname := range edm.newQnamePublisherCh {

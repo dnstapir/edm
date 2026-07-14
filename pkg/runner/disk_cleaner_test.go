@@ -52,8 +52,7 @@ func TestDiskCleanerOsReadDirError(t *testing.T) {
 		}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.diskCleaner(ctx, &wg, t.TempDir())
+		wg.Go(func() { edm.diskCleaner(ctx, t.TempDir()) })
 		// Advance just past the disk-cleaner interval so a tick fires.
 		time.Sleep(time.Second)
 		cancel()
@@ -81,8 +80,7 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 		edm.newQnamePublisherCh <- &protocols.NewQnameJSON{}
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go edm.monitorChannelLen(ctx, &wg)
+		wg.Go(func() { edm.monitorChannelLen(ctx) })
 		time.Sleep(time.Second)
 		cancel()
 		wg.Wait()
@@ -99,8 +97,7 @@ func TestMonitorAndDiskCleaner(t *testing.T) {
 		}
 		ctx, cancel = context.WithCancel(t.Context())
 		t.Cleanup(cancel)
-		wg.Add(1)
-		go edm.diskCleaner(ctx, &wg, sentDir)
+		wg.Go(func() { edm.diskCleaner(ctx, sentDir) })
 		time.Sleep(time.Minute)
 		cancel()
 		wg.Wait()

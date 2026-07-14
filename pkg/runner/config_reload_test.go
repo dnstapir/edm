@@ -24,11 +24,9 @@ func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 		defer cancel()
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			configUpdater(ctx, reloadCh, edm)
-		}()
+		})
 
 		// Cancelling the context is sticky, so configUpdater observes it via its
 		// select regardless of whether the goroutine has reached the select yet.
@@ -45,11 +43,9 @@ func TestConfigUpdaterExitsOnChannelClose(t *testing.T) {
 		reloadCh := make(chan os.Signal, 1)
 
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			configUpdater(t.Context(), reloadCh, edm)
-		}()
+		})
 
 		// Closing reloadCh makes the receive return ok=false, which
 		// configUpdater treats as a shutdown signal and returns.

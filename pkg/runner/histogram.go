@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -117,9 +116,7 @@ func (edm *DnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKn
 	return name, nil
 }
 
-func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string) {
 	edm.log.Info("histogramWriter: starting")
 
 	for prevWellKnownDomainsData := range edm.histogramWriterCh {
@@ -132,9 +129,7 @@ func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string, wg
 	edm.log.Info("histogramWriter: exiting loop")
 }
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string, wg *sync.WaitGroup) {
-	defer wg.Done()
-
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string) {
 	backoffDuration := edm.deps.HistogramSenderBackoff
 
 	// We will scan the outbox directory each tick for histogram parquet
