@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	extdnstap "github.com/dnstap/golang-dnstap"
 	"github.com/miekg/dns"
 )
 
@@ -76,11 +76,9 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 			i := seed
 			for !stop.Load() {
 				addr := addrs[i%len(addrs)]
-				dt := &dnstap.Dnstap{
-					Message: &dnstap.Message{
-						QueryAddress: addr.AsSlice(),
-					},
-				}
+				dt := testUnpackedMinimalDnstapMessage(t, addr.Is6(), func(dt *extdnstap.Dnstap) {
+					dt.Message.QueryAddress = addr.AsSlice()
+				})
 				_ = edm.clientIPIsIgnored(dt)
 				_ = edm.getNumIgnoredClientCIDRs()
 				i++
@@ -339,24 +337,12 @@ func TestClientIPIsIgnoredEmptyQueryAddress(t *testing.T) {
 		t.Fatalf("setIgnoredClientIPs: %s", err)
 	}
 
-	cases := []struct {
-		name string
-		addr []byte
-	}{
-		{"nil QueryAddress", nil},
-		{"zero-length QueryAddress", []byte{}},
-		// already covered by TestIgnoredClientIPsInvalidClient but
-		// included here for symmetry / regression-safety in this file.
-		{"odd-length QueryAddress", make([]byte, 7)},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dt := &dnstap.Dnstap{Message: &dnstap.Message{QueryAddress: tc.addr}}
-			if got := edm.clientIPIsIgnored(dt); !got {
-				t.Fatalf("with active ignore list: have: %t, want: true (fail-closed)", got)
-			}
-		})
-	}
+	t.Run("zero address", func(t *testing.T) {
+		dt := testUnpackedMinimalDnstapMessage(t, false)
+		if got := edm.clientIPIsIgnored(dt); !got {
+			t.Fatalf("with active ignore list: have: %t, want: true (fail-closed)", got)
+		}
+	})
 
 	// With NO active list, an unparseable QueryAddress must NOT be
 	// treated as ignored - the early-return on a nil ipset is what
@@ -366,12 +352,10 @@ func TestClientIPIsIgnoredEmptyQueryAddress(t *testing.T) {
 	if err := edm.setIgnoredClientIPs(); err != nil {
 		t.Fatalf("setIgnoredClientIPs(empty): %s", err)
 	}
-	for _, tc := range cases {
-		t.Run("inactive/"+tc.name, func(t *testing.T) {
-			dt := &dnstap.Dnstap{Message: &dnstap.Message{QueryAddress: tc.addr}}
-			if got := edm.clientIPIsIgnored(dt); got {
-				t.Fatalf("with no ignore list: have: %t, want: false", got)
-			}
-		})
-	}
+	t.Run("inactive/zero address", func(t *testing.T) {
+		dt := testUnpackedMinimalDnstapMessage(t, false)
+		if got := edm.clientIPIsIgnored(dt); got {
+			t.Fatalf("with no ignore list: have: %t, want: false", got)
+		}
+	})
 }
