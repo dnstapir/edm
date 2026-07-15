@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"go4.org/netipx"
@@ -128,7 +128,7 @@ type dawgFinderHolder struct {
 	finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
 	// Atomic snapshot - no lock on the hot path. Reload writers
 	// atomic.Store the new IPSet; readers see either old or new value
 	// per Load.
@@ -136,8 +136,7 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
 	if ipset == nil {
 		return false
 	}
-	clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
-	if !ok {
+	if !dt.QueryAddr.IsValid() {
 		// If we have a list of clients to ignore but are not able to
 		// understand the QueryAddress let's err on the side of caution
 		// and ignore such packets as well while making noise in logs
@@ -146,7 +145,7 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
 		edm.promClientIPIgnoredError.Inc()
 		return true
 	}
-	if ipset.Contains(clientIP) {
+	if ipset.Contains(dt.QueryAddr) {
 		edm.promClientIPIgnored.Inc()
 		return true
 	}
