@@ -4,14 +4,13 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"math"
 	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"codeberg.org/miekg/dns"
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	dnsv1 "github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -171,34 +170,24 @@ func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
-func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData {
+func (edm *DnstapMinimiser) newSession(dt *dnstap.Next, msg *dns.Msg, labelLimit int, timestamp time.Time) *sessionData {
 	sd := &sessionData{}
 
-	if dt.Message.QueryPort != nil {
-		port := *dt.Message.QueryPort
-		if port > math.MaxInt32 {
-			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", port)
-			port = 0
-		}
-		sd.SourcePort = new(int32(port)) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+	if dt.HasFlags(dnstap.VALID_QUERY_PORT) {
+		sd.SourcePort = new(int32(dt.QueryPort))
 	}
 
-	if dt.Message.ResponsePort != nil {
-		port := *dt.Message.ResponsePort
-		if port > math.MaxInt32 {
-			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", port)
-			port = 0
-		}
-		sd.DestPort = new(int32(port)) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+	if dt.HasFlags(dnstap.VALID_RESPONSE_PORT) {
+		sd.DestPort = new(int32(dt.ResponsePort))
 	}
 
 	edm.setLabels(dnsv1.SplitDomainName(msg.Question[0].Header().Name), labelLimit, &sd.dnsLabels)
 
-	if isQuery {
-		sd.QueryMessage = new(string(dt.Message.QueryMessage))
+	if dt.IsQuery {
+		sd.QueryMessage = new(string(dt.Message))
 		sd.QueryTime = new(timestamp.UnixMicro())
 	} else {
-		sd.ResponseMessage = new(string(dt.Message.ResponseMessage))
+		sd.ResponseMessage = new(string(dt.Message))
 		sd.ResponseTime = new(timestamp.UnixMicro())
 	}
 
@@ -206,54 +195,48 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 		sd.ServerID = new(string(dt.Identity))
 	}
 
-	switch dt.Message.GetSocketFamily() {
-	case dnstap.SocketFamily_INET:
-		if dt.Message.QueryAddress != nil {
-			sourceIPInt, err := ipBytesToInt(dt.Message.QueryAddress)
+	if dt.HasFlags(dnstap.VALID_QUERY_ADDR) {
+		switch {
+		case dt.QueryAddr.Is4():
+			sourceIPInt, err := ipBytesToInt(dt.QueryAddr.AsSlice())
 			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.Message.QueryAddress", "error", err)
+				edm.log.Error("unable to create uint32 from dt.QueryAddr", "error", err)
 			} else {
 				sd.SourceIPv4 = new(int32(sourceIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
 			}
-		}
-
-		if dt.Message.ResponseAddress != nil {
-			destIPInt, err := ipBytesToInt(dt.Message.ResponseAddress)
+		case dt.QueryAddr.Is6():
+			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.QueryAddr.AsSlice())
 			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.Message.ResponseAddress", "error", err)
-			} else {
-				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-			}
-		}
-	case dnstap.SocketFamily_INET6:
-		if dt.Message.QueryAddress != nil {
-			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.Message.QueryAddress)
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.Message.QueryAddress", "error", err)
+				edm.log.Error("unable to create uint64 variables from dt.QueryAddr", "error", err)
 			} else {
 				sd.SourceIPv6Network = new(int64(sourceIPIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 				sd.SourceIPv6Host = new(int64(sourceIPIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 			}
 		}
+	}
 
-		if dt.Message.ResponseAddress != nil {
-			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.Message.ResponseAddress)
+	if dt.HasFlags(dnstap.VALID_RESPONSE_ADDR) {
+		switch {
+		case dt.ResponseAddr.Is4():
+			destIPInt, err := ipBytesToInt(dt.ResponseAddr.AsSlice())
 			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.Message.ResponseAddress", "error", err)
+				edm.log.Error("unable to create uint32 from dt.ResponseAddr", "error", err)
+			} else {
+				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
+			}
+		case dt.ResponseAddr.Is6():
+			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.ResponseAddr.AsSlice())
+			if err != nil {
+				edm.log.Error("unable to create uint64 variables from dt.ResponseAddr", "error", err)
 			} else {
 				sd.DestIPv6Network = new(int64(dipIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 				sd.DestIPv6Host = new(int64(dipIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
 			}
 		}
-	case 0:
-		// SocketFamily not set: tolerate partial metadata and leave the IP
-		// fields nil rather than logging an error for every such packet.
-	default:
-		edm.log.Error("packet is neither INET or INET6")
 	}
 
-	if dt.Message.SocketProtocol != nil {
-		sd.DNSProtocol = new(int32(dt.Message.GetSocketProtocol()))
+	if dt.HasFlags(dnstap.VALID_SOCKET_PROTOCOL) {
+		sd.DNSProtocol = new(int32(dt.SocketProtocol))
 	}
 
 	return sd
