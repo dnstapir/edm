@@ -4,7 +4,7 @@ import (
 	"net/netip"
 	"testing"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 )
 
@@ -21,10 +21,8 @@ import (
 func BenchmarkIgnoreChecksParallel(b *testing.B) {
 	edm := newTestDnstapMinimiser(b, defaultTC)
 
-	dt := &dnstap.Dnstap{
-		Message: &dnstap.Message{
-			QueryAddress: netip.MustParseAddr("198.51.100.20").AsSlice(),
-		},
+	dt := &dnstap.Message{
+		QueryAddr: netip.MustParseAddr("198.51.100.20"),
 	}
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)

@@ -26,7 +26,8 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	dnstap "github.com/dnstap/golang-dnstap"
+	extdnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
@@ -46,7 +47,7 @@ import (
 // This is purely a test convenience - production code does not use it.
 var testCryptopanCaches sync.Map // map[*DnstapMinimiser]*lru.Cache[netip.Addr, netip.Addr]
 
-func (edm *DnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Dnstap) {
+func (edm *DnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Message) {
 	cache := edm.testCryptopanCache()
 	edm.pseudonymiseDnstap(dt, edm.cryptopan.Load(), cache)
 }
@@ -299,7 +300,7 @@ func packedDNSMsg(t testing.TB, name string, qtype uint16, rcode int) []byte {
 	return packed
 }
 
-func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.SocketFamily, packed []byte) *dnstap.Dnstap {
+func testPackedDnstapMessage(t testing.TB, msgType extdnstap.Message_Type, family extdnstap.SocketFamily, packed []byte, modifiers ...func(*extdnstap.Dnstap)) []byte {
 	t.Helper()
 
 	queryPort := uint32(12345)
@@ -308,12 +309,12 @@ func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.
 	queryNSec := uint32(123)
 	responseSec := uint64(1_700_000_001)
 	responseNSec := uint32(456)
-	protoUDP := dnstap.SocketProtocol_UDP
-	topType := dnstap.Dnstap_MESSAGE
-	dt := &dnstap.Dnstap{
+	protoUDP := extdnstap.SocketProtocol_UDP
+	topType := extdnstap.Dnstap_MESSAGE
+	dt := &extdnstap.Dnstap{
 		Type:     &topType,
 		Identity: []byte("server-1"),
-		Message: &dnstap.Message{
+		Message: &extdnstap.Message{
 			Type:             &msgType,
 			SocketFamily:     &family,
 			SocketProtocol:   &protoUDP,
@@ -327,23 +328,28 @@ func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.
 	}
 
 	switch family {
-	case dnstap.SocketFamily_INET:
+	case extdnstap.SocketFamily_INET:
 		dt.Message.QueryAddress = netip.MustParseAddr("198.51.100.20").AsSlice()
 		dt.Message.ResponseAddress = netip.MustParseAddr("198.51.100.53").AsSlice()
-	case dnstap.SocketFamily_INET6:
+	case extdnstap.SocketFamily_INET6:
 		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::20").AsSlice()
 		dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
 	}
 
-	if strings.HasSuffix(dnstap.Message_Type_name[int32(msgType)], "_QUERY") {
+	if strings.HasSuffix(extdnstap.Message_Type_name[int32(msgType)], "_QUERY") {
 		dt.Message.QueryMessage = packed
 	} else {
 		dt.Message.ResponseMessage = packed
 	}
-	return dt
+
+	for _, modifier := range modifiers {
+		modifier(dt)
+	}
+
+	return marshaledDnstap(t, dt)
 }
 
-func marshaledDnstap(t testing.TB, dt *dnstap.Dnstap) []byte {
+func marshaledDnstap(t testing.TB, dt *extdnstap.Dnstap) []byte {
 	t.Helper()
 
 	data, err := proto.Marshal(dt)
@@ -351,6 +357,21 @@ func marshaledDnstap(t testing.TB, dt *dnstap.Dnstap) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func testUnpackedDnstapMessage(t testing.TB, msgType extdnstap.Message_Type, family extdnstap.SocketFamily, packed []byte, modifiers ...func(*extdnstap.Dnstap)) *dnstap.Message {
+	t.Helper()
+
+	// pack it using github.com/dnstap/golang-dnstap
+	dtPacked := testPackedDnstapMessage(t, msgType, family, packed, modifiers...)
+
+	// unpack it using github.com/dnstapir/edm/pkg/dnstap
+	dt := dnstap.Message{}
+	err := dt.Unpack(dtPacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &dt
 }
 
 func cacheTestJWKJSON() {

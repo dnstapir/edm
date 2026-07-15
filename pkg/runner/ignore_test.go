@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 )
 
@@ -87,10 +87,8 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
+		dt := &dnstap.Message{
+			QueryAddr: test.ip,
 		}
 		ignored := edm.clientIPIsIgnored(dt)
 
@@ -174,10 +172,8 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests2 {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
+		dt := &dnstap.Message{
+			QueryAddr: test.ip,
 		}
 		ignored := edm.clientIPIsIgnored(dt)
 
@@ -234,10 +230,8 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
+		dt := &dnstap.Message{
+			QueryAddr: test.ip,
 		}
 		ignored := edm.clientIPIsIgnored(dt)
 
@@ -315,10 +309,8 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
+		dt := &dnstap.Message{
+			QueryAddr: test.ip,
 		}
 		ignored := edm.clientIPIsIgnored(dt)
 
@@ -382,10 +374,8 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
+		dt := &dnstap.Message{
+			QueryAddr: test.ip,
 		}
 		ignored := edm.clientIPIsIgnored(dt)
 
@@ -407,14 +397,10 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	// Create QueryAddress that is neither 4 or 16 bytes as expected by
-	// netip.AddrFromSlice() inside edm.clientIPIsIgnored(dt). This broken
-	// content should result in the function returning "true" when the
-	// IPSet is populated.
-	dt := &dnstap.Dnstap{
-		Message: &dnstap.Message{
-			QueryAddress: make([]byte, 5),
-		},
+	// Create and invalid QueryAddr. This broken content should result
+	// in the function returning "true" when the IPSet is populated.
+	dt := &dnstap.Message{
+		QueryAddr: netip.Addr{},
 	}
 	ignored := edm.clientIPIsIgnored(dt)
 	if ignored != true {

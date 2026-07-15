@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/netip"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/yawning/cryptopan"
 	"golang.org/x/crypto/argon2"
@@ -70,34 +70,28 @@ func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
 // cryptopan instance taken once per frame so QueryAddress and ResponseAddress
 // see the same key. The per-worker cache and cryptopan snapshot are passed in
 // rather than read from shared state, so the hot path needs no locking.
-func (edm *DnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Dnstap, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) {
+func (edm *DnstapMinimiser) pseudonymiseDnstap(dt *dnstap.Message, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) {
 	var err error
-	if dt.Message.QueryAddress != nil {
-		dt.Message.QueryAddress, err = edm.pseudonymiseIP(dt.Message.QueryAddress, cpn, cache)
-		if err != nil {
-			edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.QueryAddress", "error", err)
-		}
+	dt.QueryAddr, err = edm.pseudonymiseIP(dt.QueryAddr, cpn, cache)
+	if err != nil {
+		edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.QueryAddress", "error", err)
 	}
-	if dt.Message.ResponseAddress != nil {
-		dt.Message.ResponseAddress, err = edm.pseudonymiseIP(dt.Message.ResponseAddress, cpn, cache)
-		if err != nil {
-			edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.ResponseAddress", "error", err)
-		}
+	dt.ResponseAddr, err = edm.pseudonymiseIP(dt.ResponseAddr, cpn, cache)
+	if err != nil {
+		edm.log.Error("pseudonymiseDnstap: unable to parse dt.Message.ResponseAddress", "error", err)
 	}
 }
 
-// Pseudonymise IP address, even on error the returned []byte is usable (zeroed address).
+// Pseudonymise IP address, on error the returned netip.Addr is netip.Addr{}.
 // Caller passes the per-worker cache and the cryptopan snapshot; nil cache disables caching.
-func (edm *DnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) ([]byte, error) {
-	addr, ok := netip.AddrFromSlice(ipBytes)
-	if !ok {
-		// Replace address with zeroes since we do not know if
-		// the contained junk is somehow sensitive
-		return make([]byte, len(ipBytes)), errors.New("unable to parse addr")
+func (edm *DnstapMinimiser) pseudonymiseIP(addr netip.Addr, cpn *cryptopan.Cryptopan, cache *lru.Cache[netip.Addr, netip.Addr]) (netip.Addr, error) {
+	if !addr.IsValid() {
+		return netip.Addr{}, errors.New("invalid address")
 	}
 
 	var pseudonymisedAddr netip.Addr
 	var cacheHit bool
+	var ok bool
 
 	if cache != nil {
 		pseudonymisedAddr, cacheHit = cache.Get(addr)
@@ -109,10 +103,10 @@ func (edm *DnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Crypto
 		// Not in cache or cache disabled, calculate the pseudonymised IP
 		pseudonymisedAddr, ok = netip.AddrFromSlice(cpn.Anonymize(addr.AsSlice()))
 		if !ok {
-			// Replace address with zeroes here as well
+			// Replace address with netip.Addr{} here as well
 			// since we do not know if the contained junk
 			// is somehow sensitive.
-			return make([]byte, len(ipBytes)), errors.New("unable to anonymise addr")
+			return netip.Addr{}, errors.New("unable to anonymise addr")
 		}
 
 		// cryptopan.Anonymize() returns IPv4 addresses via net.IPv4(),
@@ -129,5 +123,5 @@ func (edm *DnstapMinimiser) pseudonymiseIP(ipBytes []byte, cpn *cryptopan.Crypto
 		}
 	}
 
-	return pseudonymisedAddr.AsSlice(), nil
+	return pseudonymisedAddr, nil
 }
