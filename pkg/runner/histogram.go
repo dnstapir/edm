@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/miekg/dns"
+	dnsv1 "github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
 	"github.com/segmentio/go-hll"
@@ -288,7 +288,7 @@ func (edm *DnstapMinimiser) writeHistogramParquet(output io.Writer, startTime ti
 			return fmt.Errorf("writeHistogramParquet: unable to find DAWG index %d: %w", index, err)
 		}
 
-		labels := dns.SplitDomainName(domain)
+		labels := dnsv1.SplitDomainName(domain)
 
 		// Setting the labels now when we are out of the hot path.
 		edm.setLabels(labels, labelLimit, &hGramData.dnsLabels)

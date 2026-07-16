@@ -4,12 +4,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
 )
 
 func TestBitsFromMsgAllFlags(t *testing.T) {
 	msg := &dns.Msg{
-		MsgHdr: dns.MsgHdr{
+		MsgHeader: dns.MsgHeader{
 			Response:           true,
 			Opcode:             dns.OpcodeStatus,
 			Authoritative:      true,
@@ -31,8 +31,7 @@ func TestBitsFromMsgAllFlags(t *testing.T) {
 }
 
 func TestNewQnameEvent(t *testing.T) {
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeAAAA)
+	msg := dns.NewMsg("example.com.", dns.TypeAAAA)
 	msg.RecursionDesired = true
 	ts := time.Date(2026, 5, 28, 12, 13, 14, 15, time.UTC)
 

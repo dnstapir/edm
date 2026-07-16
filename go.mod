@@ -3,6 +3,7 @@ module github.com/dnstapir/edm
 go 1.26
 
 require (
+	codeberg.org/miekg/dns v0.6.101
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/dnstap/golang-dnstap v0.4.0
 	github.com/eclipse/paho.golang v0.23.0

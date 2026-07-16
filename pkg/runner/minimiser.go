@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"codeberg.org/miekg/dns"
+	"codeberg.org/miekg/dns/dnsutil"
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/dnstapir/edm/pkg/protocols"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -125,7 +126,7 @@ minimiserLoop:
 			}
 
 			for _, question := range msg.Question {
-				if _, ok := dns.IsDomainName(question.Name); !ok {
+				if ok := dnsutil.IsName(question.Header().Name); !ok {
 					edm.promInvalidQuestionName.Inc()
 					continue minimiserLoop
 				}
@@ -192,8 +193,10 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 	}
 
 	msg := new(dns.Msg)
+
 	if isQuery {
-		err = msg.Unpack(dt.Message.QueryMessage)
+		msg.Data = dt.Message.QueryMessage
+		err = msg.Unpack()
 		if err != nil {
 			edm.log.Error("unable to unpack query message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
 			msg = nil
@@ -202,7 +205,8 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.M
 		return msg, t
 	}
 
-	err = msg.Unpack(dt.Message.ResponseMessage)
+	msg.Data = dt.Message.ResponseMessage
+	err = msg.Unpack()
 	if err != nil {
 		edm.log.Error("unable to unpack response message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
 		msg = nil

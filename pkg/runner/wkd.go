@@ -7,7 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
+	dnsv1 "github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/twmb/murmur3"
 )
@@ -76,7 +77,7 @@ func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
 		// Next try to look up suffix matches, so for the name
 		// "www.example.com." we will check for the strings
 		// ".example.com." and ".com.".
-		for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) {
+		for index, end := dnsv1.NextLabel(name, 0); !end; index, end = dnsv1.NextLabel(name, index) {
 			dawgIndex = dawgFinder.IndexOf(name[index-1:])
 			if dawgIndex != dawgNotFound {
 				return dawgIndex, true
@@ -103,7 +104,7 @@ type wkdUpdate struct {
 
 func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) {
 	snap := wkd.snap.Load()
-	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
+	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Header().Name)
 	return dawgIndex, suffixMatch, snap.dawgModTime
 }
 
@@ -168,15 +169,15 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	}
 
 	// Counters based on question class and type
-	if msg.Question[0].Qclass == dns.ClassINET {
-		switch msg.Question[0].Qtype {
-		case dns.TypeA:
+	if msg.Question[0].Header().Class == dns.ClassINET {
+		switch msg.Question[0].(type) {
+		case *dns.A:
 			wu.ACount++
-		case dns.TypeAAAA:
+		case *dns.AAAA:
 			wu.AAAACount++
-		case dns.TypeMX:
+		case *dns.MX:
 			wu.MXCount++
-		case dns.TypeNS:
+		case *dns.NS:
 			wu.NSCount++
 		default:
 			wu.OtherTypeCount++

@@ -4,8 +4,8 @@ import (
 	"sync"
 	"testing"
 
+	"codeberg.org/miekg/dns"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 )
 
 func TestQnameSeen(t *testing.T) {
@@ -16,8 +16,7 @@ func TestQnameSeen(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("Example.COM.", dns.TypeA)
+	msg := dns.NewMsg("Example.COM.", dns.TypeA)
 	if edm.qnameSeen(msg, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qnameSeen call returned true")
 	}
@@ -33,8 +32,7 @@ func TestQnameSeen(t *testing.T) {
 		t.Fatal("qnameSeen did not find qname in pebble")
 	}
 
-	other := new(dns.Msg)
-	other.SetQuestion("other.example.", dns.TypeA)
+	other := dns.NewMsg("other.example.", dns.TypeA)
 	_ = edm.qnameSeen(other, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
 }
 
@@ -50,14 +48,12 @@ func TestQnameSeenLRUEviction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := new(dns.Msg)
-	first.SetQuestion("a.example.", dns.TypeA)
+	first := dns.NewMsg("a.example.", dns.TypeA)
 	if edm.qnameSeen(first, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync) {
 		t.Fatal("first qname unexpectedly already-seen")
 	}
 
-	second := new(dns.Msg)
-	second.SetQuestion("b.example.", dns.TypeA)
+	second := dns.NewMsg("b.example.", dns.TypeA)
 	// Adding the second distinct qname evicts the first from the LRU,
 	// exercising the evicted/promSeenQnameLRUEvicted.Inc() arm.
 	_ = edm.qnameSeen(second, cache, &pebbleSeenQnameStore{db: db}, defaultTC.PebbleSync)
@@ -110,8 +106,7 @@ func TestQnameSeenStoreError(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			msg := new(dns.Msg)
-			msg.SetQuestion("example.com.", dns.TypeA)
+			msg := dns.NewMsg("example.com.", dns.TypeA)
 			if got := edm.qnameSeen(msg, cache, tt.store, defaultTC.PebbleSync); got != tt.want {
 				t.Fatalf("qnameSeen = %t, want %t", got, tt.want)
 			}
@@ -132,8 +127,7 @@ func TestQnameSeenConcurrentFirstSeenOnce(t *testing.T) {
 
 	pdb := newTestPebble(t)
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("race.example.", dns.TypeA)
+	msg := dns.NewMsg("race.example.", dns.TypeA)
 
 	const goroutines = 64
 	start := make(chan struct{})
