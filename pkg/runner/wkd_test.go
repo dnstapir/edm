@@ -11,7 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
 	"github.com/smhanov/dawg"
 )
 
@@ -37,8 +37,7 @@ func BenchmarkWKDTLookup(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	m := new(dns.Msg)
-	m.SetQuestion("google.com.", dns.TypeA)
+	m := dns.NewMsg("google.com.", dns.TypeA)
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
@@ -126,9 +125,7 @@ func TestWKD(t *testing.T) {
 	}
 
 	for _, test := range wkdDawgIndexTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.domain, dns.TypeA)
-		i, suffixMatch := getDawgIndex(wkd.snap.Load().dawgFinder, m.Question[0].Name)
+		i, suffixMatch := getDawgIndex(wkd.snap.Load().dawgFinder, test.domain)
 
 		if test.found && i == dawgNotFound {
 			t.Fatalf("%s: expected match %s, but was not found", test.name, test.domain)
@@ -171,8 +168,7 @@ func TestWKD(t *testing.T) {
 	}
 
 	for _, test := range wkdLookupTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.domain, dns.TypeA)
+		m := dns.NewMsg(test.domain, dns.TypeA)
 
 		dawgIndex, _, _ := wkd.lookup(m)
 
@@ -240,8 +236,7 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeMX)
+	msg := dns.NewMsg("example.com.", dns.TypeMX)
 	msg.Rcode = dns.RcodeNameError
 	wkd.sendUpdate(netip.MustParseAddr("198.51.100.20").AsSlice(), msg, 0, false, modTime)
 
@@ -294,8 +289,7 @@ func TestUpdateRetryer(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		msg := new(dns.Msg)
-		msg.SetQuestion("example.com.", dns.TypeA)
+		msg := dns.NewMsg("example.com.", dns.TypeA)
 
 		var wg sync.WaitGroup
 		wg.Go(func() { wkd.updateRetryer(edm) })
@@ -328,7 +322,7 @@ func TestSendUpdateBranches(t *testing.T) {
 	cases := []struct {
 		name    string
 		ipBytes []byte
-		rcode   int
+		rcode   uint16
 		qtype   uint16
 		qclass  uint16
 		check   func(t *testing.T, wu wkdUpdate)
@@ -400,9 +394,8 @@ func TestSendUpdateBranches(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			msg := new(dns.Msg)
-			msg.SetQuestion("example.com.", tc.qtype)
-			msg.Question[0].Qclass = tc.qclass
+			msg := dns.NewMsg("example.com.", tc.qtype)
+			msg.Question[0].Header().Class = tc.qclass
 			msg.Rcode = tc.rcode
 			wkd.sendUpdate(tc.ipBytes, msg, 0, false, time.Unix(2, 0))
 			select {
@@ -428,8 +421,7 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			msg := new(dns.Msg)
-			msg.SetQuestion("example.com.", dns.TypeA)
+			msg := dns.NewMsg("example.com.", dns.TypeA)
 
 			var wg sync.WaitGroup
 			wg.Go(func() { wkd.updateRetryer(edm) })
@@ -459,8 +451,7 @@ func TestUpdateRetryerBranches(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			msg := new(dns.Msg)
-			msg.SetQuestion("unknown.example.", dns.TypeA)
+			msg := dns.NewMsg("unknown.example.", dns.TypeA)
 
 			var wg sync.WaitGroup
 			wg.Go(func() { wkd.updateRetryer(edm) })

@@ -25,12 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/miekg/dns"
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
-	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/yawning/cryptopan"
 	"google.golang.org/protobuf/proto"
@@ -279,18 +279,17 @@ func testDawgFile(t testing.TB, domains ...string) string {
 	return path
 }
 
-func packedDNSMsg(t testing.TB, name string, qtype uint16, rcode int) []byte {
+func packedDNSMsg(t testing.TB, name string, qtype uint16, rcode uint16) []byte {
 	t.Helper()
 
-	msg := new(dns.Msg)
-	msg.SetQuestion(name, qtype)
+	msg := dns.NewMsg(name, qtype)
 	msg.Response = true
 	msg.Rcode = rcode
-	packed, err := msg.Pack()
+	err := msg.Pack()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return packed
+	return msg.Data
 }
 
 func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.SocketFamily, packed []byte) *dnstap.Dnstap {

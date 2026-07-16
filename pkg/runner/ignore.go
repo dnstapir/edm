@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"codeberg.org/miekg/dns"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"go4.org/netipx"
 )
@@ -163,7 +163,7 @@ func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
 	// While uncommon, if there happens to be multiple questions in the
 	// packet we consider the message ignored if any of them matches.
 	for _, question := range msg.Question {
-		dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+		dawgIndex, _ := getDawgIndex(holder.finder, question.Header().Name)
 		if dawgIndex != dawgNotFound {
 			edm.promQuestionNameIgnored.Inc()
 			return true

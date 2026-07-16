@@ -3,7 +3,7 @@ package protocols
 import (
 	"time"
 
-	"github.com/miekg/dns"
+	"codeberg.org/miekg/dns"
 )
 
 // Implements https://github.com/dnstapir/protocols/blob/main/events/new_qname.yaml
@@ -108,9 +108,9 @@ func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 	}
 
 	if len(msg.Question) > 0 {
-		event.Qname = msg.Question[0].Name
-		event.Qtype = new(int(msg.Question[0].Qtype))
-		event.Qclass = new(int(msg.Question[0].Qclass))
+		event.Qname = msg.Question[0].Header().Name
+		event.Qtype = new(int(dns.RRToType(msg.Question[0])))
+		event.Qclass = new(int(msg.Question[0].Header().Class))
 	}
 
 	return event

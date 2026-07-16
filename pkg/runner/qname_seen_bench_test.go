@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"testing"
 
+	"codeberg.org/miekg/dns"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 )
 
 // BenchmarkQnameSeen measures the qnameSeen hot path: a qname that has already
@@ -27,8 +27,7 @@ func BenchmarkQnameSeen(b *testing.B) {
 
 	msgs := make([]*dns.Msg, nQnames)
 	for i := range msgs {
-		m := new(dns.Msg)
-		m.SetQuestion("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
+		m := dns.NewMsg("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
 		msgs[i] = m
 		// Record it so the benchmarked calls below all take the seen path.
 		edm.qnameSeen(m, cache, store, defaultTC.PebbleSync)

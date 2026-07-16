@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"codeberg.org/miekg/dns"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
 )
@@ -444,8 +444,7 @@ func TestSessionWriterLogsCreateError(t *testing.T) {
 
 func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
 	edm := discardEDM()
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
+	msg := dns.NewMsg("example.com.", dns.TypeA)
 
 	sd := edm.newSession(&dnstap.Dnstap{
 		Message: &dnstap.Message{},

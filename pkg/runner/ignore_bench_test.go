@@ -4,8 +4,8 @@ import (
 	"net/netip"
 	"testing"
 
+	"codeberg.org/miekg/dns"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/miekg/dns"
 )
 
 // BenchmarkIgnoreChecksParallel measures the per-packet ignore-list read path
@@ -26,8 +26,7 @@ func BenchmarkIgnoreChecksParallel(b *testing.B) {
 			QueryAddress: netip.MustParseAddr("198.51.100.20").AsSlice(),
 		},
 	}
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
+	msg := dns.NewMsg("example.com.", dns.TypeA)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

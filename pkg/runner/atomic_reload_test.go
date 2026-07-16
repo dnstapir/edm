@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"codeberg.org/miekg/dns"
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/miekg/dns"
 )
 
 // The tests in this file exercise the lock-free reload paths across the
@@ -151,8 +151,7 @@ func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 			defer wg.Done()
 			i := seed
 			for !stop.Load() {
-				m := new(dns.Msg)
-				m.SetQuestion(questions[i%len(questions)], dns.TypeA)
+				m := dns.NewMsg(questions[i%len(questions)], dns.TypeA)
 				_ = edm.questionIsIgnored(m)
 				i++
 			}
@@ -300,14 +299,12 @@ func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := new(dns.Msg)
-			// SetQuestion only handles a single question; build the
+			// Helpers only handles a single question at a time; build the
 			// slice directly to model an unusual multi-question packet.
-			m.Question = make([]dns.Question, len(tc.questions))
+			m.Question = make([]dns.RR, len(tc.questions))
 			for i, q := range tc.questions {
-				m.Question[i] = dns.Question{
-					Name:   q,
-					Qtype:  dns.TypeA,
-					Qclass: dns.ClassINET,
+				m.Question[i] = &dns.A{
+					Hdr: dns.Header{Name: q, Class: dns.ClassINET},
 				}
 			}
 

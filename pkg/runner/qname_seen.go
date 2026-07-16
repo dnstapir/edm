@@ -3,8 +3,8 @@ package runner
 import (
 	"strings"
 
+	"codeberg.org/miekg/dns"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 )
 
 // qnameSeen reports whether qname has been seen since startup, recording it
@@ -14,7 +14,7 @@ import (
 // The check-and-record runs under edm.seenQnameMutex so concurrent minimiser
 // workers report any given qname as new at most once.
 func (edm *DnstapMinimiser) qnameSeen(msg *dns.Msg, seenQnameLRU *lru.Cache[string, struct{}], store seenQnameStore, syncWrites bool) bool {
-	qname := strings.ToLower(msg.Question[0].Name)
+	qname := strings.ToLower(msg.Question[0].Header().Name)
 	edm.seenQnameMutex.Lock()
 	defer edm.seenQnameMutex.Unlock()
 
