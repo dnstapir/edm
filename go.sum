@@ -163,8 +163,8 @@ github.com/valyala/fastjson v1.6.10 h1:/yjJg8jaVQdYR3arGxPE2X5z89xrlhS0eGXdv+ADT
 github.com/valyala/fastjson v1.6.10/go.mod h1:e6FubmQouUNP73jtMLmcbxS6ydWIpOfhz34TSfO3JaE=
 github.com/xyproto/randomstring v1.0.5 h1:YtlWPoRdgMu3NZtP45drfy1GKoojuR7hmRcnhZqKjWU=
 github.com/xyproto/randomstring v1.0.5/go.mod h1:rgmS5DeNXLivK7YprL0pY+lTuhNQW3iGxZ18UQApw/E=
-github.com/yaronf/httpsign v0.5.1 h1:hYFnX4ND+tgsMAho95b65uj36ho4ND+U2fXvIbAoxl8=
-github.com/yaronf/httpsign v0.5.1/go.mod h1:euOXi3++HLtx5YlsJEWcIzF3ztK4TL2M2F0Wg3KL+V0=
+github.com/yaronf/httpsign v0.5.2 h1:9+39l7+BajAx5RUmlG6MyJ3AfIl893VfH3zcVvQOcS4=
+github.com/yaronf/httpsign v0.5.2/go.mod h1:euOXi3++HLtx5YlsJEWcIzF3ztK4TL2M2F0Wg3KL+V0=
 github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe h1:B1HfLaxsCDBY2VyN3jRFbLfLhcbkTmTxZVadyNkSwEs=
 github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe/go.mod h1:5wSpRXvjbjqdXW7D8D4y1ahMBZN0SqoxJ/ZTqkM37F0=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
