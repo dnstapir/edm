@@ -207,6 +207,12 @@ func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapM
 
 func newTestDependencies() dependencies {
 	deps := defaultDependencies()
+	deps.FileSystem = faultingFileSystem{
+		fileSystem: deps.FileSystem,
+		chmod: func(string, os.FileMode) error {
+			return nil
+		},
+	}
 	deps.CryptopanFactory = fastTestCryptopanFactory{}
 	return deps
 }
@@ -520,6 +526,7 @@ type faultingFileSystem struct {
 	fileSystem
 	readFile func(string) ([]byte, error)
 	create   func(string) (fsFile, error)
+	chmod    func(string, os.FileMode) error
 	rename   func(string, string) error
 	remove   func(string) error
 	mkdirAll func(string, os.FileMode) error
@@ -539,6 +546,13 @@ func (ffs faultingFileSystem) Create(name string) (fsFile, error) {
 		return ffs.create(name)
 	}
 	return ffs.fileSystem.Create(name)
+}
+
+func (ffs faultingFileSystem) Chmod(name string, mode os.FileMode) error {
+	if ffs.chmod != nil {
+		return ffs.chmod(name, mode)
+	}
+	return ffs.fileSystem.Chmod(name, mode)
 }
 
 func (ffs faultingFileSystem) Rename(oldpath, newpath string) error {

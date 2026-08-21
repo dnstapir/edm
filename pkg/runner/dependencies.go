@@ -41,6 +41,7 @@ type fileSystem interface {
 	Open(name string) (fsFile, error)
 	OpenFile(name string, flag int, perm os.FileMode) (fsFile, error)
 	Create(name string) (fsFile, error)
+	Chmod(name string, mode os.FileMode) error
 	ReadFile(name string) ([]byte, error)
 	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
@@ -237,6 +238,10 @@ func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (fsFile, e
 
 func (osFileSystem) Create(name string) (fsFile, error) {
 	return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
+}
+
+func (osFileSystem) Chmod(name string, mode os.FileMode) error {
+	return os.Chmod(name, mode)
 }
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {

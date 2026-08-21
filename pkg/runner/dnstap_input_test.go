@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -207,6 +208,12 @@ func TestSetupDnstapInput(t *testing.T) {
 		var factoryListener net.Listener
 		edm.deps.FileSystem = faultingFileSystem{
 			fileSystem: edm.deps.FileSystem,
+			chmod: func(_ string, mode os.FileMode) error {
+				if mode != 0o421 {
+					t.Fatal("incorrect mode passed to chmod")
+				}
+				return nil
+			},
 			remove: func(name string) error {
 				removed = name
 				return fs.ErrNotExist
@@ -228,7 +235,8 @@ func TestSetupDnstapInput(t *testing.T) {
 			},
 		}
 		dti, err := edm.setupDnstapInput(discardLog, Config{
-			InputUnix: socketPath,
+			InputUnix:            socketPath,
+			InputUnixPermissions: 0o421,
 		})
 		if err != nil {
 			t.Fatalf("setupDnstapInput: %v", err)
@@ -278,6 +286,20 @@ func TestSetupDnstapInput(t *testing.T) {
 			listenerFactory: edm.deps.ListenerFactory,
 			listen: func(string, string) (net.Listener, error) {
 				return nil, errInjected
+			},
+		}
+		_, err := edm.setupDnstapInput(discardLog, Config{InputUnix: "/tmp/x"})
+		if !errors.Is(err, errInjected) {
+			t.Fatalf("err = %v, want errInjected", err)
+		}
+	})
+
+	t.Run("unix chmod error", func(t *testing.T) {
+		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm.deps.FileSystem = faultingFileSystem{
+			fileSystem: edm.deps.FileSystem,
+			chmod: func(string, os.FileMode) error {
+				return errInjected
 			},
 		}
 		_, err := edm.setupDnstapInput(discardLog, Config{InputUnix: "/tmp/x"})

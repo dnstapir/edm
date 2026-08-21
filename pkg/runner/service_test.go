@@ -115,6 +115,12 @@ newqname-buffer = 1
 	input := newBlockingTestDnstapInput()
 	listener := newTestNetListener("unix", socketPath)
 	listenCall := make(chan [2]string, 1)
+	deps.FileSystem = faultingFileSystem{
+		fileSystem: deps.FileSystem,
+		chmod: func(string, os.FileMode) error {
+			return nil
+		},
+	}
 	deps.ListenerFactory = testListenerFactory{
 		listenerFactory: deps.ListenerFactory,
 		listen: func(network, address string) (net.Listener, error) {

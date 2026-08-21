@@ -25,6 +25,7 @@ type Config struct {
 	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
 	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
 	InputUnix                     string `toml:"input-unix"`
+	InputUnixPermissions          uint32 `toml:"input-unix-permissions"`
 	InputTCP                      string `toml:"input-tcp"`
 	InputTLS                      string `toml:"input-tls"`
 	InputTLSCertFile              string `toml:"input-tls-cert-file"`
@@ -160,6 +161,7 @@ type ConfigProvider interface {
 // config file and startup overrides.
 func DefaultConfig() (conf Config) {
 	conf = Config{
+		InputUnixPermissions:          0o660,
 		CryptopanKeySalt:              "edm-kdf-salt-val",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
 		DataDir:                       "/var/lib/dnstapir/edm",

@@ -35,6 +35,13 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.BoolVar(&conf.PebbleSync, "pebble-sync", conf.PebbleSync, "fsync seen-qname pebble writes")
 
 	fs.StringVar(&conf.InputUnix, "input-unix", conf.InputUnix, "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
+	fs.Func("input-unix-permissions", fmt.Sprintf("set file permissions for unix-socket (default 0o%3o)", conf.InputUnixPermissions), func(s string) error {
+		v, err := strconv.ParseUint(s, 0, 32)
+		if err == nil {
+			conf.InputUnixPermissions = uint32(v)
+		}
+		return err
+	})
 	fs.StringVar(&conf.InputTCP, "input-tcp", conf.InputTCP, "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
 	fs.StringVar(&conf.InputTLS, "input-tls", conf.InputTLS, "create TLS TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
 	fs.StringVar(&conf.InputTLSCertFile, "input-tls-cert-file", conf.InputTLSCertFile, "file containing cert used for TLS TCP socket")
@@ -135,6 +142,8 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.PebbleSync = src.PebbleSync }
 	case "input-unix":
 		return func(c *runner.Config) { c.InputUnix = src.InputUnix }
+	case "input-unix-permissions":
+		return func(c *runner.Config) { c.InputUnixPermissions = src.InputUnixPermissions }
 	case "input-tcp":
 		return func(c *runner.Config) { c.InputTCP = src.InputTCP }
 	case "input-tls":
