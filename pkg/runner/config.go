@@ -58,6 +58,8 @@ type Config struct {
 	DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
 	DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
+	MetricsListenAddr             string `toml:"metrics-listen-addr"`
+	PprofListenAddr               string `toml:"pprof-listen-addr"`
 }
 
 // Validate checks the configuration rules for Config.
@@ -179,6 +181,8 @@ func DefaultConfig() (conf Config) {
 		HTTPClientKeyFile:             "edm-http-client-key.pem",
 		HTTPClientCertFile:            "edm-http-client.pem",
 		HTTPURL:                       "https://127.0.0.1:8443",
+		MetricsListenAddr:             "127.0.0.1:2112",
+		PprofListenAddr:               "127.0.0.1:6060",
 	}
 	return
 }

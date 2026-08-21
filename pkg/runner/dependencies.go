@@ -163,8 +163,6 @@ type dependencies struct {
 	MonitorChannelInterval  time.Duration
 	HistogramSenderInterval time.Duration
 	HistogramSenderBackoff  time.Duration
-	PprofListenAddr         string
-	MetricsListenAddr       string
 }
 
 func defaultDependencies() dependencies {
@@ -216,12 +214,6 @@ func fillDependencies(deps dependencies) dependencies {
 	}
 	if deps.HistogramSenderBackoff == 0 {
 		deps.HistogramSenderBackoff = 15 * time.Second
-	}
-	if deps.PprofListenAddr == "" {
-		deps.PprofListenAddr = "127.0.0.1:6060"
-	}
-	if deps.MetricsListenAddr == "" {
-		deps.MetricsListenAddr = "127.0.0.1:2112"
 	}
 	return deps
 }

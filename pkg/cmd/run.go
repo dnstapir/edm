@@ -87,6 +87,9 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.BoolVar(&conf.DebugEnableBlockProfiling, "debug-enable-blockprofiling", conf.DebugEnableBlockProfiling, "Enable profiling of goroutine blocking events")
 	fs.BoolVar(&conf.DebugEnableMutexProfiling, "debug-enable-mutexprofiling", conf.DebugEnableMutexProfiling, "Enable profiling of mutex contention events")
 
+	fs.StringVar(&conf.MetricsListenAddr, "metrics-listen-addr", conf.MetricsListenAddr, "set listen address for prometheus metrics")
+	fs.StringVar(&conf.PprofListenAddr, "pprof-listen-addr", conf.PprofListenAddr, "set listen address for golang pprof")
+
 	return
 }
 
@@ -206,6 +209,10 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.DebugEnableBlockProfiling = src.DebugEnableBlockProfiling }
 	case "debug-enable-mutexprofiling":
 		return func(c *runner.Config) { c.DebugEnableMutexProfiling = src.DebugEnableMutexProfiling }
+	case "metrics-listen-addr":
+		return func(c *runner.Config) { c.MetricsListenAddr = src.MetricsListenAddr }
+	case "pprof-listen-addr":
+		return func(c *runner.Config) { c.PprofListenAddr = src.PprofListenAddr }
 	}
 	return nil
 }
