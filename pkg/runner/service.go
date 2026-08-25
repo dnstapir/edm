@@ -264,20 +264,15 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// Write histogram file to an outbox dir where it will get picked up by
 	// the histogram sender. Upon being sent it will be moved to the sent dir.
 	dataDir := startConf.DataDir
-	outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
-	sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
 
 	wg.Go(func() { edm.monitorChannelLen(ctx) })
 
 	// Start record writers and data senders in the background
 	wg.Go(func() { edm.sessionWriter(dataDir) })
-	wg.Go(func() { edm.histogramWriter(defaultLabelLimit, outboxDir) })
-	wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
+	wg.Go(func() { edm.histogramSender(ctx, defaultLabelLimit) })
 	if !startConf.DisableMQTT {
 		wg.Go(func() { edm.newQnamePublisher(mqttCtx) })
 	}
-
-	wg.Go(func() { edm.diskCleaner(ctx, sentDir) })
 
 	dawgFile := startConf.WellKnownDomainsFile
 
@@ -450,6 +445,7 @@ type DnstapMinimiser struct {
 	debug                     bool // if we should print debug messages during operation
 	sessionWriterCh           chan *prevSessions
 	histogramWriterCh         chan *wellKnownDomainsData
+	histogramRetryWriterCh    chan *wellKnownDomainsData
 	parquetRotationRequestCh  chan parquetRotationRequest
 	newQnamePublisherCh       chan *protocols.NewQnameJSON
 	sessionCollectorCh        chan *sessionData
@@ -622,6 +618,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// minimiser loop, otherwise the program can hang on shutdown.
 	edm.sessionWriterCh = make(chan *prevSessions, 100)
 	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
+	edm.histogramRetryWriterCh = make(chan *wellKnownDomainsData, 4)
 	edm.parquetRotationRequestCh = make(chan parquetRotationRequest, 1)
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, conf.NewQnameBuffer)
 	edm.sessionCollectorCh = make(chan *sessionData, 100)

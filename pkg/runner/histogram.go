@@ -1,12 +1,11 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -100,126 +99,126 @@ func getHllDefaults(explicitThreshold int) hll.Settings {
 	}
 }
 
-func (edm *DnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
-	startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime)
-
-	absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, histogramFileBase, startTime, prevWellKnownDomainsData.rotationTime)
-
-	absoluteTmpFileName = filepath.Clean(absoluteTmpFileName)
-
-	name, err := edm.writeRotatedParquet("histogram", absoluteTmpFileName, absoluteFileName, func(w io.Writer) error {
-		return edm.writeHistogramParquet(w, startTime, prevWellKnownDomainsData, labelLimit)
-	})
+func (edm *DnstapMinimiser) sendHistogram(ctx context.Context, prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, buf *bytes.Buffer) error {
+	if prevWellKnownDomainsData == nil {
+		return nil
+	}
+	// gather data
+	startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime).UTC() // TODO verify
+	duration := prevWellKnownDomainsData.rotationTime.Sub(startTime).Round(time.Second)                                  // TODO verify
+	// marshal histogram
+	err := edm.writeHistogramParquet(buf, startTime, prevWellKnownDomainsData, labelLimit)
 	if err != nil {
-		return "", fmt.Errorf("createHistogramFile: %w", err)
+		return fmt.Errorf("sendHistogram: %w", err)
 	}
-	return name, nil
+	// send histogram
+	err = edm.aggregSend(ctx, buf, startTime, duration)
+	if err != nil {
+		return fmt.Errorf("sendHistogram: %w", err)
+	}
+	return nil
 }
 
-func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string) {
-	edm.log.Info("histogramWriter: starting")
-
-	for prevWellKnownDomainsData := range edm.histogramWriterCh {
-		_, err := edm.createHistogramFile(prevWellKnownDomainsData, labelLimit, outboxDir)
-		if err != nil {
-			edm.log.Error("histogramWriter", "error", err.Error())
-		}
-
+func (edm *DnstapMinimiser) aggregSend(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error {
+	// Make a copy of the struct under lock
+	// so the network communication from
+	// send() does not block aggregSender
+	// management.
+	edm.aggregSenderMutex.RLock()
+	as := edm.aggregSender
+	edm.aggregSenderMutex.RUnlock()
+	if as == nil {
+		return errors.New("aggregSend: aggregate sender is not initialized")
 	}
-	edm.log.Info("histogramWriter: exiting loop")
+	// send
+	return as.Send(ctx, buf, ts, duration)
 }
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string) {
-	backoffDuration := edm.deps.HistogramSenderBackoff
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, labelLimit int) {
+	edm.log.Info("histogramSender: starting")
 
-	// We will scan the outbox directory each tick for histogram parquet
-	// files to send
-	ticker := edm.deps.Clock.NewTicker(edm.deps.HistogramSenderInterval)
-	defer ticker.Stop()
+	var buf bytes.Buffer
 
-	conf := edm.getConfig()
+	// load configuration
+	disableHistogramSender := edm.getConfig().DisableHistogramSender
 
-	stateString := "enabled"
-	if conf.DisableHistogramSender {
-		stateString = "disabled"
+	// log state
+	switch disableHistogramSender {
+	case true:
+		edm.log.Info("histogramSender: starting", "state", "disabled")
+	case false:
+		edm.log.Info("histogramSender: starting", "state", "enabled")
 	}
 
-	edm.log.Info("histogramSender: starting", "state", stateString)
-timerLoop:
+	// retry ticker
+	retryTicker := time.Tick(edm.deps.HistogramSenderRetryInterval)
+
+loop:
 	for {
 		select {
-		case <-ticker.C():
-			if conf.DisableHistogramSender {
-				continue
+		case prevWellKnownDomainsData, ok := <-edm.histogramWriterCh:
+			// handle primary queue
+
+			// if channel closed => exit
+			if !ok {
+				break loop
 			}
-			dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+			// if sender disabled => discard
+			if disableHistogramSender {
+				continue loop
+			}
+			// reset shared buffer
+			buf.Reset()
+			// try sending the histogram, on error => try adding to retry queue
+			err := edm.sendHistogram(ctx, prevWellKnownDomainsData, labelLimit, &buf)
 			if err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					// The directory has not been created yet, this is OK
-					continue
+				// try queuing it for a retry
+				select {
+				case edm.histogramRetryWriterCh <- prevWellKnownDomainsData:
+				default:
 				}
-				edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
-				continue
+				// log
+				edm.log.Error("histogramSender", "error", err.Error())
 			}
-			for _, dirEntry := range dirEntries {
-				if dirEntry.IsDir() {
-					continue
-				}
-				if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") && strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) {
-					startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
+		case <-retryTicker:
+			// handle retry queue
+		retryLoop:
+			for {
+				select {
+				case prevWellKnownDomainsData := <-edm.histogramRetryWriterCh:
+					// if sender disabled => discard
+					if disableHistogramSender {
+						continue retryLoop
+					}
+					// reset shared buffer
+					buf.Reset()
+					// try sending the histogram, on error => discard
+					err := edm.sendHistogram(ctx, prevWellKnownDomainsData, labelLimit, &buf)
 					if err != nil {
-						edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
-						continue
+						edm.log.Error("histogramSender", "error", err.Error(), "retry", true)
 					}
-					duration := stopTS.Sub(startTS)
-
-					absPath := filepath.Join(outboxDir, dirEntry.Name())
-					absPathSent := filepath.Join(sentDir, dirEntry.Name())
-
-					// Make a copy of the struct under lock
-					// so the network communication from
-					// send() does not block aggregSender
-					// management.
-					edm.aggregSenderMutex.RLock()
-					as := edm.aggregSender
-					edm.aggregSenderMutex.RUnlock()
-					if as == nil {
-						edm.log.Error("histogramSender: aggregate sender is not initialized")
-						continue
-					}
-					err = as.Send(ctx, absPath, startTS, duration)
-					if err != nil {
-						edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
-						select {
-						case <-edm.deps.Clock.After(backoffDuration):
-						case <-ctx.Done():
-							break timerLoop
-						}
-						continue
-					}
-					err = edm.renameFile(absPath, absPathSent)
-					if err != nil {
-						edm.log.Error("histogramSender: unable to rename sent histogram file", "error", err)
-					}
+				default:
+					// return to normal activites if retry queue is empty
+					break retryLoop
 				}
 			}
 		case <-edm.reloadHistogramSenderConfigCh:
+			// handle configuration change
 			edm.log.Info("histogramSender: reloading config")
-			newConf := edm.getConfig()
+			newDisableHistogramSender := edm.getConfig().DisableHistogramSender
 
-			if conf.DisableHistogramSender != newConf.DisableHistogramSender {
-				if newConf.DisableHistogramSender {
+			if disableHistogramSender != newDisableHistogramSender {
+				switch newDisableHistogramSender {
+				case true:
 					edm.log.Info("histogramSender: disabling histogram sender")
-				} else {
+				case false:
 					edm.log.Info("histogramSender: enabling histogram sender")
 				}
-
-				conf = newConf
+				disableHistogramSender = newDisableHistogramSender
 			}
-		case <-ctx.Done():
-			break timerLoop
 		}
 	}
+
 	edm.log.Info("histogramSender: exiting loop")
 }
 
