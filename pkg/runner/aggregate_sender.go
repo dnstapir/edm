@@ -1,7 +1,7 @@
 package runner
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/tls"
@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"time"
@@ -30,11 +29,10 @@ type realAggregateSender struct {
 	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 	httpTransport     *http.Transport
-	fs                fileSystem
 	clock             clock
 }
 
-func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (realAggregateSender, error) {
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (realAggregateSender, error) {
 	var signingKey ed25519.PrivateKey
 
 	err := jwk.Export(signingJwk, &signingKey)
@@ -42,7 +40,7 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 	}
 
-	// Create HTTP handler for sending aggregate files to aggrec
+	// Create HTTP handler for sending aggregate data to aggrec
 	httpTransport := &http.Transport{
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -80,49 +78,34 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 		caCertPool:        caCertPool,
 		signingHTTPClient: client,
 		httpTransport:     httpTransport,
-		fs:                fs,
 		clock:             clock,
 	}, nil
 }
 
 // Send sends histogram data via signed HTTP message to aggregate-receiver.
-func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
-	fs := as.fs
-	if fs == nil {
-		fs = osFileSystem{}
-	}
+func (as realAggregateSender) Send(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error {
 	clock := as.clock
 	if clock == nil {
 		clock = realClock{}
 	}
 
-	fileName = filepath.Clean(fileName)
-	file, err := fs.Open(fileName)
-	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
+	if buf == nil {
+		return fmt.Errorf("sendAggregateData: buffer is nil")
 	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil {
-			as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
-		}
-	}()
 
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
-	}
-	fileSize := fileInfo.Size()
+	// store buffer size for setting the Content-Length header
+	fileSize := int64(buf.Len())
 
 	// Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
 	histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
 	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to join URL paths: %w", err)
+		return fmt.Errorf("sendAggregateData: unable to join URL paths: %w", err)
 	}
 
 	// Send signed HTTP POST message
-	req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
+	req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, buf)
 	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
+		return fmt.Errorf("sendAggregateData: unable to create request: %w", err)
 	}
 
 	// From https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers-13#section-6.3:
@@ -141,41 +124,37 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
 	// ===
 	req.Header.Add("Content-Length", strconv.FormatInt(fileSize, 10))
 
-	// Beacuse we are using a bufio.Reader we need to set the length
-	// here as well, otherwise net/http will set the header
-	// "Transfer-Encoding: chunked" and remove the Content-Length header.
-	req.ContentLength = fileSize
-
 	// Expected by aggrec, e.g:
 	// Aggregate-Interval: 2023-11-16T09:24:13+01:00/PT45S
-	req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
+	aggregateInterval := fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration))
+	req.Header.Add("Aggregate-Interval", aggregateInterval)
 
 	// Add a User-Agent based on what version of EDM we are running, eg:
 	// edm/63aad075ec62baf21f4c0323fdcd55e4d5bb4333 linux/amd64
 	req.Header.Add("User-Agent", userAgent)
 
-	as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
+	as.log.Info("aggregateSender.send", "url", histogramURL, "aggregate-interval", aggregateInterval)
 	startTime := clock.Now()
 	res, err := as.signingHTTPClient.Do(req)
 	elapsedTime := clock.Now().Sub(startTime)
 	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
+		return fmt.Errorf("sendAggregateData: unable to send request, elapsed time %s: %w", elapsedTime, err)
 	}
 	defer res.Body.Close()
 
 	bodyData, err := io.ReadAll(res.Body)
 	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to read response body: %w", err)
+		return fmt.Errorf("sendAggregateData: unable to read response body: %w", err)
 	}
 
 	if res.StatusCode != http.StatusCreated {
 		as.log.Error(string(bodyData))
-		return fmt.Errorf("sendAggregateFile: unexpected status code: %d", res.StatusCode)
+		return fmt.Errorf("sendAggregateData: unexpected status code: %d", res.StatusCode)
 	}
 
 	locationURL, err := url.Parse(res.Header.Get("Location"))
 	if err != nil {
-		return fmt.Errorf("sendAggregateFile: unable to parse Location header (file was still uploaded, took %s): %w", elapsedTime, err)
+		return fmt.Errorf("sendAggregateData: unable to parse Location header (data was still uploaded, took %s): %w", elapsedTime, err)
 	}
 
 	// Make it so we log a reachable link if the content in Location header is relative
@@ -186,7 +165,7 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
 		locationURL.Host = as.aggrecURL.Host
 	}
 
-	as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
+	as.log.Info("aggregateSender.send: data uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 
 	return nil
 }
@@ -261,7 +240,7 @@ func (edm *DnstapMinimiser) setupHistogramSender() error {
 
 	// Build the new sender first so a failed rebuild leaves the existing
 	// working sender in place instead of zeroing it.
-	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
 	if err != nil {
 		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
 	}

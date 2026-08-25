@@ -583,7 +583,6 @@ type faultingFileSystem struct {
 	remove   func(string) error
 	mkdirAll func(string, os.FileMode) error
 	stat     func(string) (os.FileInfo, error)
-	readDir  func(string) ([]os.DirEntry, error)
 }
 
 func (ffs faultingFileSystem) ReadFile(name string) ([]byte, error) {
@@ -633,11 +632,4 @@ func (ffs faultingFileSystem) Stat(name string) (os.FileInfo, error) {
 		return ffs.stat(name)
 	}
 	return ffs.fileSystem.Stat(name)
-}
-
-func (ffs faultingFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-	if ffs.readDir != nil {
-		return ffs.readDir(name)
-	}
-	return ffs.fileSystem.ReadDir(name)
 }
