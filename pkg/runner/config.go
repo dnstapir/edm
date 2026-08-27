@@ -25,6 +25,7 @@ type Config struct {
 	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
 	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
 	InputUnix                     string `toml:"input-unix"`
+	InputUnixPermissions          uint32 `toml:"input-unix-permissions"`
 	InputTCP                      string `toml:"input-tcp"`
 	InputTLS                      string `toml:"input-tls"`
 	InputTLSCertFile              string `toml:"input-tls-cert-file"`
@@ -57,6 +58,8 @@ type Config struct {
 	DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
 	DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
+	MetricsListenAddr             string `toml:"metrics-listen-addr"`
+	PprofListenAddr               string `toml:"pprof-listen-addr"`
 }
 
 // Validate checks the configuration rules for Config.
@@ -160,6 +163,7 @@ type ConfigProvider interface {
 // config file and startup overrides.
 func DefaultConfig() (conf Config) {
 	conf = Config{
+		InputUnixPermissions:          0o660,
 		CryptopanKeySalt:              "edm-kdf-salt-val",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
 		DataDir:                       "/var/lib/dnstapir/edm",
@@ -177,6 +181,8 @@ func DefaultConfig() (conf Config) {
 		HTTPClientKeyFile:             "edm-http-client-key.pem",
 		HTTPClientCertFile:            "edm-http-client.pem",
 		HTTPURL:                       "https://127.0.0.1:8443",
+		MetricsListenAddr:             "127.0.0.1:2112",
+		PprofListenAddr:               "127.0.0.1:6060",
 	}
 	return
 }

@@ -28,7 +28,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	edm, err := NewDnstapMinimiser(
 		defaultTC, logger,
 		WithLoggerLevel(loggerLevel),
-		withDependencies(dependencies{PprofListenAddr: "127.0.0.1:0", CryptopanFactory: fastTestCryptopanFactory{}}),
+		withDependencies(dependencies{CryptopanFactory: fastTestCryptopanFactory{}}),
 	)
 	if err != nil {
 		t.Fatalf("NewDnstapMinimiser: %s", err)
@@ -36,9 +36,6 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 
 	if edm.loggerLevel != loggerLevel {
 		t.Fatal("WithLoggerLevel did not install the supplied level var")
-	}
-	if edm.deps.PprofListenAddr != "127.0.0.1:0" {
-		t.Fatalf("PprofListenAddr = %q, want custom value", edm.deps.PprofListenAddr)
 	}
 	if edm.deps.FileSystem == nil || edm.deps.Clock == nil || edm.deps.HTTPServerRunner == nil || edm.deps.CryptopanFactory == nil {
 		t.Fatal("WithDependencies did not fill nil dependency fields")
@@ -115,6 +112,12 @@ newqname-buffer = 1
 	input := newBlockingTestDnstapInput()
 	listener := newTestNetListener("unix", socketPath)
 	listenCall := make(chan [2]string, 1)
+	deps.FileSystem = faultingFileSystem{
+		fileSystem: deps.FileSystem,
+		chmod: func(string, os.FileMode) error {
+			return nil
+		},
+	}
 	deps.ListenerFactory = testListenerFactory{
 		listenerFactory: deps.ListenerFactory,
 		listen: func(network, address string) (net.Listener, error) {

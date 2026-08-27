@@ -51,8 +51,8 @@ func (fn seenQnameStoreFactoryFunc) OpenSeenQnameStore(path string) (seenQnameSt
 // the test can wait for both spawned goroutines to call the injected runner.
 func pinHTTPServersToEphemeral(t *testing.T, edm *DnstapMinimiser) {
 	t.Helper()
-	edm.deps.PprofListenAddr = "127.0.0.1:0"
-	edm.deps.MetricsListenAddr = "127.0.0.1:0"
+	edm.conf.PprofListenAddr = "127.0.0.1:0"
+	edm.conf.MetricsListenAddr = "127.0.0.1:0"
 	exited := make(chan struct{}, 2)
 	edm.deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
 		exited <- struct{}{}

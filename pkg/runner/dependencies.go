@@ -41,6 +41,7 @@ type fileSystem interface {
 	Open(name string) (fsFile, error)
 	OpenFile(name string, flag int, perm os.FileMode) (fsFile, error)
 	Create(name string) (fsFile, error)
+	Chmod(name string, mode os.FileMode) error
 	ReadFile(name string) ([]byte, error)
 	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
@@ -162,8 +163,6 @@ type dependencies struct {
 	MonitorChannelInterval  time.Duration
 	HistogramSenderInterval time.Duration
 	HistogramSenderBackoff  time.Duration
-	PprofListenAddr         string
-	MetricsListenAddr       string
 }
 
 func defaultDependencies() dependencies {
@@ -216,12 +215,6 @@ func fillDependencies(deps dependencies) dependencies {
 	if deps.HistogramSenderBackoff == 0 {
 		deps.HistogramSenderBackoff = 15 * time.Second
 	}
-	if deps.PprofListenAddr == "" {
-		deps.PprofListenAddr = "127.0.0.1:6060"
-	}
-	if deps.MetricsListenAddr == "" {
-		deps.MetricsListenAddr = "127.0.0.1:2112"
-	}
 	return deps
 }
 
@@ -237,6 +230,10 @@ func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (fsFile, e
 
 func (osFileSystem) Create(name string) (fsFile, error) {
 	return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
+}
+
+func (osFileSystem) Chmod(name string, mode os.FileMode) error {
+	return os.Chmod(name, mode)
 }
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {

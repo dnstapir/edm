@@ -225,7 +225,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// return path, including the early error returns during setup.
 	var serverWg sync.WaitGroup
 
-	pprofServer := newPprofServer(edm.deps.PprofListenAddr)
+	pprofServer := newPprofServer(startConf.PprofListenAddr)
 	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -233,7 +233,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		}
 	})
 
-	metricsServer := edm.newMetricsServer(ctx, edm.deps.MetricsListenAddr, startConf.EnableManualParquetRotation)
+	metricsServer := edm.newMetricsServer(ctx, startConf.MetricsListenAddr, startConf.EnableManualParquetRotation)
 	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(metricsServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
