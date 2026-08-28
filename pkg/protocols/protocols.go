@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"codeberg.org/miekg/dns"
+	dnsv1 "github.com/miekg/dns"
 )
 
 // Implements https://github.com/dnstapir/protocols/blob/main/events/new_qname.yaml
@@ -95,10 +96,11 @@ func bitsFromMsg(dns *dns.Msg) uint16 {
 	return bits
 }
 
-// NewQnameEvent constructs a NewQnameJSON event from a DNS message and a
-// timestamp. If the Question section is empty the returned event will have
-// an empty Qname, nil Qtype and nil Qclass, but other header-derived fields
-// will still be populated.
+// NewQnameEvent constructs a NewQnameJSON event from a DNS message and a timestamp.
+//
+// Qname uses RFC 1035 presentation format. If the Question section is empty
+// the returned event will have an empty Qname, nil Qtype and nil Qclass, but
+// other header-derived fields will still be populated.
 func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 	event := NewQnameJSON{
 		Type:      NewQnameJSONType,
@@ -109,6 +111,14 @@ func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 
 	if len(msg.Question) > 0 {
 		event.Qname = msg.Question[0].Header().Name
+		if len(msg.Data) >= dns.MsgHeaderSize {
+			// The v2 parser's unescaped string is lossy: a dot inside a label is
+			// indistinguishable from a label separator. Decode the retained wire
+			// name to preserve RFC 1035 presentation form.
+			if name, _, err := dnsv1.UnpackDomainName(msg.Data, dns.MsgHeaderSize); err == nil {
+				event.Qname = name
+			}
+		}
 		event.Qtype = new(int(dns.RRToType(msg.Question[0])))
 		event.Qclass = new(int(msg.Question[0].Header().Class))
 	}

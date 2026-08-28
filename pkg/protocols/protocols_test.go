@@ -1,11 +1,11 @@
 package protocols
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"codeberg.org/miekg/dns"
-	legacydns "github.com/miekg/dns"
 )
 
 func TestBitsFromMsgAllFlags(t *testing.T) {
@@ -62,63 +62,52 @@ func TestNewQnameEvent(t *testing.T) {
 }
 
 func TestNewQnameEventDomainNameEncoding(t *testing.T) {
-	tests := map[string]string{
-		`a\.b.example.`:                 "a.b.example.",
-		`a\046b.example.`:               "a.b.example.",
-		`a\092b.example.`:               "a\\b.example.",
-		`\000\007\009\010\031.`:         "\x00\x07\x09\x0a\x1f.",
-		`\127\128\173\239\255.example.`: "\x7f\x80\xad\xef\xff.example.",
+	tests := []struct {
+		name   string
+		labels [][]byte
+		want   string
+	}{
+		{name: "root", want: "."},
+		{name: "embedded dot", labels: [][]byte{[]byte("a.b"), []byte("example")}, want: `a\.b.example.`},
+		{name: "backslash", labels: [][]byte{[]byte(`a\b`), []byte("example")}, want: `a\\b.example.`},
+		{name: "special ASCII", labels: [][]byte{[]byte("a b'@;()\"")}, want: `a\ b\'\@\;\(\)\".`},
+		{name: "control octets", labels: [][]byte{{0, 7, 9, 10, 31}}, want: `\000\007\009\010\031.`},
+		{name: "high octets", labels: [][]byte{{127, 128, 173, 239, 255}, []byte("example")}, want: `\127\128\173\239\255.example.`},
 	}
-	for name, want := range tests {
-		t.Run(name, func(t *testing.T) {
-			legacy := legacydns.Msg{}
-			legacy.SetQuestion(name, legacydns.TypeA)
-			wire, err := legacy.Pack()
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			msg := new(dns.Msg)
-			msg.Data = wire
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := &dns.Msg{Data: packedQuestion(tc.labels...)}
 			msg.Options = dns.MsgOptionUnpackQuestion
 			if err := msg.Unpack(); err != nil {
 				t.Fatal(err)
 			}
 
-			if event := NewQnameEvent(msg, time.Time{}); event.Qname != want {
-				t.Fatalf("Qname = %q, want %q", event.Qname, want)
+			if event := NewQnameEvent(msg, time.Time{}); event.Qname != tc.want {
+				t.Fatalf("Qname = %q, want %q", event.Qname, tc.want)
 			}
 		})
 	}
 }
 
 func FuzzNewQnameEventDomainNameEncoding(f *testing.F) {
-	for _, name := range []string{
-		".",
-		"example.com.",
-		`a\.b.example.`,
-		`a\046b.example.`,
-		`a\092b.example.`,
-		`\000\007\009\010\031.`,
-		`\127\128\173\239\255.example.`,
+	for _, labels := range []struct {
+		first  []byte
+		second []byte
+	}{
+		{first: []byte("example"), second: []byte("com")},
+		{first: []byte("a.b"), second: []byte("example")},
+		{first: []byte(`a\b`), second: []byte("example")},
+		{first: []byte{0, 7, 9, 10, 31}, second: []byte{127, 128, 173, 239, 255}},
 	} {
-		f.Add(name)
+		f.Add(labels.first, labels.second)
 	}
 
-	f.Fuzz(func(t *testing.T, name string) {
-		if _, ok := legacydns.IsDomainName(name); !ok {
+	f.Fuzz(func(t *testing.T, first, second []byte) {
+		if len(first) == 0 || len(first) > 63 || len(second) == 0 || len(second) > 63 {
 			t.Skip()
 		}
 
-		legacy := legacydns.Msg{}
-		legacy.SetQuestion(name, legacydns.TypeA)
-		wire, err := legacy.Pack()
-		if err != nil {
-			t.Skip()
-		}
-
-		msg := new(dns.Msg)
-		msg.Data = wire
+		msg := &dns.Msg{Data: packedQuestion(first, second)}
 		msg.Options = dns.MsgOptionUnpackQuestion
 		if err := msg.Unpack(); err != nil {
 			t.Fatalf("Unpack() = %v", err)
@@ -128,10 +117,51 @@ func FuzzNewQnameEventDomainNameEncoding(f *testing.F) {
 		}
 
 		event := NewQnameEvent(msg, time.Time{})
-		if event.Qname != msg.Question[0].Header().Name {
-			t.Fatalf("Qname = %q, want %q", event.Qname, msg.Question[0].Header().Name)
+		want := presentationName(first, second)
+		if event.Qname != want {
+			t.Fatalf("Qname = %q, want %q", event.Qname, want)
 		}
 	})
+}
+
+func packedQuestion(labels ...[]byte) []byte {
+	data := make([]byte, dns.MsgHeaderSize)
+	data[5] = 1
+	for _, label := range labels {
+		data = append(data, byte(len(label)))
+		data = append(data, label...)
+	}
+	return append(data, 0, 0, byte(dns.TypeA), 0, byte(dns.ClassINET))
+}
+
+func presentationName(labels ...[]byte) string {
+	if len(labels) == 0 {
+		return "."
+	}
+
+	// RFC 1035 section 5.1 uses \X for special characters and three-digit
+	// decimal \DDD for octets outside display ASCII.
+	var name strings.Builder
+	for _, label := range labels {
+		for _, b := range label {
+			switch b {
+			case '.', ' ', '\'', '@', ';', '(', ')', '"', '\\':
+				name.WriteByte('\\')
+				name.WriteByte(b)
+			default:
+				if b < ' ' || b > '~' {
+					name.WriteByte('\\')
+					name.WriteByte('0' + b/100)
+					name.WriteByte('0' + b/10%10)
+					name.WriteByte('0' + b%10)
+				} else {
+					name.WriteByte(b)
+				}
+			}
+		}
+		name.WriteByte('.')
+	}
+	return name.String()
 }
 
 func TestNewQnameEventEmptyQuestion(t *testing.T) {
