@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"codeberg.org/miekg/dns"
+	legacydns "github.com/miekg/dns"
 )
 
 func TestBitsFromMsgAllFlags(t *testing.T) {
@@ -58,6 +59,79 @@ func TestNewQnameEvent(t *testing.T) {
 	if got.Flags == nil || *got.Flags != int(_RD) {
 		t.Fatalf("Flags = %v, want %d", got.Flags, _RD)
 	}
+}
+
+func TestNewQnameEventDomainNameEncoding(t *testing.T) {
+	tests := map[string]string{
+		`a\.b.example.`:                 "a.b.example.",
+		`a\046b.example.`:               "a.b.example.",
+		`a\092b.example.`:               "a\\b.example.",
+		`\000\007\009\010\031.`:         "\x00\x07\x09\x0a\x1f.",
+		`\127\128\173\239\255.example.`: "\x7f\x80\xad\xef\xff.example.",
+	}
+	for name, want := range tests {
+		t.Run(name, func(t *testing.T) {
+			legacy := legacydns.Msg{}
+			legacy.SetQuestion(name, legacydns.TypeA)
+			wire, err := legacy.Pack()
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			msg := new(dns.Msg)
+			msg.Data = wire
+			msg.Options = dns.MsgOptionUnpackQuestion
+			if err := msg.Unpack(); err != nil {
+				t.Fatal(err)
+			}
+
+			if event := NewQnameEvent(msg, time.Time{}); event.Qname != want {
+				t.Fatalf("Qname = %q, want %q", event.Qname, want)
+			}
+		})
+	}
+}
+
+func FuzzNewQnameEventDomainNameEncoding(f *testing.F) {
+	for _, name := range []string{
+		".",
+		"example.com.",
+		`a\.b.example.`,
+		`a\046b.example.`,
+		`a\092b.example.`,
+		`\000\007\009\010\031.`,
+		`\127\128\173\239\255.example.`,
+	} {
+		f.Add(name)
+	}
+
+	f.Fuzz(func(t *testing.T, name string) {
+		if _, ok := legacydns.IsDomainName(name); !ok {
+			t.Skip()
+		}
+
+		legacy := legacydns.Msg{}
+		legacy.SetQuestion(name, legacydns.TypeA)
+		wire, err := legacy.Pack()
+		if err != nil {
+			t.Skip()
+		}
+
+		msg := new(dns.Msg)
+		msg.Data = wire
+		msg.Options = dns.MsgOptionUnpackQuestion
+		if err := msg.Unpack(); err != nil {
+			t.Fatalf("Unpack() = %v", err)
+		}
+		if len(msg.Question) != 1 {
+			t.Fatalf("Question count = %d, want 1", len(msg.Question))
+		}
+
+		event := NewQnameEvent(msg, time.Time{})
+		if event.Qname != msg.Question[0].Header().Name {
+			t.Fatalf("Qname = %q, want %q", event.Qname, msg.Question[0].Header().Name)
+		}
+	})
 }
 
 func TestNewQnameEventEmptyQuestion(t *testing.T) {
