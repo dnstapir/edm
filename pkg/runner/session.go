@@ -134,6 +134,25 @@ func (edm *DnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLab
 	}
 }
 
+func (edm *DnstapMinimiser) setQuestionLabels(name string, labelLimit int, l *dnsLabels) {
+	if name == "" || name == "." {
+		return
+	}
+
+	var buffer [defaultLabelLimit]string
+	labels := buffer[:0]
+	start := 0
+	for {
+		next, end := dns.NextLabel(name, start)
+		labels = append(labels, name[start:next-1])
+		if end {
+			break
+		}
+		start = next
+	}
+	edm.setLabels(labels, labelLimit, l)
+}
+
 func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string {
 	// If labels is nil (the "." zone) there is nothing to do
 	if labels == nil {
@@ -192,7 +211,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dnswire.Message, 
 		sd.DestPort = new(int32(port)) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	}
 
-	edm.setLabels(dns.SplitDomainName(msg.Question.Name), labelLimit, &sd.dnsLabels)
+	edm.setQuestionLabels(msg.Question.Name, labelLimit, &sd.dnsLabels)
 
 	if isQuery {
 		sd.QueryMessage = new(string(dt.Message.QueryMessage))
