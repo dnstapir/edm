@@ -128,7 +128,10 @@ func packedQuestion(labels ...[]byte) []byte {
 	data := make([]byte, dns.MsgHeaderSize)
 	data[5] = 1
 	for _, label := range labels {
-		data = append(data, byte(len(label)))
+		if len(label) > 63 {
+			panic("DNS label exceeds 63 octets")
+		}
+		data = append(data, byte(len(label))) // #nosec G115 -- length is bounded by the DNS label limit above
 		data = append(data, label...)
 	}
 	return append(data, 0, 0, byte(dns.TypeA), 0, byte(dns.ClassINET))
