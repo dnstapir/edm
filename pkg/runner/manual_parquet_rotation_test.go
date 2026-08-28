@@ -26,8 +26,7 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 	serverID := "serverID"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
 
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
+	msg := testDNSMsg("example.com.", dns.TypeA)
 	ip := netip.MustParseAddr("198.51.100.10")
 	dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
 	wkdTracker.updateCh <- wkdUpdate{

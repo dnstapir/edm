@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"encoding/binary"
 	"net/netip"
 	"testing"
 	"time"
@@ -9,10 +10,25 @@ import (
 	"github.com/miekg/dns"
 )
 
+func TestParsePacketStopsAfterQuestions(t *testing.T) {
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	wire := packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess)
+	binary.BigEndian.PutUint16(wire[6:8], 1)
+	dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, wire)
+
+	msg, _ := edm.parsePacket(dt, false)
+	if msg == nil {
+		t.Fatal("parsePacket rejected a valid header and question")
+	}
+	if msg.Header.AnswerCount != 1 {
+		t.Fatalf("AnswerCount = %d, want 1", msg.Header.AnswerCount)
+	}
+}
+
 // TestParsePacketAddressFormattingBranches drives the address-formatting
 // arms of parsePacket that the addr+port-present canary in
 // TestSessionParquetAndSessionConstruction does not reach: the
-// addr-without-port and all-nil fallbacks, plus the response-unpack-error
+// addr-without-port and all-nil fallbacks, plus the response-parse-error
 // path. The port-without-address branch is covered directly by
 // TestFormatDnstapEndpoint.
 func TestParsePacketAddressFormattingBranches(t *testing.T) {
@@ -39,7 +55,7 @@ func TestParsePacketAddressFormattingBranches(t *testing.T) {
 		}
 	})
 
-	t.Run("response unpack error", func(t *testing.T) {
+	t.Run("response parse error", func(t *testing.T) {
 		dt := &dnstap.Dnstap{
 			Message: &dnstap.Message{
 				ResponseMessage:  []byte{1, 2, 3},

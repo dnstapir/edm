@@ -11,6 +11,7 @@ import (
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/dnswire"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -170,7 +171,7 @@ func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
-func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData {
+func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dnswire.Message, isQuery bool, labelLimit int, timestamp time.Time) *sessionData {
 	sd := &sessionData{}
 
 	if dt.Message.QueryPort != nil {
@@ -191,7 +192,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery 
 		sd.DestPort = new(int32(port)) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
 	}
 
-	edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &sd.dnsLabels)
+	edm.setLabels(dns.SplitDomainName(msg.Question.Name), labelLimit, &sd.dnsLabels)
 
 	if isQuery {
 		sd.QueryMessage = new(string(dt.Message.QueryMessage))

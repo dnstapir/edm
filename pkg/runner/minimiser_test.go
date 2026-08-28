@@ -315,7 +315,7 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 	})
 }
 
-func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
+func newRunMinimiserTestFixture(t testing.TB, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
 	t.Helper()
 
 	edm := newSynctestDnstapMinimiser(t, defaultTC)
