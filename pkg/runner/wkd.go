@@ -157,7 +157,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dnswire.Mess
 	}
 
 	// Counters based on header
-	switch int(msg.Header.Flags & 0xf) {
+	switch msg.Header.Rcode() {
 	case dns.RcodeSuccess:
 		wu.OKCount++
 	case dns.RcodeNameError:
