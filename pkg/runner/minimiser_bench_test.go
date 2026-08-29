@@ -15,6 +15,57 @@ func BenchmarkMinimiserResponse(b *testing.B) {
 	edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(b, "www.example.com.")
 	cryptopanCache := edm.testCryptopanCache()
 	b.Cleanup(edm.testResetCryptopanCache)
+	frame := minimiserBenchmarkFrame(b)
+
+	ctx, cancel := context.WithCancel(b.Context())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cryptopanCache, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+	})
+
+	// Warm the cryptopan cache and wait until the worker is ready.
+	edm.inputChannel <- frame
+	<-wkdTracker.updateCh
+
+	b.ReportAllocs()
+	for b.Loop() {
+		edm.inputChannel <- frame
+		<-wkdTracker.updateCh
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+// BenchmarkMinimiserSessionResponse measures session creation through runMinimiser.
+func BenchmarkMinimiserSessionResponse(b *testing.B) {
+	edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(b)
+	cryptopanCache := edm.testCryptopanCache()
+	b.Cleanup(edm.testResetCryptopanCache)
+	frame := minimiserBenchmarkFrame(b)
+
+	ctx, cancel := context.WithCancel(b.Context())
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cryptopanCache, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+	})
+
+	// Warm the caches and wait until the worker is ready.
+	edm.inputChannel <- frame
+	<-edm.sessionCollectorCh
+
+	b.ReportAllocs()
+	for b.Loop() {
+		edm.inputChannel <- frame
+		<-edm.sessionCollectorCh
+	}
+
+	cancel()
+	wg.Wait()
+}
+
+func minimiserBenchmarkFrame(b *testing.B) []byte {
+	b.Helper()
 
 	response := new(dnsv1.Msg)
 	response.SetQuestion("www.example.com.", dnsv1.TypeA)
@@ -36,24 +87,5 @@ func BenchmarkMinimiserResponse(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	frame := marshaledDnstap(b, testDnstapMessage(b, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, wire))
-
-	ctx, cancel := context.WithCancel(b.Context())
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cryptopanCache, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
-	})
-
-	// Warm the cryptopan cache and wait until the worker is ready.
-	edm.inputChannel <- frame
-	<-wkdTracker.updateCh
-
-	b.ReportAllocs()
-	for b.Loop() {
-		edm.inputChannel <- frame
-		<-wkdTracker.updateCh
-	}
-
-	cancel()
-	wg.Wait()
+	return marshaledDnstap(b, testDnstapMessage(b, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, wire))
 }

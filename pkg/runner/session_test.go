@@ -20,6 +20,8 @@ import (
 	"github.com/parquet-go/parquet-go/format"
 )
 
+var benchmarkQuestionLabels dnsLabels
+
 func BenchmarkSetLabels(b *testing.B) {
 	b.ReportAllocs()
 	labels := []string{"label0", "label1", "label2", "label3", "label4", "label5", "label6", "label7", "label8", "label9"}
@@ -28,6 +30,18 @@ func BenchmarkSetLabels(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		edm.setLabels(labels, 10, &l)
+	}
+}
+
+func BenchmarkSetQuestionLabels(b *testing.B) {
+	edm := new(DnstapMinimiser)
+	const name = "www.example.com."
+
+	b.ReportAllocs()
+	for b.Loop() {
+		var labels dnsLabels
+		edm.setQuestionLabels(name, defaultLabelLimit, &labels)
+		benchmarkQuestionLabels = labels
 	}
 }
 
@@ -70,6 +84,57 @@ func TestSetSessionLabels(t *testing.T) {
 	if *sd.Label9 != labels[0] {
 		t.Fatalf("have: %s, want: %s", *sd.Label9, labels[0])
 	}
+}
+
+func TestSetQuestionLabels(t *testing.T) {
+	tests := []struct {
+		name  string
+		qname string
+		limit int
+		want  []string
+	}{
+		{name: "empty", limit: 10},
+		{name: "root", qname: ".", limit: 10},
+		{name: "typical", qname: "www.example.com.", limit: 10, want: []string{"com", "example", "www"}},
+		{name: "escaped", qname: `a\.b.\000\255.example.`, limit: 10, want: []string{"example", `\000\255`, `a\.b`}},
+		{name: "escaped backslash", qname: `a\\.example.`, limit: 10, want: []string{"example", `a\\`}},
+		{name: "bit string", qname: `\[xd074/14].example.`, limit: 10, want: []string{"example", `\[xd074/14]`}},
+		{name: "bounded", qname: "www.example.com.", limit: 2, want: []string{"com", "example.www"}},
+		{name: "limit", qname: "a.b.c.d.e.f.g.h.i.j.", limit: 10, want: []string{"j", "i", "h", "g", "f", "e", "d", "c", "b", "a"}},
+		{name: "overflow", qname: "a.b.c.d.e.f.g.h.i.j.k.l.", limit: 10, want: []string{"l", "k", "j", "i", "h", "g", "f", "e", "d", "c.b.a"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			edm := new(DnstapMinimiser)
+			var labels dnsLabels
+			edm.setQuestionLabels(test.qname, test.limit, &labels)
+			if got := dnsLabelStrings(labels); !slices.Equal(got, test.want) {
+				t.Fatalf("labels = %#v, want %#v", got, test.want)
+			}
+		})
+	}
+}
+
+func dnsLabelStrings(labels dnsLabels) (values []string) {
+	for _, label := range []*string{
+		labels.Label0,
+		labels.Label1,
+		labels.Label2,
+		labels.Label3,
+		labels.Label4,
+		labels.Label5,
+		labels.Label6,
+		labels.Label7,
+		labels.Label8,
+		labels.Label9,
+	} {
+		if label == nil {
+			break
+		}
+		values = append(values, *label)
+	}
+	return
 }
 
 func TestEDMIPBytesToInt(t *testing.T) {
