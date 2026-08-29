@@ -12,7 +12,6 @@ import (
 
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/dnstapir/dnswire"
-	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
 )
@@ -143,7 +142,7 @@ func (edm *DnstapMinimiser) setQuestionLabels(name string, labelLimit int, l *dn
 	labels := buffer[:0]
 	start := 0
 	for {
-		next, end := dns.NextLabel(name, start)
+		next, end := dnswire.NextLabel(name, start)
 		labels = append(labels, name[start:next-1])
 		if end {
 			break
