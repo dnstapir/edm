@@ -3,7 +3,7 @@ package protocols
 import (
 	"time"
 
-	"github.com/miekg/dns"
+	"github.com/dnstapir/dnswire"
 )
 
 // Implements https://github.com/dnstapir/protocols/blob/main/events/new_qname.yaml
@@ -51,66 +51,23 @@ const (
 	NewQnameJSONVersion                                 = 0
 )
 
-// Consts and content of bitsFromMsg() borrowed from miekg/dns, see
-// https://github.com/miekg/dns/issues/1499
-const (
-	// Header.Bits
-	_QR = 1 << 15 // query/response (response=1)
-	_AA = 1 << 10 // authoritative
-	_TC = 1 << 9  // truncated
-	_RD = 1 << 8  // recursion desired
-	_RA = 1 << 7  // recursion available
-	_Z  = 1 << 6  // Z
-	_AD = 1 << 5  // authenticated data
-	_CD = 1 << 4  // checking disabled
-)
-
-func bitsFromMsg(dns *dns.Msg) uint16 {
-	bits := uint16(dns.Opcode)<<11 | uint16(dns.Rcode&0xF) // #nosec G115 -- The Opcode and Rcode fields while ints in the dns struct represents only 4 bits each
-	if dns.Response {
-		bits |= _QR
-	}
-	if dns.Authoritative {
-		bits |= _AA
-	}
-	if dns.Truncated {
-		bits |= _TC
-	}
-	if dns.RecursionDesired {
-		bits |= _RD
-	}
-	if dns.RecursionAvailable {
-		bits |= _RA
-	}
-	if dns.Zero {
-		bits |= _Z
-	}
-	if dns.AuthenticatedData {
-		bits |= _AD
-	}
-	if dns.CheckingDisabled {
-		bits |= _CD
-	}
-
-	return bits
-}
-
-// NewQnameEvent constructs a NewQnameJSON event from a DNS message and a
-// timestamp. If the Question section is empty the returned event will have
-// an empty Qname, nil Qtype and nil Qclass, but other header-derived fields
-// will still be populated.
-func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
+// NewQnameEvent constructs a [NewQnameJSON] event from a [dnswire.Message].
+//
+// Qname uses RFC presentation format. If the Question section is empty the
+// returned event has an empty Qname, nil Qtype, and nil Qclass, but other
+// header-derived fields are populated.
+func NewQnameEvent(msg *dnswire.Message, ts time.Time) NewQnameJSON {
 	event := NewQnameJSON{
 		Type:      NewQnameJSONType,
 		Timestamp: &ts,
-		Flags:     new(int(bitsFromMsg(msg))),
+		Flags:     new(int(msg.Header.Flags)),
 		Version:   NewQnameJSONVersion,
 	}
 
-	if len(msg.Question) > 0 {
-		event.Qname = msg.Question[0].Name
-		event.Qtype = new(int(msg.Question[0].Qtype))
-		event.Qclass = new(int(msg.Question[0].Qclass))
+	if msg.Header.QuestionCount > 0 {
+		event.Qname = msg.Question.Name
+		event.Qtype = new(int(msg.Question.Type))
+		event.Qclass = new(int(msg.Question.Class))
 	}
 
 	return event
