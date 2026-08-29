@@ -8,9 +8,21 @@ import (
 	"time"
 
 	"github.com/dnstapir/dnswire"
-	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/twmb/murmur3"
+)
+
+// RFC 1035 response codes, classes, and types counted by the well-known-domain
+// tracker; the values match the miekg/dns constants of the same names.
+const (
+	rcodeSuccess       = 0
+	rcodeServerFailure = 2
+	rcodeNameError     = 3
+	classINET          = 1
+	typeA              = 1
+	typeNS             = 2
+	typeMX             = 15
+	typeAAAA           = 28
 )
 
 const dawgNotFound = -1
@@ -77,7 +89,7 @@ func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
 		// Next try to look up suffix matches, so for the name
 		// "www.example.com." we will check for the strings
 		// ".example.com." and ".com.".
-		for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) {
+		for index, end := dnswire.NextLabel(name, 0); !end; index, end = dnswire.NextLabel(name, index) {
 			dawgIndex = dawgFinder.IndexOf(name[index-1:])
 			if dawgIndex != dawgNotFound {
 				return dawgIndex, true
@@ -158,26 +170,26 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dnswire.Mess
 
 	// Counters based on header
 	switch msg.Header.Rcode() {
-	case dns.RcodeSuccess:
+	case rcodeSuccess:
 		wu.OKCount++
-	case dns.RcodeNameError:
+	case rcodeNameError:
 		wu.NXCount++
-	case dns.RcodeServerFailure:
+	case rcodeServerFailure:
 		wu.FailCount++
 	default:
 		wu.OtherRcodeCount++
 	}
 
 	// Counters based on question class and type
-	if msg.Question.Class == dns.ClassINET {
+	if msg.Question.Class == classINET {
 		switch msg.Question.Type {
-		case dns.TypeA:
+		case typeA:
 			wu.ACount++
-		case dns.TypeAAAA:
+		case typeAAAA:
 			wu.AAAACount++
-		case dns.TypeMX:
+		case typeMX:
 			wu.MXCount++
-		case dns.TypeNS:
+		case typeNS:
 			wu.NSCount++
 		default:
 			wu.OtherTypeCount++
