@@ -528,12 +528,6 @@ func TestPseudonymiseIPCacheBranches(t *testing.T) {
 }
 
 func TestIPConversionErrorsAndPseudonymiseInvalid(t *testing.T) {
-	if _, err := ipBytesToInt([]byte{1, 2, 3}); err == nil {
-		t.Fatal("short IPv4 bytes succeeded")
-	}
-	if _, _, err := ip6BytesToInt([]byte{1, 2, 3}); err == nil {
-		t.Fatal("short IPv6 bytes succeeded")
-	}
 	zeroAddr := netip.Addr{}
 
 	edm := newTestDnstapMinimiser(t, defaultTC)

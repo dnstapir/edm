@@ -197,14 +197,14 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
 	if dt.HasFlags(dnstap.VALID_QUERY_ADDR) {
 		switch {
 		case dt.QueryAddr.Is4():
-			sourceIPInt, err := ipBytesToInt(dt.QueryAddr.AsSlice())
+			sourceIPInt, err := ipv4ToInt(dt.QueryAddr)
 			if err != nil {
 				edm.log.Error("unable to create uint32 from dt.QueryAddr", "error", err)
 			} else {
 				sd.SourceIPv4 = new(int32(sourceIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
 			}
 		case dt.QueryAddr.Is6():
-			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.QueryAddr.AsSlice())
+			sourceIPIntNetwork, sourceIPIntHost, err := ipv6ToInt(dt.QueryAddr)
 			if err != nil {
 				edm.log.Error("unable to create uint64 variables from dt.QueryAddr", "error", err)
 			} else {
@@ -217,14 +217,14 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
 	if dt.HasFlags(dnstap.VALID_RESPONSE_ADDR) {
 		switch {
 		case dt.ResponseAddr.Is4():
-			destIPInt, err := ipBytesToInt(dt.ResponseAddr.AsSlice())
+			destIPInt, err := ipv4ToInt(dt.ResponseAddr)
 			if err != nil {
 				edm.log.Error("unable to create uint32 from dt.ResponseAddr", "error", err)
 			} else {
 				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
 			}
 		case dt.ResponseAddr.Is6():
-			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.ResponseAddr.AsSlice())
+			dipIntNetwork, dipIntHost, err := ipv6ToInt(dt.ResponseAddr)
 			if err != nil {
 				edm.log.Error("unable to create uint64 variables from dt.ResponseAddr", "error", err)
 			} else {
@@ -273,14 +273,13 @@ func (edm *DnstapMinimiser) sessionWriter(dataDir string) {
 	edm.log.Info("sessionWriter: exiting loop")
 }
 
-func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
-	ip, ok := netip.AddrFromSlice(ip4Bytes)
-	if !ok {
-		return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
+func ipv4ToInt(ip netip.Addr) (uint32, error) {
+	if !ip.IsValid() {
+		return 0, fmt.Errorf("ipv4ToInt: address not valid")
 	}
 	ip = ip.Unmap()
 	if !ip.Is4() {
-		return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
+		return 0, fmt.Errorf("ipv4ToInt: address is not IPv4: %s", ip)
 	}
 
 	// Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
@@ -291,10 +290,9 @@ func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
 	return ipInt, nil
 }
 
-func ip6BytesToInt(ip6Bytes []byte) (uint64, uint64, error) {
-	ip, ok := netip.AddrFromSlice(ip6Bytes)
-	if !ok {
-		return 0, 0, fmt.Errorf("ip6BytesToInt: unable to parse bytes")
+func ipv6ToInt(ip netip.Addr) (uint64, uint64, error) {
+	if !ip.IsValid() {
+		return 0, 0, fmt.Errorf("ipv6ToInt: address not valid")
 	}
 
 	ip16 := ip.As16()

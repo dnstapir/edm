@@ -73,17 +73,12 @@ func TestSetSessionLabels(t *testing.T) {
 	}
 }
 
-func TestEDMIPBytesToInt(t *testing.T) {
-	ipv4AddrString := "198.51.100.15"
+func TestEDMIPv4ToInt(t *testing.T) {
+	ip4Addr := netip.MustParseAddr("198.51.100.15")
 
-	ip4Addr, err := netip.ParseAddr(ipv4AddrString)
+	ip4Int, err := ipv4ToInt(ip4Addr)
 	if err != nil {
-		t.Fatalf("unable to parse IPv4 test address '%s': %s", ipv4AddrString, err)
-	}
-
-	ip4Int, err := ipBytesToInt(ip4Addr.AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint32 variable from IPv4 test address '%s': %s", ipv4AddrString, err)
+		t.Fatalf("unable to create uint32 variable from IPv4 test address '%s': %s", ip4Addr, err)
 	}
 
 	// Go back to IPv4 data
@@ -100,17 +95,12 @@ func TestEDMIPBytesToInt(t *testing.T) {
 	}
 }
 
-func TestEDMIP6BytesToInt(t *testing.T) {
-	ipv6AddrString := "2001:db8:1122:3344:5566:7788:99aa:bbcc"
+func TestEDMIPv6ToInt(t *testing.T) {
+	ip6Addr := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
 
-	ip6Addr, err := netip.ParseAddr(ipv6AddrString)
+	ip6Network, ip6Host, err := ipv6ToInt(ip6Addr)
 	if err != nil {
-		t.Fatalf("unable to parse IPv6 test address '%s': %s", ipv6AddrString, err)
-	}
-
-	ip6Network, ip6Host, err := ip6BytesToInt(ip6Addr.AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint64 variables from IPv6 test address '%s': %s", ipv6AddrString, err)
+		t.Fatalf("unable to create uint64 variables from IPv6 test address '%s': %s", ip6Addr, err)
 	}
 
 	// Go back to complete IPv6 data
@@ -135,13 +125,13 @@ func BenchmarkSessionWriter(b *testing.B) {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
+	ipInt, err := ipv4ToInt(netip.MustParseAddr("198.51.100.20"))
 	if err != nil {
 		b.Fatalf("unable to create uint32 from address: %s", err)
 	}
 	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint32
 
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
+	ip6NetworkUint, ip6HostUint, err := ipv6ToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc"))
 	if err != nil {
 		b.Fatalf("unable to create uint64 from ipv6 address: %s", err)
 	}
@@ -188,13 +178,13 @@ func TestSessionWriter(t *testing.T) {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, sessionDataSchema, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
+	ipInt, err := ipv4ToInt(netip.MustParseAddr("198.51.100.20"))
 	if err != nil {
 		t.Fatalf("unable to create uint32 from address: %s", err)
 	}
 	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint64
 
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
+	ip6NetworkUint, ip6HostUint, err := ipv6ToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc"))
 	if err != nil {
 		t.Fatalf("unable to create uint64 from ipv6 address: %s", err)
 	}
