@@ -40,7 +40,7 @@ func TestRunMinimiserFlows(t *testing.T) {
 		defer cancel()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 
 		queryFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess)))
@@ -124,7 +124,7 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 		defer cancel()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 
 		tests := []struct {
@@ -182,7 +182,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 		edm.inputChannel <- []byte("not protobuf")
 		synctest.Wait()
@@ -202,7 +202,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		edm.ignoredClientsIPSet.Store(ipset)
 		ctx, cancel = context.WithCancel(t.Context())
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 		edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))
 		synctest.Wait()
@@ -244,7 +244,7 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 
 		frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
@@ -271,7 +271,7 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 		defer func() {
 			cancel()

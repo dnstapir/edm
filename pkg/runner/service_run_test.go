@@ -201,18 +201,4 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 			t.Fatalf("err = %v, want cryptopan cache failure", err)
 		}
 	})
-
-	t.Run("debug dnstap file open error", func(t *testing.T) {
-		tc := runCoreTC(t)
-		// A path under a regular file (not a directory) makes OpenFile
-		// fail with ENOTDIR regardless of the test user's uid.
-		blocker := writeTempFile(t, "blocker", []byte("x"))
-		tc.DebugDnstapFilename = filepath.Join(blocker, "debug.dnstap")
-		edm := newTestDnstapMinimiser(t, tc)
-		pinHTTPServersToEphemeral(t, edm)
-		err := edm.Run(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "debug dnstap file") {
-			t.Fatalf("err = %v, want debug dnstap file failure", err)
-		}
-	})
 }

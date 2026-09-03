@@ -22,7 +22,7 @@ import (
 // cryptopanCache is the worker-private Crypto-PAn LRU (nil disables
 // caching); Run creates it so a creation failure surfaces as a startup
 // error instead of a silently dead worker.
-func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, debugDnstapFile fsFile, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	dt := &dnstap.Dnstap{}
 
 	// Per-worker scratch buffer for the unpseudonymised client IP we pass
@@ -61,20 +61,6 @@ minimiserLoop:
 				edm.log.Error("DnstapMinimiser.runMinimiser: dnstap message or type missing, skipping frame", "minimiser_id", minimiserID)
 				edm.promDNSParseError.Inc()
 				continue
-			}
-
-			// Keep in mind that this outputs the unmodified dnstap
-			// data, so it contains sensitive information.
-			if debugDnstapFile != nil {
-				out, ok := dnstap.JSONFormat(dt)
-				if !ok {
-					edm.log.Error("unable to format dnstap debug log")
-				} else {
-					_, err := debugDnstapFile.Write(out)
-					if err != nil {
-						edm.log.Error("unable to write to dnstap debug file", "error", err, "filename", debugDnstapFile.Name(), "minimiser_id", minimiserID)
-					}
-				}
 			}
 
 			isQuery := strings.HasSuffix(dnstap.Message_Type_name[int32(dt.Message.GetType())], "_QUERY")
