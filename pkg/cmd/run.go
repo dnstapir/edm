@@ -83,7 +83,6 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.StringVar(&conf.HTTPURL, "http-url", conf.HTTPURL, "Service we will POST aggregates to")
 
 	fs.BoolVar(&conf.Debug, "debug", conf.Debug, "print debug logging during operation")
-	fs.StringVar(&conf.DebugDnstapFilename, "debug-dnstap-filename", conf.DebugDnstapFilename, "File for dumping unmodified (sensitive) JSON-formatted dnstap packets we are about to process, for debugging")
 	fs.BoolVar(&conf.DebugEnableBlockProfiling, "debug-enable-blockprofiling", conf.DebugEnableBlockProfiling, "Enable profiling of goroutine blocking events")
 	fs.BoolVar(&conf.DebugEnableMutexProfiling, "debug-enable-mutexprofiling", conf.DebugEnableMutexProfiling, "Enable profiling of mutex contention events")
 
@@ -203,8 +202,6 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.HTTPURL = src.HTTPURL }
 	case "debug":
 		return func(c *runner.Config) { c.Debug = src.Debug }
-	case "debug-dnstap-filename":
-		return func(c *runner.Config) { c.DebugDnstapFilename = src.DebugDnstapFilename }
 	case "debug-enable-blockprofiling":
 		return func(c *runner.Config) { c.DebugEnableBlockProfiling = src.DebugEnableBlockProfiling }
 	case "debug-enable-mutexprofiling":
