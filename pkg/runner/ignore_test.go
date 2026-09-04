@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	extdnstap "github.com/dnstap/golang-dnstap"
 	"github.com/miekg/dns"
 )
 
@@ -87,11 +87,9 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
-		}
+		dt := testUnpackedMinimalDnstapMessage(t, test.ip.Is6(), func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = test.ip.AsSlice()
+		})
 		ignored := edm.clientIPIsIgnored(dt)
 
 		if ignored != test.ignored {
@@ -174,11 +172,9 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests2 {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
-		}
+		dt := testUnpackedMinimalDnstapMessage(t, test.ip.Is6(), func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = test.ip.AsSlice()
+		})
 		ignored := edm.clientIPIsIgnored(dt)
 
 		if ignored != test.ignored {
@@ -234,11 +230,9 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
-		}
+		dt := testUnpackedMinimalDnstapMessage(t, test.ip.Is6(), func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = test.ip.AsSlice()
+		})
 		ignored := edm.clientIPIsIgnored(dt)
 
 		if ignored != test.ignored {
@@ -315,11 +309,9 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
-		}
+		dt := testUnpackedMinimalDnstapMessage(t, test.ip.Is6(), func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = test.ip.AsSlice()
+		})
 		ignored := edm.clientIPIsIgnored(dt)
 
 		if ignored != test.ignored {
@@ -382,11 +374,9 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 	}
 
 	for _, test := range ipLookupTests {
-		dt := &dnstap.Dnstap{
-			Message: &dnstap.Message{
-				QueryAddress: test.ip.AsSlice(),
-			},
-		}
+		dt := testUnpackedMinimalDnstapMessage(t, test.ip.Is6(), func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = test.ip.AsSlice()
+		})
 		ignored := edm.clientIPIsIgnored(dt)
 
 		if ignored != test.ignored {
@@ -407,15 +397,9 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	// Create QueryAddress that is neither 4 or 16 bytes as expected by
-	// netip.AddrFromSlice() inside edm.clientIPIsIgnored(dt). This broken
-	// content should result in the function returning "true" when the
-	// IPSet is populated.
-	dt := &dnstap.Dnstap{
-		Message: &dnstap.Message{
-			QueryAddress: make([]byte, 5),
-		},
-	}
+	// Create and invalid QueryAddr. This broken content should result
+	// in the function returning "true" when the IPSet is populated.
+	dt := testUnpackedMinimalDnstapMessage(t, false)
 	ignored := edm.clientIPIsIgnored(dt)
 	if ignored != true {
 		t.Fatalf("invalid QueryAddress:, have: %t, want: %t", ignored, true)
