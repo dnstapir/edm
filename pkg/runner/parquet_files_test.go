@@ -13,23 +13,6 @@ import (
 	"time"
 )
 
-func TestTimestampsFromFilenameRejectsMalformedNames(t *testing.T) {
-	tests := []string{
-		"dns_histogram.parquet",
-		"dns_histogram-2026-04-30T12-00-00Z.parquet",
-		"dns_histogram-bad_2026-04-30T12-01-00Z.parquet",
-		"dns_histogram-2026-04-30T12-00-00Z_bad.parquet",
-	}
-
-	for _, name := range tests {
-		t.Run(name, func(t *testing.T) {
-			if _, _, err := timestampsFromFilename(name); err == nil {
-				t.Fatal("timestampsFromFilename returned nil error")
-			}
-		})
-	}
-}
-
 func TestFileAndFilenameHelpers(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	base := t.TempDir()
@@ -47,20 +30,6 @@ func TestFileAndFilenameHelpers(t *testing.T) {
 		t.Fatalf("start time = %v, want %v", got, start)
 	}
 
-	parsedStart, parsedStop, err := timestampsFromFilename(filepath.Base(finalName))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !parsedStart.Equal(start.UTC()) || !parsedStop.Equal(stop.UTC()) {
-		t.Fatalf("parsed times = %v %v", parsedStart, parsedStop)
-	}
-	if _, _, err := timestampsFromFilename("dns_histogram-bad_bad.parquet"); err == nil {
-		t.Fatal("bad timestamp filename succeeded")
-	}
-	if _, _, err := timestampsFromFilename("dns_histogram-2026-05-28T10-00-00Z_bad.parquet"); err == nil {
-		t.Fatal("bad stop timestamp filename succeeded")
-	}
-
 	out, err := edm.createFile(filepath.Join(base, "missing", "created.txt"))
 	if err != nil {
 		t.Fatal(err)
@@ -68,14 +37,8 @@ func TestFileAndFilenameHelpers(t *testing.T) {
 	if err := out.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := edm.renameFile(out.Name(), filepath.Join(base, "sent", "created.txt")); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := edm.createFile(base); err == nil {
 		t.Fatal("createFile on directory succeeded")
-	}
-	if err := edm.renameFile(filepath.Join(base, "nope"), filepath.Join(base, "dst")); err == nil {
-		t.Fatal("rename missing source succeeded")
 	}
 }
 
@@ -96,17 +59,6 @@ func TestCreateSessionAndHistogramFiles(t *testing.T) {
 	}
 	if strings.HasSuffix(sessionFile, ".tmp") {
 		t.Fatalf("session file kept tmp suffix: %s", sessionFile)
-	}
-
-	finder := testDawgFinder(t, "example.com.")
-	hd := edm.newHistogramData(getHllDefaults(0), false)
-	wkd := &wellKnownDomainsData{rotationTime: rotationTime, dawgFinder: finder, m: map[int]*histogramData{0: hd}}
-	histFile, err := edm.createHistogramFile(wkd, defaultLabelLimit, filepath.Join(dataDir, "parquet", "histograms", "outbox"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.HasSuffix(histFile, ".tmp") {
-		t.Fatalf("histogram file kept tmp suffix: %s", histFile)
 	}
 }
 
@@ -143,77 +95,6 @@ func TestCreateFile(t *testing.T) {
 		_, err := edm.createFile(filepath.Join(t.TempDir(), "out.parquet"))
 		if !errors.Is(err, errInjected) {
 			t.Fatalf("createFile error = %v, want %v", err, errInjected)
-		}
-	})
-}
-
-func TestRenameFile(t *testing.T) {
-	t.Run("creates missing dest dir and retries", func(t *testing.T) {
-		edm := discardEDM()
-		src := writeTempFile(t, "src", []byte("payload"))
-		dst := filepath.Join(t.TempDir(), "newdir", "dst")
-
-		if err := edm.renameFile(src, dst); err != nil {
-			t.Fatalf("renameFile: %v", err)
-		}
-		if _, err := os.Stat(dst); err != nil {
-			t.Fatalf("expected renamed file: %v", err)
-		}
-	})
-
-	t.Run("dest dir exists but rename fails", func(t *testing.T) {
-		edm := discardEDM()
-		// A real FileInfo (not (nil,nil)) so the stub matches os.Stat's
-		// contract; Stat returning a nil error breaks the retry loop and
-		// makes renameFile surface the rename error (here fs.ErrNotExist).
-		info, statErr := os.Stat(t.TempDir())
-		if statErr != nil {
-			t.Fatal(statErr)
-		}
-		edm.deps.FileSystem = faultingFileSystem{
-			fileSystem: edm.deps.FileSystem,
-			rename:     func(string, string) error { return fs.ErrNotExist },
-			stat:       func(string) (os.FileInfo, error) { return info, nil },
-		}
-		err := edm.renameFile("src", "dst")
-		if !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("renameFile error = %v, want fs.ErrNotExist", err)
-		}
-	})
-
-	t.Run("stat error is reported", func(t *testing.T) {
-		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{
-			fileSystem: edm.deps.FileSystem,
-			rename:     func(string, string) error { return fs.ErrNotExist },
-			stat:       func(string) (os.FileInfo, error) { return nil, errInjected },
-		}
-		err := edm.renameFile("src", "dst")
-		if !errors.Is(err, errInjected) {
-			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
-		}
-	})
-
-	t.Run("mkdir failure is reported", func(t *testing.T) {
-		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{
-			fileSystem: edm.deps.FileSystem,
-			rename:     func(string, string) error { return fs.ErrNotExist },
-			stat:       func(string) (os.FileInfo, error) { return nil, fs.ErrNotExist },
-			mkdirAll:   func(string, os.FileMode) error { return errInjected },
-		}
-		err := edm.renameFile("src", "dst")
-		if !errors.Is(err, errInjected) {
-			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
-		}
-	})
-
-	t.Run("non-ENOENT rename error is reported", func(t *testing.T) {
-		edm := discardEDM()
-		edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, rename: func(string, string) error { return errInjected }}
-		err := edm.renameFile("src", "dst")
-		if !errors.Is(err, errInjected) {
-			t.Fatalf("renameFile error = %v, want %v", err, errInjected)
 		}
 	})
 }

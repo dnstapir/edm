@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -48,17 +47,6 @@ func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	file, err := os.CreateTemp(t.TempDir(), "aggregate-*.parquet")
-	if err != nil {
-		t.Fatalf("CreateTemp: %s", err)
-	}
-	if _, err := file.WriteString("payload"); err != nil {
-		t.Fatalf("write temp aggregate: %s", err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close temp aggregate: %s", err)
-	}
-
 	_, signingKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("GenerateKey: %s", err)
@@ -84,13 +72,13 @@ func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
 		deps:                defaultDependencies(),
 		httpClientCertStore: newCertStore(),
 	}
-	as, err := newAggregateSender(edm.log, aggrecURL, signingJWK, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, aggrecURL, signingJWK, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
 
 	start := time.Date(2026, 4, 29, 12, 34, 45, 0, time.UTC)
-	err = as.Send(t.Context(), file.Name(), start, 45*time.Second)
+	err = as.Send(t.Context(), bytes.NewBufferString("payload"), start, 45*time.Second)
 	if err == nil {
 		t.Fatal("expected error from send when response body is truncated")
 	}
@@ -151,7 +139,6 @@ func TestISO8601Duration(t *testing.T) {
 
 func TestAggregateSenderUsesExactIntervalHeader(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	fileName := writeTempFile(t, "aggregate.parquet", []byte("payload"))
 
 	var gotInterval string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,13 +155,13 @@ func TestAggregateSenderUsesExactIntervalHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse server URL: %s", err)
 	}
-	as, err := newAggregateSender(edm.log, aggrecURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, aggrecURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
 
 	start := time.Date(2026, 4, 29, 12, 34, 45, 0, time.UTC)
-	if err := as.Send(t.Context(), fileName, start, 45*time.Second); err != nil {
+	if err := as.Send(t.Context(), bytes.NewBufferString("payload"), start, 45*time.Second); err != nil {
 		t.Fatalf("send: %s", err)
 	}
 
@@ -186,8 +173,7 @@ func TestAggregateSenderUsesExactIntervalHeader(t *testing.T) {
 
 func TestAggregateSender(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	payload := []byte("parquet-ish")
-	fileName := writeTempFile(t, "hist.parquet", payload)
+	payload := "parquet-ish"
 
 	var sawRequest bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -208,7 +194,7 @@ func TestAggregateSender(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(body, payload) {
+		if string(body) != payload {
 			t.Fatalf("body = %q", body)
 		}
 		w.Header().Set("Location", "/uploaded/hist.parquet")
@@ -220,19 +206,19 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.Send(t.Context(), fileName, time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
+	if err := as.Send(t.Context(), bytes.NewBufferString(payload), time.Date(2026, 5, 28, 12, 34, 56, 0, time.UTC), 2*time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	if !sawRequest {
 		t.Fatal("server did not receive request")
 	}
 
-	if err := as.Send(t.Context(), filepath.Join(t.TempDir(), "missing.parquet"), time.Now(), time.Minute); err == nil {
-		t.Fatal("sending missing file succeeded")
+	if err := as.Send(t.Context(), nil, time.Now(), time.Minute); err == nil {
+		t.Fatal("sending nil succeeded")
 	}
 
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -243,14 +229,13 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newAggregateSender(edm.log, u, badKey, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock); err == nil {
+	if _, err := newAggregateSender(edm.log, u, badKey, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock); err == nil {
 		t.Fatal("newAggregateSender accepted non-Ed25519 key")
 	}
 }
 
 func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
-	fileName := writeTempFile(t, "hist.parquet", []byte("data"))
 
 	statusServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "nope", http.StatusBadRequest)
@@ -260,11 +245,11 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := newAggregateSender(edm.log, statusURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, statusURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := as.Send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
+	if err := as.Send(t.Context(), bytes.NewBufferString("data"), time.Now(), time.Minute); err == nil {
 		t.Fatal("unexpected status succeeded")
 	}
 
@@ -278,7 +263,7 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	as.aggrecURL = locationURL
-	if err := as.Send(t.Context(), fileName, time.Now(), time.Minute); err == nil {
+	if err := as.Send(t.Context(), bytes.NewBufferString("data"), time.Now(), time.Minute); err == nil {
 		t.Fatal("bad Location succeeded")
 	}
 }
@@ -363,8 +348,7 @@ func TestSetupHistogramSenderClosesOldTransport(t *testing.T) {
 
 	// Make a request through the old transport so it holds an idle keep-alive
 	// connection that the reload is expected to close.
-	fileName := writeTempFile(t, "hist.parquet", []byte("payload"))
-	if err := oldSender.Send(t.Context(), fileName, time.Now(), time.Minute); err != nil {
+	if err := oldSender.Send(t.Context(), bytes.NewBufferString("payload"), time.Now(), time.Minute); err != nil {
 		t.Fatal(err)
 	}
 	waitForConnState(t, connStateCh, http.StateIdle)
