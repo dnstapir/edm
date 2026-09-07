@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	dnstap "github.com/dnstap/golang-dnstap"
-	"github.com/miekg/dns"
+	"github.com/dnstapir/dnswire"
 	"github.com/smhanov/dawg"
 	"go4.org/netipx"
 )
@@ -153,7 +153,7 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
 	return false
 }
 
-func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
+func (edm *DnstapMinimiser) questionIsIgnored(msg *dnswire.Message) bool {
 	// Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
 	// for the rationale.
 	holder := edm.ignoredQuestions.Load()
@@ -162,7 +162,7 @@ func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
 	}
 	// While uncommon, if there happens to be multiple questions in the
 	// packet we consider the message ignored if any of them matches.
-	for _, question := range msg.Question {
+	for question := range msg.Questions {
 		dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
 		if dawgIndex != dawgNotFound {
 			edm.promQuestionNameIgnored.Inc()

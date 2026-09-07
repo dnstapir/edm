@@ -9,9 +9,9 @@ import (
 	"time"
 
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/dnswire"
 	"github.com/dnstapir/edm/pkg/protocols"
 	lru "github.com/hashicorp/golang-lru/v2"
-	"github.com/miekg/dns"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -112,23 +112,16 @@ minimiserLoop:
 			// core to make precise tracking harder.
 			truncatedTimestamp := timestamp.Truncate(time.Minute)
 
-			// For cases where we were unable to unpack the DNS message we
+			// For cases where we were unable to parse the DNS message we
 			// skip parsing.
 			if msg == nil {
 				edm.promDNSParseError.Inc()
 				continue
 			}
 
-			if len(msg.Question) == 0 {
+			if msg.Header.QuestionCount == 0 {
 				edm.promEmptyQuestionSection.Inc()
 				continue
-			}
-
-			for _, question := range msg.Question {
-				if _, ok := dns.IsDomainName(question.Name); !ok {
-					edm.promInvalidQuestionName.Inc()
-					continue minimiserLoop
-				}
 			}
 
 			if edm.questionIsIgnored(msg) {
@@ -183,32 +176,34 @@ minimiserLoop:
 	edm.log.Info("runMinimiser: exiting loop", "minimiser_id", minimiserID)
 }
 
-func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (*dns.Msg, time.Time) {
-	var err error
-
+func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Dnstap, isQuery bool) (msg *dnswire.Message, timestamp time.Time) {
 	if dt.Message == nil {
 		edm.log.Error("parsePacket: dnstap message is missing")
-		return nil, time.Unix(0, 0).UTC()
+		timestamp = time.Unix(0, 0).UTC()
+		return
 	}
 
-	msg := new(dns.Msg)
+	data := dt.Message.ResponseMessage
+	sec := dt.Message.ResponseTimeSec
+	nsec := dt.Message.ResponseTimeNsec
+	fieldName := "dt.Message.ResponseTimeSec"
+	kind := "response"
 	if isQuery {
-		err = msg.Unpack(dt.Message.QueryMessage)
-		if err != nil {
-			edm.log.Error("unable to unpack query message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
-			msg = nil
-		}
-		t := edm.dnstapTimestamp(dt.Message.QueryTimeSec, dt.Message.QueryTimeNsec, "dt.Message.QueryTimeSec")
-		return msg, t
+		data = dt.Message.QueryMessage
+		sec = dt.Message.QueryTimeSec
+		nsec = dt.Message.QueryTimeNsec
+		fieldName = "dt.Message.QueryTimeSec"
+		kind = "query"
 	}
 
-	err = msg.Unpack(dt.Message.ResponseMessage)
-	if err != nil {
-		edm.log.Error("unable to unpack response message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
-		msg = nil
+	parsed, err := dnswire.Parse(data)
+	if err == nil {
+		msg = &parsed
+	} else {
+		edm.log.Error("unable to parse "+kind+" message", "error", err, "query_address", formatDnstapEndpoint(dt.Message.QueryAddress, dt.Message.QueryPort), "response_address", formatDnstapEndpoint(dt.Message.ResponseAddress, dt.Message.ResponsePort))
 	}
-	t := edm.dnstapTimestamp(dt.Message.ResponseTimeSec, dt.Message.ResponseTimeNsec, "dt.Message.ResponseTimeSec")
-	return msg, t
+	timestamp = edm.dnstapTimestamp(sec, nsec, fieldName)
+	return
 }
 
 func formatDnstapEndpoint(ipBytes []byte, port *uint32) string {

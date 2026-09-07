@@ -503,8 +503,7 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	}
 
 	for _, test := range questionLookupTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.question, dns.TypeA)
+		m := testDNSMsg(test.question, dns.TypeA)
 		ignored := edm.questionIsIgnored(m)
 
 		if ignored != test.ignored {
@@ -571,8 +570,7 @@ func TestIgnoredQuestionNamesValid(t *testing.T) {
 	}
 
 	for _, test := range questionLookupTests2 {
-		m := new(dns.Msg)
-		m.SetQuestion(test.question, dns.TypeA)
+		m := testDNSMsg(test.question, dns.TypeA)
 		ignored := edm.questionIsIgnored(m)
 
 		if ignored != test.ignored {
@@ -645,8 +643,7 @@ func TestIgnoredQuestionNamesEmpty(t *testing.T) {
 	}
 
 	for _, test := range questionLookupTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.question, dns.TypeA)
+		m := testDNSMsg(test.question, dns.TypeA)
 		ignored := edm.questionIsIgnored(m)
 
 		if ignored != test.ignored {
@@ -720,8 +717,7 @@ func TestIgnoredQuestionNamesUnset(t *testing.T) {
 	}
 
 	for _, test := range questionLookupTests {
-		m := new(dns.Msg)
-		m.SetQuestion(test.question, dns.TypeA)
+		m := testDNSMsg(test.question, dns.TypeA)
 		ignored := edm.questionIsIgnored(m)
 
 		if ignored != test.ignored {

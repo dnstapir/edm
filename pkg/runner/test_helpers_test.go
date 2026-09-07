@@ -27,6 +27,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/dnswire"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
@@ -297,6 +298,55 @@ func packedDNSMsg(t testing.TB, name string, qtype uint16, rcode int) []byte {
 		t.Fatal(err)
 	}
 	return packed
+}
+
+func parsedDNSMsg(t testing.TB, name string, qtype uint16, rcode int) *dnswire.Message {
+	t.Helper()
+
+	return parseDNSMsg(t, packedDNSMsg(t, name, qtype, rcode))
+}
+
+func testDNSMsg(name string, qtype uint16) *dnswire.Message {
+	return &dnswire.Message{
+		Header: dnswire.Header{
+			Flags:         1 << 8,
+			QuestionCount: 1,
+		},
+		Question: dnswire.Question{
+			Name:  name,
+			Type:  qtype,
+			Class: dns.ClassINET,
+		},
+	}
+}
+
+func parsedDNSQuestions(t testing.TB, names ...string) *dnswire.Message {
+	t.Helper()
+
+	msg := new(dns.Msg)
+	msg.Response = true
+	for _, name := range names {
+		msg.Question = append(msg.Question, dns.Question{
+			Name:   name,
+			Qtype:  dns.TypeA,
+			Qclass: dns.ClassINET,
+		})
+	}
+	packed, err := msg.Pack()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parseDNSMsg(t, packed)
+}
+
+func parseDNSMsg(t testing.TB, packed []byte) *dnswire.Message {
+	t.Helper()
+
+	msg, err := dnswire.Parse(packed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &msg
 }
 
 func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.SocketFamily, packed []byte) *dnstap.Dnstap {

@@ -151,8 +151,7 @@ func TestConcurrentIgnoredQuestionsReload(t *testing.T) {
 			defer wg.Done()
 			i := seed
 			for !stop.Load() {
-				m := new(dns.Msg)
-				m.SetQuestion(questions[i%len(questions)], dns.TypeA)
+				m := testDNSMsg(questions[i%len(questions)], dns.TypeA)
 				_ = edm.questionIsIgnored(m)
 				i++
 			}
@@ -251,7 +250,7 @@ func TestConcurrentSetCryptopanReload(t *testing.T) {
 // than one question. The minimiser code states: "if there happens to
 // be multiple questions in the packet we consider the message ignored if
 // any of them matches" - but no existing test exercises a multi-question
-// message, so a future refactor that, say, only inspected msg.Question[0]
+// message, so a future refactor that only inspected the first question
 // would silently regress with no test failure.
 //
 // In practice DNS messages with QDCOUNT > 1 are extremely rare and most
@@ -299,17 +298,7 @@ func TestQuestionIsIgnoredMultipleQuestions(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			m := new(dns.Msg)
-			// SetQuestion only handles a single question; build the
-			// slice directly to model an unusual multi-question packet.
-			m.Question = make([]dns.Question, len(tc.questions))
-			for i, q := range tc.questions {
-				m.Question[i] = dns.Question{
-					Name:   q,
-					Qtype:  dns.TypeA,
-					Qclass: dns.ClassINET,
-				}
-			}
+			m := parsedDNSQuestions(t, tc.questions...)
 
 			if got := edm.questionIsIgnored(m); got != tc.want {
 				t.Fatalf("questionIsIgnored(%v) have: %t, want: %t", tc.questions, got, tc.want)

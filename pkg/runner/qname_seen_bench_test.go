@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/dnstapir/dnswire"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
 )
@@ -25,10 +26,9 @@ func BenchmarkQnameSeen(b *testing.B) {
 	pdb := newTestPebble(b)
 	store := &pebbleSeenQnameStore{db: pdb}
 
-	msgs := make([]*dns.Msg, nQnames)
+	msgs := make([]*dnswire.Message, nQnames)
 	for i := range msgs {
-		m := new(dns.Msg)
-		m.SetQuestion("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
+		m := testDNSMsg("host"+strconv.Itoa(i)+".example.com.", dns.TypeA)
 		msgs[i] = m
 		// Record it so the benchmarked calls below all take the seen path.
 		edm.qnameSeen(m, cache, store, defaultTC.PebbleSync)

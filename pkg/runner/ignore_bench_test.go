@@ -26,8 +26,7 @@ func BenchmarkIgnoreChecksParallel(b *testing.B) {
 			QueryAddress: netip.MustParseAddr("198.51.100.20").AsSlice(),
 		},
 	}
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
+	msg := testDNSMsg("example.com.", dns.TypeA)
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {

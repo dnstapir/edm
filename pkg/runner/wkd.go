@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dnstapir/dnswire"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"github.com/twmb/murmur3"
@@ -95,15 +96,15 @@ type wkdUpdate struct {
 	suffixMatch bool
 	hllHash     uint64
 	ip          netip.Addr
-	msg         *dns.Msg
+	msg         *dnswire.Message
 	dawgModTime time.Time
 	retry       int
 	retryLimit  int
 }
 
-func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) {
+func (wkd *wellKnownDomainsTracker) lookup(msg *dnswire.Message) (int, bool, time.Time) {
 	snap := wkd.snap.Load()
-	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question[0].Name)
+	dawgIndex, suffixMatch := getDawgIndex(snap.dawgFinder, msg.Question.Name)
 	return dawgIndex, suffixMatch, snap.dawgModTime
 }
 
@@ -136,7 +137,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	close(wkd.retryerDone)
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
+func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dnswire.Message, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
 	wu := wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,
@@ -156,7 +157,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	}
 
 	// Counters based on header
-	switch msg.Rcode {
+	switch msg.Header.Rcode() {
 	case dns.RcodeSuccess:
 		wu.OKCount++
 	case dns.RcodeNameError:
@@ -168,8 +169,8 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	}
 
 	// Counters based on question class and type
-	if msg.Question[0].Qclass == dns.ClassINET {
-		switch msg.Question[0].Qtype {
+	if msg.Question.Class == dns.ClassINET {
+		switch msg.Question.Type {
 		case dns.TypeA:
 			wu.ACount++
 		case dns.TypeAAAA:

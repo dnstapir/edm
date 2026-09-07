@@ -444,8 +444,7 @@ func TestSessionWriterLogsCreateError(t *testing.T) {
 
 func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
 	edm := discardEDM()
-	msg := new(dns.Msg)
-	msg.SetQuestion("example.com.", dns.TypeA)
+	msg := testDNSMsg("example.com.", dns.TypeA)
 
 	sd := edm.newSession(&dnstap.Dnstap{
 		Message: &dnstap.Message{},
