@@ -40,13 +40,13 @@ func TestRunMinimiserFlows(t *testing.T) {
 		defer cancel()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 
-		queryFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess)))
+		queryFrame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- queryFrame
 
-		knownFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
+		knownFrame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- knownFrame
 		select {
 		case <-wkd.updateCh:
@@ -54,7 +54,7 @@ func TestRunMinimiserFlows(t *testing.T) {
 			t.Fatal("timed out waiting for WKD update")
 		}
 
-		newFrame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
+		newFrame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- newFrame
 		select {
 		case ev := <-edm.newQnamePublisherCh:
@@ -124,7 +124,7 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 		defer cancel()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 
 		tests := []struct {
@@ -135,7 +135,7 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 			{dnstap.SocketFamily_INET6, netip.MustParseAddr("2001:db8::20")},
 		}
 		for _, tc := range tests {
-			frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess)))
+			frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess))
 			edm.inputChannel <- frame
 			select {
 			case wu := <-wkd.updateCh:
@@ -182,7 +182,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 		edm.inputChannel <- []byte("not protobuf")
 		synctest.Wait()
@@ -202,9 +202,9 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		edm.ignoredClientsIPSet.Store(ipset)
 		ctx, cancel = context.WithCancel(t.Context())
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, nil, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
-		edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess))
 		synctest.Wait()
 		cancel()
 		wg.Wait()
@@ -244,10 +244,10 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 
-		frame := marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess)))
+		frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- frame
 
 		// Receiving the new_qname event proves runMinimiser is past the
@@ -271,7 +271,7 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, nil, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 		defer func() {
 			cancel()
@@ -287,8 +287,10 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 			Type:    dnstap.Dnstap_MESSAGE.Enum(),
 			Message: &dnstap.Message{},
 		})
+		// only with invalid dns message
+		edm.inputChannel <- testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, []byte{0x00})
 		// A well-formed response for a well-known domain must still be processed.
-		edm.inputChannel <- marshaledDnstap(t, testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess)))
+		edm.inputChannel <- testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "example.com.", dns.TypeA, dns.RcodeSuccess))
 
 		select {
 		case wu := <-wkdTracker.updateCh:

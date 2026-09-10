@@ -55,7 +55,6 @@ type Config struct {
 	HTTPClientCertFile            string `toml:"http-client-cert-file" reload:"true"`
 	HTTPURL                       string `toml:"http-url"`
 	Debug                         bool   `toml:"debug"`
-	DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
 	DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
 	MetricsListenAddr             string `toml:"metrics-listen-addr"`

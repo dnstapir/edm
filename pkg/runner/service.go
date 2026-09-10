@@ -291,29 +291,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return fmt.Errorf("newWellKnownDomainsTracker failed: %w", err)
 	}
 
-	debugDnstapFilename := startConf.DebugDnstapFilename
-
-	// Keep in mind that this file is unbuffered. We could wrap it in a
-	// bufio.NewWriter() if we want more performance out of it, but since
-	// it is meant for debugging purposes it is probably better to keep it
-	// unbuffered and more "reactive". Otherwise it is hard to be sure if
-	// you are not seeing anything in the log because packets are being
-	// missed, or you are just waiting on the buffer to be flushed.
-	var debugDnstapFile fsFile
-	if debugDnstapFilename != "" {
-		// Make gosec happy
-		debugDnstapFilename := filepath.Clean(debugDnstapFilename)
-		debugDnstapFile, err = edm.deps.FileSystem.OpenFile(debugDnstapFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			return fmt.Errorf("unable to open debug dnstap file %q: %w", debugDnstapFilename, err)
-		}
-		defer func() {
-			if err := debugDnstapFile.Close(); err != nil {
-				edm.log.Error("unable to close debug dnstap file", "error", err, "filename", debugDnstapFile.Name())
-			}
-		}()
-	}
-
 	// Start data collector
 	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
@@ -353,7 +330,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Go(func() {
-			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
