@@ -23,6 +23,7 @@ type Config struct {
 	DisableMQTT                   bool   `toml:"disable-mqtt"`
 	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
 	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
+	EnablePprof                   bool   `toml:"enable-pprof"`
 	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
 	InputUnix                     string `toml:"input-unix"`
 	InputUnixPermissions          uint32 `toml:"input-unix-permissions"`
