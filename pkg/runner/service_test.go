@@ -211,6 +211,17 @@ func (*blockingSeenQnameStore) MarkSeen(string, bool) error { return nil }
 
 func (*blockingSeenQnameStore) Close() error { return nil }
 
+type drainTimeoutClock struct {
+	clock
+	afterCalled chan time.Duration
+	fire        chan time.Time
+}
+
+func (c *drainTimeoutClock) After(d time.Duration) <-chan time.Time {
+	c.afterCalled <- d
+	return c.fire
+}
+
 // TestRunDrainsAcceptedFramesOnShutdown verifies graceful cancellation
 // persists every frame already accepted into the input channel.
 func TestRunDrainsAcceptedFramesOnShutdown(t *testing.T) {
@@ -268,7 +279,93 @@ func TestRunDrainsAcceptedFramesOnShutdown(t *testing.T) {
 	}
 }
 
-func newRunLifecycleTestMinimiser(t *testing.T, input dnstapInput) *DnstapMinimiser {
+// TestRunAbortsDrainAfterTimeout verifies cancellation bounds the graceful
+// drain and reports the forced abort.
+func TestRunAbortsDrainAfterTimeout(t *testing.T) {
+	const frameCount = 128
+	frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
+	input := &frameTestDnstapInput{
+		testDnstapInput: newBlockingTestDnstapInput(),
+		frames:          make([][]byte, frameCount),
+	}
+	for i := range input.frames {
+		input.frames[i] = frame
+	}
+
+	edm := newRunLifecycleTestMinimiser(t, input)
+	store := &blockingSeenQnameStore{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	edm.deps.SeenQnameStoreFactory = seenQnameStoreFactoryFunc(func(string) (seenQnameStore, error) {
+		return store, nil
+	})
+	testClock := &drainTimeoutClock{
+		clock:       edm.deps.Clock,
+		afterCalled: make(chan time.Duration, 1),
+		fire:        make(chan time.Time, 1),
+	}
+	edm.deps.Clock = testClock
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- edm.Run(ctx)
+	}()
+
+	<-store.entered
+	<-input.ready
+	cancel()
+	if got := <-testClock.afterCalled; got != shutdownDrainTimeout {
+		t.Fatalf("shutdown drain timeout = %s, want %s", got, shutdownDrainTimeout)
+	}
+	testClock.fire <- time.Now()
+	close(store.release)
+
+	if err := <-runErr; !errors.Is(err, ErrShutdownDrainTimeout) {
+		t.Fatalf("Run error = %v, want %v", err, ErrShutdownDrainTimeout)
+	}
+}
+
+func BenchmarkRunDrainAcceptedFrames(b *testing.B) {
+	const frameCount = 5_000
+	frames := make([][]byte, frameCount)
+	for i := range frames {
+		qname := fmt.Sprintf("name-%d.example.", i)
+		frames[i] = testPackedDnstapMessage(b, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(b, qname, dns.TypeA, dns.RcodeSuccess))
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	queuedFrames := 0
+	for range b.N {
+		b.StopTimer()
+		input := &frameTestDnstapInput{
+			testDnstapInput: newBlockingTestDnstapInput(),
+			frames:          frames,
+		}
+		edm := newRunLifecycleTestMinimiser(b, input)
+		edm.conf.DisableSessionFiles = false
+		ctx, cancel := context.WithCancel(b.Context())
+		runErr := make(chan error, 1)
+		go func() {
+			runErr <- edm.Run(ctx)
+		}()
+		<-input.ready
+		queuedFrames += len(edm.inputChannel)
+
+		b.StartTimer()
+		cancel()
+		if err := <-runErr; err != nil {
+			b.Fatalf("Run: %s", err)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(frameCount, "accepted-frames/op")
+	b.ReportMetric(float64(queuedFrames)/float64(b.N), "queued-frames/op")
+}
+
+func newRunLifecycleTestMinimiser(t testing.TB, input dnstapInput) *DnstapMinimiser {
 	t.Helper()
 	tc := runCoreTC(t)
 	deps := newTestDependencies()

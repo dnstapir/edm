@@ -14,7 +14,7 @@ import (
 // starts from this and tweaks one field or dependency to break a specific
 // stage. Senders are disabled so the test doesn't open MQTT/HTTP cert
 // files unless the test explicitly opts in.
-func runCoreTC(t *testing.T) testConfiger {
+func runCoreTC(t testing.TB) testConfiger {
 	t.Helper()
 	tc := defaultTC
 	tc.DataDir = t.TempDir()
