@@ -7,7 +7,7 @@ import (
 )
 
 // runMinimiser generates data and it is collected into datasets here
-func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile string) {
+func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker) {
 	// Keep track of if we have recorded any dnstap packets in session data
 	var sessionUpdated bool
 
@@ -107,7 +107,7 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 	rotateCollectedData := func(sessionStart time.Time, histogramStart time.Time, rotationTime time.Time) error {
 		flushSessions(sessionStart, rotationTime)
 
-		prevWKD, err := wkd.rotateTracker(edm, dawgFile, histogramStart, rotationTime)
+		prevWKD, err := wkd.rotateTracker(edm, histogramStart, rotationTime)
 		if err != nil {
 			return fmt.Errorf("unable to rotate histogram map: %w", err)
 		}

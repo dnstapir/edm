@@ -279,9 +279,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 
 	wg.Go(func() { edm.diskCleaner(ctx, sentDir) })
 
-	dawgFile := startConf.WellKnownDomainsFile
-
-	dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(dawgFile)
+	dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(startConf.WellKnownDomainsFile)
 	if err != nil {
 		return fmt.Errorf("DawgLoader.LoadDawgFile failed: %w", err)
 	}
@@ -292,7 +290,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}
 
 	// Start data collector
-	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
+	wg.Go(func() { edm.dataCollector(wkdTracker) })
 
 	var minimiserWg sync.WaitGroup
 

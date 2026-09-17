@@ -5,23 +5,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
-	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
-	"github.com/smhanov/dawg"
 	"github.com/twmb/murmur3"
 )
 
 func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
-	edm, wkdTracker, dawgFile := newManualParquetRotationTestFixture(t, "example.com.")
+	edm, wkdTracker := newManualParquetRotationTestFixture(t, "example.com.")
 
 	var wg sync.WaitGroup
-	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
+	wg.Go(func() { edm.dataCollector(wkdTracker) })
 
 	serverID := "serverID"
 	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
@@ -235,39 +232,22 @@ func TestManualParquetRotationHandlerAcceptsCompletedRotation(t *testing.T) {
 	}
 }
 
-func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*DnstapMinimiser, *wellKnownDomainsTracker, string) {
+func newManualParquetRotationTestFixture(t *testing.T, domains ...string) (*DnstapMinimiser, *wellKnownDomainsTracker) {
 	t.Helper()
 
 	edm := newManualParquetRotationTestMinimiser(t)
-	dawgFile, dawgFinder := writeManualParquetRotationTestDawgFile(t, domains...)
-	wkdTracker, err := newWellKnownDomainsTracker(dawgFinder, time.Time{})
+	wkdTracker, err := newWellKnownDomainsTracker(testDawgFinder(t, domains...), time.Time{})
 	if err != nil {
 		t.Fatalf("newWellKnownDomainsTracker: %s", err)
 	}
 
-	return edm, wkdTracker, dawgFile
+	return edm, wkdTracker
 }
 
 func newManualParquetRotationTestMinimiser(t *testing.T) *DnstapMinimiser {
 	t.Helper()
 
 	return newTestDnstapMinimiser(t, defaultTC)
-}
-
-func writeManualParquetRotationTestDawgFile(t *testing.T, domains ...string) (string, dawg.Finder) {
-	t.Helper()
-
-	slices.Sort(domains)
-	builder := dawg.New()
-	for _, domain := range domains {
-		builder.Add(domain)
-	}
-	finder := builder.Finish()
-	path := filepath.Join(t.TempDir(), "well-known-domains.dawg")
-	if _, err := finder.Save(path); err != nil {
-		t.Fatalf("dawg.Save: %s", err)
-	}
-	return path, finder
 }
 
 func waitForWaitGroup(t *testing.T, wg *sync.WaitGroup, timeout time.Duration, msg string) {
