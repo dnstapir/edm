@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -182,27 +183,7 @@ func TestRunReturnsDnstapInputRuntimeError(t *testing.T) {
 	}
 }
 
-type frameTestDnstapInput struct {
-	*testDnstapInput
-	frames [][]byte
-}
-
-func (input *frameTestDnstapInput) ReadInto(ctx context.Context, output chan<- []byte) error {
-	defer input.signalDone()
-	for _, frame := range input.frames {
-		output <- frame
-	}
-	input.signalReady()
-	<-ctx.Done()
-	if input.cancelSeen != nil {
-		close(input.cancelSeen)
-	}
-	if input.release != nil {
-		<-input.release
-	}
-	return nil
-}
-
+// blockingSeenQnameStore blocks its first lookup until release is closed.
 type blockingSeenQnameStore struct {
 	once    sync.Once
 	entered chan struct{}
@@ -221,6 +202,8 @@ func (*blockingSeenQnameStore) MarkSeen(string, bool) error { return nil }
 
 func (*blockingSeenQnameStore) Close() error { return nil }
 
+// drainTimeoutClock exposes and controls the shutdown drain timer while
+// delegating all other clock operations.
 type drainTimeoutClock struct {
 	clock
 	afterCalled chan time.Duration
@@ -240,13 +223,8 @@ func (c *drainTimeoutClock) After(d time.Duration) <-chan time.Time {
 func TestRunDrainsAcceptedFramesOnShutdown(t *testing.T) {
 	const frameCount = 128
 	frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
-	input := &frameTestDnstapInput{
-		testDnstapInput: newBlockingTestDnstapInput(),
-		frames:          make([][]byte, frameCount),
-	}
-	for i := range input.frames {
-		input.frames[i] = frame
-	}
+	input := newBlockingTestDnstapInput()
+	input.frames = slices.Repeat([][]byte{frame}, frameCount)
 
 	edm := newRunLifecycleTestMinimiser(t, input)
 	edm.conf.DisableSessionFiles = false
@@ -297,15 +275,10 @@ func TestRunDrainsAcceptedFramesOnShutdown(t *testing.T) {
 func TestRunAbortsDrainAfterTimeout(t *testing.T) {
 	const frameCount = 128
 	frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
-	input := &frameTestDnstapInput{
-		testDnstapInput: newBlockingTestDnstapInput(),
-		frames:          make([][]byte, frameCount),
-	}
+	input := newBlockingTestDnstapInput()
 	input.cancelSeen = make(chan struct{})
 	input.release = make(chan struct{})
-	for i := range input.frames {
-		input.frames[i] = frame
-	}
+	input.frames = slices.Repeat([][]byte{frame}, frameCount)
 
 	edm := newRunLifecycleTestMinimiser(t, input)
 	store := &blockingSeenQnameStore{
@@ -362,10 +335,8 @@ func BenchmarkRunDrainAcceptedFrames(b *testing.B) {
 	queuedFrames := 0
 	for range b.N {
 		b.StopTimer()
-		input := &frameTestDnstapInput{
-			testDnstapInput: newBlockingTestDnstapInput(),
-			frames:          frames,
-		}
+		input := newBlockingTestDnstapInput()
+		input.frames = frames
 		edm := newRunLifecycleTestMinimiser(b, input)
 		edm.conf.DisableSessionFiles = false
 		ctx, cancel := context.WithCancel(b.Context())

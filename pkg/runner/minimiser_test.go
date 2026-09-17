@@ -211,33 +211,14 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	})
 }
 
-// TestRunMinimiserSessionSendUnblocksOnContextCancel verifies that
-// runMinimiser stops blocking on a full sessionCollectorCh once the context
-// is cancelled.
-//
-// Receiving the first session proves runMinimiser reached the session path.
-// sessionCollectorCh is then filled so the next session send blocks, and
-// synctest.Wait confirms the worker is durably blocked before another frame is
-// queued. With the send guarded by a select on ctx.Done, cancelling the context
-// lets runMinimiser exit without consuming that later frame; an unconditional
-// send would deadlock and waitOrFail would time out.
+// TestRunMinimiserSessionSendUnblocksOnContextCancel verifies cancellation
+// unblocks a full session collector without consuming further input.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "known.example.")
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.sessionCollectorCh = make(chan *sessionData, 1)
-
-		seenQnameLRU, err := lru.New[string, struct{}](10)
-		if err != nil {
-			t.Fatalf("lru.New: %s", err)
-		}
-		pdb := newTestPebble(t)
-		wkdTracker, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Unix(0, 0))
-		if err != nil {
-			t.Fatalf("newWellKnownDomainsTracker: %s", err)
-		}
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
@@ -252,6 +233,7 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 			t.Fatal("timed out waiting for session")
 		}
 
+		// Fill the collector and wait for the next frame to block on it.
 		edm.sessionCollectorCh <- &sessionData{}
 		edm.inputChannel <- frame
 		synctest.Wait()
