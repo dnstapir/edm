@@ -328,6 +328,16 @@ func TestConfigValidate(t *testing.T) {
 			mutate: func(c *Config) { c.HistogramHLLExplicitThreshold = 1 },
 		},
 		{
+			name:   "histogram-hll-explicit-threshold maximum is valid",
+			mutate: func(c *Config) { c.HistogramHLLExplicitThreshold = 131_072 },
+		},
+		{
+			name:     "histogram-hll-explicit-threshold above maximum",
+			mutate:   func(c *Config) { c.HistogramHLLExplicitThreshold = 131_073 },
+			wantErrs: []error{ErrInvalidConfig},
+			wantMsgs: []string{"histogram-hll-explicit-threshold must not exceed 131072"},
+		},
+		{
 			name:     "cryptopan-address-entries negative",
 			mutate:   func(c *Config) { c.CryptopanAddressEntries = -1 },
 			wantErrs: []error{ErrInvalidConfig},
