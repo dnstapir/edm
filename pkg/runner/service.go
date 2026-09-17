@@ -365,21 +365,16 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		close(minimiserDone)
 	}()
 
-	drainTimedOut := false
+	dnstapInputWg.Wait()
+	var runErr error
 	select {
 	case <-minimiserDone:
-	case <-ctx.Done():
-		dnstapInputWg.Wait()
-		select {
-		case <-minimiserDone:
-		case <-edm.deps.Clock.After(shutdownDrainTimeout):
-			drainTimedOut = true
-			edm.log.Error("Run: shutdown drain timed out", "timeout", shutdownDrainTimeout, "queued_frames", len(edm.inputChannel))
-			abortMinimisers()
-			<-minimiserDone
-		}
+	case <-edm.deps.Clock.After(shutdownDrainTimeout):
+		runErr = ErrShutdownDrainTimeout
+		edm.log.Error("Run: shutdown drain timed out", "timeout", shutdownDrainTimeout, "queued_frames", len(edm.inputChannel))
+		abortMinimisers()
+		<-minimiserDone
 	}
-	dnstapInputWg.Wait()
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
@@ -410,10 +405,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		edm.autopahoWg.Wait()
 	}
 
-	var runErr error
-	if drainTimedOut {
-		runErr = ErrShutdownDrainTimeout
-	}
 	if dnstapInputErr != nil &&
 		!errors.Is(dnstapInputErr, context.Canceled) &&
 		!errors.Is(dnstapInputErr, context.DeadlineExceeded) {
