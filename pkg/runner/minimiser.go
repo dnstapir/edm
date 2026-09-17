@@ -137,6 +137,7 @@ minimiserLoop:
 				select {
 				case edm.sessionCollectorCh <- session:
 				case <-abortCtx.Done():
+					break minimiserLoop
 				}
 			}
 		case <-reloadConfigCh:

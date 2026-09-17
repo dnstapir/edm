@@ -220,8 +220,9 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 // publisher send lands in the buffer instead of being dropped by its default
 // case; receiving that event proves runMinimiser is past the publisher send and
 // into the (blocked) session send. With the send guarded by a select on
-// ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
-// send would deadlock and waitOrFail would time out.
+// ctx.Done, cancelling the context lets runMinimiser exit without consuming
+// later buffered input; an unconditional send would deadlock and waitOrFail
+// would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
@@ -258,8 +259,12 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 			t.Fatal("timed out waiting for new_qname event")
 		}
 
+		edm.inputChannel <- frame
 		cancel()
 		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
+		if got := len(edm.inputChannel); got != 1 {
+			t.Fatalf("buffered frames after abort = %d, want 1", got)
+		}
 	})
 }
 
