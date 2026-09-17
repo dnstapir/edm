@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/miekg/dns"
+	"github.com/parquet-go/parquet-go"
 )
 
 func TestNewDnstapMinimiserAPI(t *testing.T) {
@@ -176,7 +181,94 @@ func TestRunReturnsDnstapInputRuntimeError(t *testing.T) {
 	}
 }
 
-func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapMinimiser {
+type frameTestDnstapInput struct {
+	*testDnstapInput
+	frames [][]byte
+}
+
+func (input *frameTestDnstapInput) ReadInto(ctx context.Context, output chan<- []byte) error {
+	defer input.signalDone()
+	for _, frame := range input.frames {
+		output <- frame
+	}
+	input.signalReady()
+	<-ctx.Done()
+	return nil
+}
+
+type blockingSeenQnameStore struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (store *blockingSeenQnameStore) Has(string) (bool, error) {
+	close(store.entered)
+	<-store.release
+	return false, nil
+}
+
+func (*blockingSeenQnameStore) MarkSeen(string, bool) error { return nil }
+
+func (*blockingSeenQnameStore) Close() error { return nil }
+
+// TestRunDrainsAcceptedFramesOnShutdown verifies graceful cancellation
+// persists every frame already accepted into the input channel.
+func TestRunDrainsAcceptedFramesOnShutdown(t *testing.T) {
+	const frameCount = 128
+	frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
+	input := &frameTestDnstapInput{
+		testDnstapInput: newBlockingTestDnstapInput(),
+		frames:          make([][]byte, frameCount),
+	}
+	for i := range input.frames {
+		input.frames[i] = frame
+	}
+
+	edm := newRunLifecycleTestMinimiser(t, input)
+	edm.conf.DisableSessionFiles = false
+	store := &blockingSeenQnameStore{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	edm.deps.SeenQnameStoreFactory = seenQnameStoreFactoryFunc(func(string) (seenQnameStore, error) {
+		return store, nil
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- edm.Run(ctx)
+	}()
+
+	<-store.entered
+	<-input.ready
+	cancel()
+	close(store.release)
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run: %s", err)
+	}
+
+	files, err := filepath.Glob(filepath.Join(edm.conf.DataDir, "parquet", "sessions", "*.parquet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("session files = %d, want 1", len(files))
+	}
+	data, err := os.ReadFile(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := parquet.Read[sessionData](bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != frameCount {
+		t.Fatalf("persisted sessions = %d, want %d", len(rows), frameCount)
+	}
+}
+
+func newRunLifecycleTestMinimiser(t *testing.T, input dnstapInput) *DnstapMinimiser {
 	t.Helper()
 	tc := runCoreTC(t)
 	deps := newTestDependencies()

@@ -110,9 +110,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}()
 
 	// Shutdown ordering is load-bearing:
-	// minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
-	// (if MQTT) mqttCancel → configUpdater exits →
-	// wg.Wait → (if MQTT) autopahoWg.Wait.
+	// input readers exit → close inputChannel → minimisers drain and exit →
+	// close wkdTracker.stop → close newQnamePublisherCh → (if MQTT)
+	// mqttCancel → configUpdater exits → wg.Wait → (if MQTT) autopahoWg.Wait.
 
 	// Create startConf for some initial setup. Other edm methods that need
 	// to read the config should call edm.getConfig() internally so they
@@ -295,6 +295,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
 	var minimiserWg sync.WaitGroup
+	// Caller cancellation stops the input first. Minimisers use a separate
+	// abort context so they keep consuming until the input owner closes the
+	// channel without conflating graceful shutdown with a forced stop.
+	minimiserCtx, abortMinimisers := context.WithCancel(context.WithoutCancel(ctx))
+	defer abortMinimisers()
 
 	numMinimiserWorkers := startConf.MinimiserWorkers
 	if numMinimiserWorkers <= 0 {
@@ -330,7 +335,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Go(func() {
-			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(minimiserCtx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
@@ -343,8 +348,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	dnstapInputWg.Go(func() {
 		if err := dti.ReadInto(ctx, edm.inputChannel); err != nil {
 			dnstapInputErr = err
-			stop()
 		}
+		close(edm.inputChannel)
+		stop()
 	})
 
 	// Wait here until all instances of runMinimiser() is done

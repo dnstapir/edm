@@ -17,8 +17,9 @@ import (
 // reloadConfigCh delivers config-reload notifications for this worker.
 // cryptopanCache is the worker-private Crypto-PAn LRU (nil disables
 // caching); Run creates it so a creation failure surfaces as a startup
-// error instead of a silently dead worker.
-func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+// error instead of a silently dead worker. Closing inputChannel gracefully
+// drains queued frames; cancelling abortCtx aborts the worker.
+func (edm *DnstapMinimiser) runMinimiser(abortCtx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	dt := dnstap.Message{}
 
 	// Per-worker scratch buffer for the unpseudonymised client IP we pass
@@ -42,7 +43,10 @@ func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, r
 minimiserLoop:
 	for {
 		select {
-		case frame := <-edm.inputChannel:
+		case frame, ok := <-edm.inputChannel:
+			if !ok {
+				break minimiserLoop
+			}
 			edm.promDnstapProcessed.Inc()
 
 			if err := dt.Unpack(frame); err != nil {
@@ -132,7 +136,7 @@ minimiserLoop:
 				session := edm.newSession(&dt, msg, labelLimit)
 				select {
 				case edm.sessionCollectorCh <- session:
-				case <-ctx.Done():
+				case <-abortCtx.Done():
 				}
 			}
 		case <-reloadConfigCh:
@@ -147,7 +151,7 @@ minimiserLoop:
 			}
 
 			conf = newConf
-		case <-ctx.Done():
+		case <-abortCtx.Done():
 			break minimiserLoop
 		}
 	}
