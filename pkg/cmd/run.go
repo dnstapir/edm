@@ -32,6 +32,7 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.BoolVar(&conf.DisableMQTT, "disable-mqtt", conf.DisableMQTT, "disable MQTT message sending")
 	fs.BoolVar(&conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "disable MQTT file based queue")
 	fs.BoolVar(&conf.EnableManualParquetRotation, "enable-manual-parquet-rotation", conf.EnableManualParquetRotation, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
+	fs.BoolVar(&conf.EnablePprof, "enable-pprof", conf.EnablePprof, "enable golang pprof server")
 	fs.BoolVar(&conf.PebbleSync, "pebble-sync", conf.PebbleSync, "fsync seen-qname pebble writes")
 
 	fs.StringVar(&conf.InputUnix, "input-unix", conf.InputUnix, "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
@@ -140,6 +141,8 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.DisableMQTTFilequeue = src.DisableMQTTFilequeue }
 	case "enable-manual-parquet-rotation":
 		return func(c *runner.Config) { c.EnableManualParquetRotation = src.EnableManualParquetRotation }
+	case "enable-pprof":
+		return func(c *runner.Config) { c.EnablePprof = src.EnablePprof }
 	case "pebble-sync":
 		return func(c *runner.Config) { c.PebbleSync = src.PebbleSync }
 	case "input-unix":
