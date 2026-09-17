@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -193,17 +194,26 @@ func (input *frameTestDnstapInput) ReadInto(ctx context.Context, output chan<- [
 	}
 	input.signalReady()
 	<-ctx.Done()
+	if input.cancelSeen != nil {
+		close(input.cancelSeen)
+	}
+	if input.release != nil {
+		<-input.release
+	}
 	return nil
 }
 
 type blockingSeenQnameStore struct {
+	once    sync.Once
 	entered chan struct{}
 	release chan struct{}
 }
 
 func (store *blockingSeenQnameStore) Has(string) (bool, error) {
-	close(store.entered)
-	<-store.release
+	store.once.Do(func() {
+		close(store.entered)
+		<-store.release
+	})
 	return false, nil
 }
 
@@ -218,6 +228,9 @@ type drainTimeoutClock struct {
 }
 
 func (c *drainTimeoutClock) After(d time.Duration) <-chan time.Time {
+	if d != shutdownDrainTimeout {
+		return c.clock.After(d)
+	}
 	c.afterCalled <- d
 	return c.fire
 }
@@ -288,6 +301,8 @@ func TestRunAbortsDrainAfterTimeout(t *testing.T) {
 		testDnstapInput: newBlockingTestDnstapInput(),
 		frames:          make([][]byte, frameCount),
 	}
+	input.cancelSeen = make(chan struct{})
+	input.release = make(chan struct{})
 	for i := range input.frames {
 		input.frames[i] = frame
 	}
@@ -316,6 +331,13 @@ func TestRunAbortsDrainAfterTimeout(t *testing.T) {
 	<-store.entered
 	<-input.ready
 	cancel()
+	<-input.cancelSeen
+	select {
+	case got := <-testClock.afterCalled:
+		t.Fatalf("shutdown drain timer started before input stopped: %s", got)
+	default:
+	}
+	close(input.release)
 	if got := <-testClock.afterCalled; got != shutdownDrainTimeout {
 		t.Fatalf("shutdown drain timeout = %s, want %s", got, shutdownDrainTimeout)
 	}
@@ -361,7 +383,6 @@ func BenchmarkRunDrainAcceptedFrames(b *testing.B) {
 		}
 	}
 	b.StopTimer()
-	b.ReportMetric(frameCount, "accepted-frames/op")
 	b.ReportMetric(float64(queuedFrames)/float64(b.N), "queued-frames/op")
 }
 

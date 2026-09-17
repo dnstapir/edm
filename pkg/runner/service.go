@@ -91,9 +91,9 @@ func withDependencies(deps dependencies) DnstapMinimiserOption {
 // Run starts the minimiser and blocks until it stops.
 //
 // Run is not reentrant. It returns startup and runtime errors directly. When
-// ctx is cancelled after startup, workers drain in shutdown order for up to one
-// second. Run returns [ErrShutdownDrainTimeout] if minimisers have not exited by
-// then.
+// ctx is cancelled after startup, workers drain in shutdown order. If the
+// minimiser drain exceeds one second, Run aborts it and reports
+// [ErrShutdownDrainTimeout] after shutdown finishes.
 func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilRunContext
@@ -369,6 +369,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	select {
 	case <-minimiserDone:
 	case <-ctx.Done():
+		dnstapInputWg.Wait()
 		select {
 		case <-minimiserDone:
 		case <-edm.deps.Clock.After(shutdownDrainTimeout):
