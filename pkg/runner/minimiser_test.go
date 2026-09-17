@@ -215,23 +215,19 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 // runMinimiser stops blocking on a full sessionCollectorCh once the context
 // is cancelled.
 //
-// sessionCollectorCh is pre-filled to capacity so the session send blocks, and
-// newQnamePublisherCh is buffered (cap 1) so runMinimiser's non-blocking
-// publisher send lands in the buffer instead of being dropped by its default
-// case; receiving that event proves runMinimiser is past the publisher send and
-// into the (blocked) session send. With the send guarded by a select on
-// ctx.Done, cancelling the context lets runMinimiser exit without consuming
-// later buffered input; an unconditional send would deadlock and waitOrFail
-// would time out.
+// Receiving the first session proves runMinimiser reached the session path.
+// sessionCollectorCh is then filled so the next session send blocks, and
+// synctest.Wait confirms the worker is durably blocked before another frame is
+// queued. With the send guarded by a select on ctx.Done, cancelling the context
+// lets runMinimiser exit without consuming that later frame; an unconditional
+// send would deadlock and waitOrFail would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		edm := newSynctestDnstapMinimiser(t, defaultTC)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 		edm.sessionCollectorCh = make(chan *sessionData, 1)
-		edm.sessionCollectorCh <- &sessionData{}
 
 		seenQnameLRU, err := lru.New[string, struct{}](10)
 		if err != nil {
@@ -250,15 +246,15 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 		frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- frame
-
-		// Receiving the new_qname event proves runMinimiser is past the
-		// publisher send and about to perform the (blocked) session send.
 		select {
-		case <-edm.newQnamePublisherCh:
+		case <-edm.sessionCollectorCh:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for new_qname event")
+			t.Fatal("timed out waiting for session")
 		}
 
+		edm.sessionCollectorCh <- &sessionData{}
+		edm.inputChannel <- frame
+		synctest.Wait()
 		edm.inputChannel <- frame
 		cancel()
 		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
