@@ -204,13 +204,14 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 	}
 	edm := discardEDM()
 	edm.conf.DataDir = t.TempDir()
+	edm.conf.WellKnownDomainsFile = dawgFile
 
 	if err := os.WriteFile(dawgFile, nil, 0o600); err != nil {
 		t.Fatalf("WriteFile: %s", err)
 	}
 	edm.dawgReloadRequested.Store(true)
 
-	if _, err := wkd.rotateTracker(edm, dawgFile, time.Time{}, time.Now()); !errors.Is(err, errEmptyDawgFile) {
+	if _, err := wkd.rotateTracker(edm, time.Time{}, time.Now()); !errors.Is(err, errEmptyDawgFile) {
 		t.Fatalf("rotateTracker error have: %v, want: %v", err, errEmptyDawgFile)
 	}
 
@@ -219,7 +220,7 @@ func TestRotateTrackerUsesSafeDawgLoader(t *testing.T) {
 	if edm.dawgReloadRequested.Load() {
 		t.Fatal("failed reload should consume the reload request")
 	}
-	if _, err := wkd.rotateTracker(edm, dawgFile, time.Time{}, time.Now()); err != nil {
+	if _, err := wkd.rotateTracker(edm, time.Time{}, time.Now()); err != nil {
 		t.Fatalf("rotation after failed reload should succeed, got: %v", err)
 	}
 	if wkd.snap.Load().dawgFinder != dFinder {
@@ -254,7 +255,7 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 		t.Fatal("timed out waiting for update")
 	}
 
-	prev, err := wkd.rotateTracker(edm, path, time.Unix(0, 0), time.Unix(60, 0))
+	prev, err := wkd.rotateTracker(edm, time.Unix(0, 0), time.Unix(60, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,23 +266,30 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 		t.Fatal("rotation without reload request should keep the dawg finder")
 	}
 
-	// A requested reload swaps in the newly loaded finder at rotation.
+	// A requested reload uses the current configured path rather than the
+	// path used to initialize the tracker.
+	reloadedPath := testDawgFile(t, "reloaded.example.")
+	edm.conf.WellKnownDomainsFile = reloadedPath
 	edm.dawgReloadRequested.Store(true)
-	if _, err := wkd.rotateTracker(edm, path, time.Unix(60, 0), time.Unix(120, 0)); err != nil {
+	if _, err := wkd.rotateTracker(edm, time.Unix(60, 0), time.Unix(120, 0)); err != nil {
 		t.Fatal(err)
 	}
 	if wkd.snap.Load().dawgFinder == finder {
 		t.Fatal("requested reload should swap the dawg finder")
 	}
+	if wkd.snap.Load().dawgFinder.IndexOf("reloaded.example.") == dawgNotFound {
+		t.Fatal("requested reload did not use the current configured DAWG path")
+	}
 
 	// Without a pending reload request the dawg file is not touched, so
 	// even a missing file does not affect rotation.
-	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err != nil {
+	edm.conf.WellKnownDomainsFile = filepath.Join(t.TempDir(), "missing.dawg")
+	if _, err := wkd.rotateTracker(edm, time.Unix(0, 0), time.Now()); err != nil {
 		t.Fatalf("rotateTracker without reload request should not read the dawg file: %v", err)
 	}
 
 	edm.dawgReloadRequested.Store(true)
-	if _, err := wkd.rotateTracker(edm, filepath.Join(t.TempDir(), "missing.dawg"), time.Unix(0, 0), time.Now()); err == nil {
+	if _, err := wkd.rotateTracker(edm, time.Unix(0, 0), time.Now()); err == nil {
 		t.Fatal("rotateTracker with requested reload of missing file succeeded")
 	}
 }

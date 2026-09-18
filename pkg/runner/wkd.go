@@ -188,7 +188,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 	wkd.updateCh <- wu
 }
 
-func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
+func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
 	dawgFileChanged := false
 	var dawgFinder dawg.Finder
 	var dawgModTime time.Time
@@ -202,7 +202,7 @@ func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile
 	// operator fixes the file and sends a new SIGHUP.
 	if edm.dawgReloadRequested.CompareAndSwap(true, false) {
 		var err error
-		dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
+		dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(edm.getConfig().WellKnownDomainsFile)
 		if err != nil {
 			return nil, fmt.Errorf("rotateTracker: DawgLoader.LoadDawgFile(): %w", err)
 		}

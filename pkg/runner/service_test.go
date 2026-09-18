@@ -10,8 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
+
+	extdnstap "github.com/dnstap/golang-dnstap"
+	"github.com/miekg/dns"
 )
 
 func TestNewDnstapMinimiserAPI(t *testing.T) {
@@ -165,6 +169,104 @@ newqname-buffer = 1
 	}
 }
 
+// TestRunReloadsWellKnownDomainsFileFromCurrentConfig covers the complete
+// SIGHUP-to-classification path through Run's production workers.
+func TestRunReloadsWellKnownDomainsFileFromCurrentConfig(t *testing.T) {
+	input := newBlockingTestDnstapInput()
+	edm := newRunLifecycleTestMinimiser(t, input)
+	edm.deps.Clock = idleTickerClock{}
+	edm.inputChannel = make(chan []byte)
+
+	nextConf := edm.getConfig()
+	nextConf.WellKnownDomainsFile = testDawgFile(t, "reloaded.example.")
+	edm.configer = &sequenceConfiger{configs: []Config{nextConf}}
+
+	ctx, cancel := context.WithCancel(t.Context())
+	runErr := make(chan error, 1)
+	go func() { runErr <- edm.Run(ctx) }()
+	stopped := false
+	defer func() {
+		if !stopped {
+			cancel()
+			if err := <-runErr; err != nil {
+				t.Errorf("Run: %s", err)
+			}
+		}
+	}()
+
+	select {
+	case <-input.ready:
+	case err := <-runErr:
+		stopped = true
+		t.Fatalf("Run exited during startup: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for Run startup")
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatalf("send SIGHUP: %s", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for !edm.dawgReloadRequested.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for SIGHUP-triggered DAWG reload request")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	rotate := func() {
+		t.Helper()
+		req := parquetRotationRequest{
+			rotationTime: time.Now().UTC(),
+			done:         make(chan error, 1),
+		}
+		select {
+		case edm.parquetRotationRequestCh <- req:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out requesting manual rotation")
+		}
+		select {
+		case err := <-req.done:
+			if err != nil {
+				t.Fatalf("manual rotation: %s", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for manual rotation")
+		}
+	}
+
+	rotate()
+	frame := testPackedDnstapMessage(t, extdnstap.Message_AUTH_RESPONSE, extdnstap.SocketFamily_INET,
+		packedDNSMsg(t, "reloaded.example.", dns.TypeA, dns.RcodeSuccess))
+	sendFrame := func(frame []byte) {
+		t.Helper()
+		select {
+		case edm.inputChannel <- frame:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out sending DNSTAP frame")
+		}
+	}
+	sendFrame(frame)
+	// The unbuffered second send cannot complete until the sole minimiser has
+	// classified frame, making it a barrier before the collector rotation.
+	sendFrame(nil)
+	rotate()
+
+	cancel()
+	if err := <-runErr; err != nil {
+		t.Fatalf("Run: %s", err)
+	}
+	stopped = true
+
+	files, err := filepath.Glob(filepath.Join(nextConf.DataDir, "parquet", "histograms", "outbox", histogramFileBase+"-*"+parquetFileSuffix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("histogram files = %v, want one", files)
+	}
+}
+
 func TestRunReturnsDnstapInputRuntimeError(t *testing.T) {
 	input := newBlockingTestDnstapInput()
 	input.err = errInjected
@@ -198,3 +300,21 @@ func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapM
 	}
 	return newTestDnstapMinimiserWithDependencies(t, tc, deps)
 }
+
+// idleTickerClock keeps real wall-clock reads while suppressing unrelated
+// background rotations so the test controls each collection boundary.
+type idleTickerClock struct {
+	realClock
+}
+
+func (idleTickerClock) NewTicker(time.Duration) ticker {
+	return idleTicker{make(chan time.Time)}
+}
+
+type idleTicker struct {
+	c <-chan time.Time
+}
+
+func (ticker idleTicker) C() <-chan time.Time { return ticker.c }
+func (idleTicker) Stop()                      {}
+func (idleTicker) Reset(time.Duration)        {}
