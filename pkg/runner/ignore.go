@@ -129,25 +129,22 @@ type dawgFinderHolder struct {
 }
 
 func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
-	// Atomic snapshot - no lock on the hot path. Reload writers
-	// atomic.Store the new IPSet; readers see either old or new value
-	// per Load.
-	ipset := edm.ignoredClientsIPSet.Load()
-	if ipset == nil {
-		return false
-	}
-	if !dt.QueryAddr.IsValid() {
-		// If we have a list of clients to ignore but are not able to
-		// understand the QueryAddress let's err on the side of caution
-		// and ignore such packets as well while making noise in logs
-		// so it can be investigated.
-		edm.log.Error("unable to parse QueryAddress for ignore-checking, ignoring dnstap packet to be safe, please investigate")
-		edm.promClientIPIgnoredError.Inc()
-		return true
-	}
-	if ipset.Contains(dt.QueryAddr) {
-		edm.promClientIPIgnored.Inc()
-		return true
+	// if the query address is valid AND is on the ignore clients ip list
+	// the frame is ignured, if not we let it through
+	if dt.HasFlags(dnstap.ValidQueryAddr) {
+		// Atomic snapshot - no lock on the hot path. Reload writers
+		// atomic.Store the new IPSet; readers see either old or new value
+		// per Load.
+		ipset := edm.ignoredClientsIPSet.Load()
+		// list does not exist
+		if ipset == nil {
+			return false
+		}
+		// check against the list
+		if ipset.Contains(dt.QueryAddr) {
+			edm.promClientIPIgnored.Inc()
+			return true
+		}
 	}
 	return false
 }
