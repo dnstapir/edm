@@ -161,27 +161,21 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
 	switch meta.socketFamily {
 	case 1: // IPv4
 		if !m.QueryAddr.Is4() {
-			m.QueryAddr = netip.Addr{}
 			m.flags &= ^ValidQueryAddr
 		}
 		if !m.ResponseAddr.Is4() {
-			m.ResponseAddr = netip.Addr{}
 			m.flags &= ^ValidResponseAddr
 		}
 	case 2: // IPv6
-		if !m.QueryAddr.Is6() {
-			m.QueryAddr = netip.Addr{}
+		if !(m.HasFlags(ValidQueryAddr) && m.QueryAddr.Is6()) { //nolint:staticcheck
 			m.flags &= ^ValidQueryAddr
 		}
-		if !m.ResponseAddr.Is6() {
-			m.ResponseAddr = netip.Addr{}
+		if !(m.HasFlags(ValidResponseAddr) && m.ResponseAddr.Is6()) { //nolint:staticcheck
 			m.flags &= ^ValidResponseAddr
 		}
 	default: // not IPv4 nor IPv6
-		// unkown socket family => reset addresses
-		m.QueryAddr = netip.Addr{}
+		// unknown socket family => addresses not valid
 		m.flags &= ^ValidQueryAddr
-		m.ResponseAddr = netip.Addr{}
 		m.flags &= ^ValidResponseAddr
 	}
 	// arrange data
@@ -259,7 +253,7 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
 		case 4:
 			assertType(protoLEN, tlv)
 			buf, data = readLEN[[]byte](data)
-			addr, ok := netip.AddrFromSlice(buf)
+			addr, ok := parseIP(buf)
 			switch ok {
 			case true:
 				// Valid Query Address
@@ -273,7 +267,7 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
 			assertType(protoLEN, tlv)
 			var buf []byte
 			buf, data = readLEN[[]byte](data)
-			addr, ok := netip.AddrFromSlice(buf)
+			addr, ok := parseIP(buf)
 			switch ok {
 			case true:
 				// Valid Response Address
@@ -357,6 +351,28 @@ func (m *Message) setTime(flag flag, sec uint64, nsec uint32) {
 		}
 	}
 	m.Timestamp = time.Unix(0, 0).UTC()
+}
+
+func parseIP(data []byte) (netip.Addr, bool) {
+	switch len(data) {
+	case 0:
+		// handle nil and zero length
+		return netip.Addr{}, false
+	case 4:
+		// handle IPv4 addresses
+		return netip.AddrFrom4([4]byte(data)), true
+	case 16:
+		// handle IPv6 addresses
+		return netip.AddrFrom16([16]byte(data)), true
+	case 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15:
+		// handle everything between 0 and 16 that is not an IPv4 address
+		b := [16]byte{}
+		copy(b[:], data)
+		return netip.AddrFrom16([16]byte(b)), false
+	default:
+		// handle anything longer than 16 bytes by cutting of the overflow
+		return netip.AddrFrom16([16]byte(data)), false
+	}
 }
 
 type protoType uint8
