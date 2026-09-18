@@ -419,7 +419,6 @@ type DnstapMinimiser struct {
 	promSeenQnameLRUEvicted   prometheus.Counter
 	promNewQnameChannelLen    prometheus.Gauge
 	promClientIPIgnored       prometheus.Counter
-	promClientIPIgnoredError  prometheus.Counter
 	promQuestionNameIgnored   prometheus.Counter
 	promDNSParseError         prometheus.Counter
 	promEmptyQuestionSection  prometheus.Counter
@@ -543,11 +542,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	edm.promClientIPIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
 		Name: "edm_ignored_client_ip_total",
 		Help: "The total number of times we have ignored a dnstap packet because of client IP",
-	})
-
-	edm.promClientIPIgnoredError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_ignored_client_ip_error_total",
-		Help: "The total number of times we have ignored a dnstap packet because of client IP error, should always be 0",
 	})
 
 	edm.promQuestionNameIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{

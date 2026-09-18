@@ -398,11 +398,11 @@ func TestIgnoredClientIPsInvalidClient(t *testing.T) {
 	}
 
 	// Create and invalid QueryAddr. This broken content should result
-	// in the function returning "true" when the IPSet is populated.
+	// in the function returning "false" when the IPSet is populated.
 	dt := testUnpackedMinimalDnstapMessage(t, false)
 	ignored := edm.clientIPIsIgnored(dt)
-	if ignored != true {
-		t.Fatalf("invalid QueryAddress:, have: %t, want: %t", ignored, true)
+	if ignored != false {
+		t.Fatalf("invalid QueryAddress:, have: %t, want: %t", ignored, false)
 	}
 
 	// Also verify that if we load an empty list this means we are not
