@@ -72,7 +72,6 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	})
 
 	fs.IntVar(&conf.QnameSeenEntries, "qname-seen-entries", conf.QnameSeenEntries, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
-	fs.IntVar(&conf.CryptopanAddressEntries, "cryptopan-address-entries", conf.CryptopanAddressEntries, "Number of cryptopan pseudonymised addresses stored in LRU cache, 0 disables the cache, need to be changed based on RAM")
 	fs.IntVar(&conf.NewQnameBuffer, "newqname-buffer", conf.NewQnameBuffer, "Number of slots in new_qname publisher channel, if this is filled up we skip new_qname events")
 	fs.IntVar(&conf.HistogramHLLExplicitThreshold, "histogram-hll-explicit-threshold", conf.HistogramHLLExplicitThreshold, "When the number of unique IP addresses is beyond this threshold we will include HLL data for a domain in the histogram parquet file")
 
@@ -184,8 +183,6 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.MQTTKeepalive = src.MQTTKeepalive }
 	case "qname-seen-entries":
 		return func(c *runner.Config) { c.QnameSeenEntries = src.QnameSeenEntries }
-	case "cryptopan-address-entries":
-		return func(c *runner.Config) { c.CryptopanAddressEntries = src.CryptopanAddressEntries }
 	case "newqname-buffer":
 		return func(c *runner.Config) { c.NewQnameBuffer = src.NewQnameBuffer }
 	case "histogram-hll-explicit-threshold":

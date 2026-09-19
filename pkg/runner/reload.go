@@ -76,10 +76,10 @@ func (edm *DnstapMinimiser) applyUpdate(startConf Config) {
 
 	if oldConf.CryptopanKey != conf.CryptopanKey ||
 		oldConf.CryptopanKeySalt != conf.CryptopanKeySalt {
-		edm.log.Info("configUpdater: updating Crypto-PAn instance")
-		err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+		edm.log.Info("configUpdater: updating the IP pseudonymiser key")
+		err = edm.setPseudonymiseKey(conf.CryptopanKey, conf.CryptopanKeySalt)
 		if err != nil {
-			edm.log.Error("configUpdater: unable to update Crypto-PAn instance", "error", err)
+			edm.log.Error("configUpdater: unable to update the IP pseudonymiser key", "error", err)
 		}
 	}
 

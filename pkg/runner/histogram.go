@@ -77,18 +77,15 @@ type histogramData struct {
 	EDMStatusBits   uint64 `parquet:"edm_status_bits"`
 	// The hll.Hll structs are not expected to be included in the output
 	// parquet file, and thus do not need to be exported
-	v4ClientHLL hll.Hll
-	v6ClientHLL hll.Hll
+	ipClientHLL hll.Hll
 
-	// V4ClientCount/V6ClientCount always contain the cardinality
+	// IPClientCount always contain the cardinality
 	// calculation result
-	V4ClientCount uint64 `parquet:"v4client_count"`
-	V6ClientCount uint64 `parquet:"v6client_count"`
+	IPClientCount uint64 `parquet:"ipclient_count"`
 
-	// These fields are NULL when HLL uses explicit storage, otherwise
+	// This field is NULL when HLL uses explicit storage, otherwise
 	// contain the probabilistic HLL bytes
-	V4ClientCountHLLBytes []byte `parquet:"v4client_count_hll,optional"`
-	V6ClientCountHLLBytes []byte `parquet:"v6client_count_hll,optional"`
+	IPClientCountHLLBytes []byte `parquet:"ipclient_count_hll,optional"`
 }
 
 func getHllDefaults(explicitThreshold int) hll.Settings {
@@ -294,27 +291,17 @@ func (edm *DnstapMinimiser) writeHistogramParquet(output io.Writer, startTime ti
 		edm.setLabels(labels, labelLimit, &hGramData.dnsLabels)
 		hGramData.StartTime = startTimeMicro
 
-		hGramData.V4ClientCount = hGramData.v4ClientHLL.Cardinality()
-		hGramData.V6ClientCount = hGramData.v6ClientHLL.Cardinality()
+		hGramData.IPClientCount = hGramData.ipClientHLL.Cardinality()
 
-		v4HLLBytes := hGramData.v4ClientHLL.ToBytes()
-		v4HLLType, err := parseHllStorageType(v4HLLBytes)
+		ipHLLBytes := hGramData.ipClientHLL.ToBytes()
+		ipHLLType, err := parseHllStorageType(ipHLLBytes)
 		if err != nil {
-			return fmt.Errorf("writeHistogramParquet: IPv4 HLL parsing failed: %w", err)
-		}
-
-		v6HLLBytes := hGramData.v6ClientHLL.ToBytes()
-		v6HLLType, err := parseHllStorageType(v6HLLBytes)
-		if err != nil {
-			return fmt.Errorf("writeHistogramParquet: IPv6 HLL parsing failed: %w", err)
+			return fmt.Errorf("writeHistogramParquet: IP HLL parsing failed: %w", err)
 		}
 
 		// Include bytes from our hll data structures if they are stored with a probabilistic storage type
-		if v4HLLType == hllSparse || v4HLLType == hllDense {
-			hGramData.V4ClientCountHLLBytes = v4HLLBytes
-		}
-		if v6HLLType == hllSparse || v6HLLType == hllDense {
-			hGramData.V6ClientCountHLLBytes = v6HLLBytes
+		if ipHLLType == hllSparse || ipHLLType == hllDense {
+			hGramData.IPClientCountHLLBytes = ipHLLBytes
 		}
 
 		_, err = parquetWriter.Write([]histogramData{*hGramData})
@@ -338,16 +325,9 @@ func (edm *DnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMat
 	hd := &histogramData{}
 
 	var err error
-	hd.v4ClientHLL, err = hll.NewHll(hllSettings)
+	hd.ipClientHLL, err = hll.NewHll(hllSettings)
 	if err != nil {
-		edm.log.Error("unable to initialize IPv4 HLL", "error", err)
-		// This is never expected to happen
-		panic(err)
-	}
-
-	hd.v6ClientHLL, err = hll.NewHll(hllSettings)
-	if err != nil {
-		edm.log.Error("unable to initialize IPv6 HLL", "error", err)
+		edm.log.Error("unable to initialize IP HLL", "error", err)
 		// This is never expected to happen
 		panic(err)
 	}

@@ -402,30 +402,33 @@ func TestUnpack(t *testing.T) {
 }
 
 func TestUnpackIPs(t *testing.T) {
-	zero := netip.Addr{}
 	tests := []struct {
-		QueryAddr         []byte
-		QueryAddrValid    bool
-		ResponseAddr      []byte
+		QueryAddr []byte
+		// if the output address isn't the same as above, else nil
+		QueryAddrExtra []byte
+		QueryAddrValid bool
+		ResponseAddr   []byte
+		// if the output address isn't the same as above, else nil
+		ResponseAddrExtra []byte
 		ResponseAddrValid bool
 		SocketFamily      dnstap.SocketFamily
 	}{
 		// good
-		{mpas("192.0.2.54"), true, mpas("192.0.2.53"), true, dnstap.SocketFamily_INET},
-		{mpas("2001:db8::54"), true, mpas("2001:db8::53"), true, dnstap.SocketFamily_INET6},
+		{mpas("192.0.2.54"), nil, true, mpas("192.0.2.53"), nil, true, dnstap.SocketFamily_INET},
+		{mpas("2001:db8::54"), nil, true, mpas("2001:db8::53"), nil, true, dnstap.SocketFamily_INET6},
 		// completely wrong
-		{mpas("192.0.2.54"), false, mpas("2001:db8::53"), false, dnstap.SocketFamily(0)},
-		{mpas("192.0.2.54"), false, mpas("192.0.2.53"), false, dnstap.SocketFamily_INET6},
-		{mpas("2001:db8::54"), false, mpas("2001:db8::53"), false, dnstap.SocketFamily_INET},
+		{mpas("192.0.2.54"), nil, false, mpas("2001:db8::53"), nil, false, dnstap.SocketFamily(0)},
+		{mpas("192.0.2.54"), nil, false, mpas("192.0.2.53"), nil, false, dnstap.SocketFamily_INET6},
+		{mpas("2001:db8::54"), nil, false, mpas("2001:db8::53"), nil, false, dnstap.SocketFamily_INET},
 		// half wrong
-		{mpas("192.0.2.54"), true, mpas("2001:db8::53"), false, dnstap.SocketFamily_INET},
-		{mpas("2001:db8::54"), true, mpas("192.0.2.53"), false, dnstap.SocketFamily_INET6},
-		{mpas("2001:db8::54"), false, mpas("192.0.2.53"), true, dnstap.SocketFamily_INET},
-		{mpas("192.0.2.54"), false, mpas("2001:db8::53"), true, dnstap.SocketFamily_INET6},
+		{mpas("192.0.2.54"), nil, true, mpas("2001:db8::53"), nil, false, dnstap.SocketFamily_INET},
+		{mpas("2001:db8::54"), nil, true, mpas("192.0.2.53"), nil, false, dnstap.SocketFamily_INET6},
+		{mpas("2001:db8::54"), nil, false, mpas("192.0.2.53"), nil, true, dnstap.SocketFamily_INET},
+		{mpas("192.0.2.54"), nil, false, mpas("2001:db8::53"), nil, true, dnstap.SocketFamily_INET6},
 		// length error
-		{[]byte{1, 2, 3}, false, []byte{1, 2, 3, 4}, true, dnstap.SocketFamily_INET},
-		{[]byte{1, 2, 3}, false, []byte{1, 2, 3, 4}, false, dnstap.SocketFamily_INET6},
-		{nil, false, []byte{}, false, dnstap.SocketFamily_INET6},
+		{[]byte{1, 2, 3}, []byte{1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, false, []byte{1, 2, 3, 4}, nil, true, dnstap.SocketFamily_INET},
+		{[]byte{1, 2, 3}, []byte{1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, false, []byte{1, 2, 3, 4}, nil, false, dnstap.SocketFamily_INET6},
+		{nil, nil, false, []byte{}, nil, false, dnstap.SocketFamily_INET6},
 	}
 	for _, tc := range tests {
 		// build dnstap message
@@ -456,8 +459,15 @@ func TestUnpackIPs(t *testing.T) {
 				t.Fatal("Incorrect query address")
 			}
 		} else {
-			if dt.QueryAddr != zero {
-				t.Fatal("Query address set when it shouldn't")
+			switch tc.QueryAddrExtra {
+			case nil:
+				if !bytes.Equal(tc.QueryAddr, dt.QueryAddr.AsSlice()) {
+					t.Fatal("Incorrect query address")
+				}
+			default:
+				if !bytes.Equal(tc.QueryAddrExtra, dt.QueryAddr.AsSlice()) {
+					t.Fatal("Incorrect fictive query address")
+				}
 			}
 		}
 		if tc.ResponseAddrValid {
@@ -465,8 +475,15 @@ func TestUnpackIPs(t *testing.T) {
 				t.Fatal("Incorrect response address")
 			}
 		} else {
-			if dt.ResponseAddr != zero {
-				t.Fatal("Response address set when it shouldn't")
+			switch tc.ResponseAddrExtra {
+			case nil:
+				if !bytes.Equal(tc.ResponseAddr, dt.ResponseAddr.AsSlice()) {
+					t.Fatal("Incorrect response address")
+				}
+			default:
+				if !bytes.Equal(tc.ResponseAddrExtra, dt.ResponseAddr.AsSlice()) {
+					t.Fatal("Incorrect fictive response address")
+				}
 			}
 		}
 	}
@@ -508,6 +525,58 @@ func TestOverflows(t *testing.T) {
 	checkFlags(t, dt, minimalNonPanicFlags|withQueryTime|withResponseTime)
 	if !dt.Timestamp.Equal(time.Unix(0, 0).UTC()) {
 		t.Fatal("Incorrect query time")
+	}
+}
+
+func TestParseIP(t *testing.T) {
+	data := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
+	for i := range len(data) {
+		// clone data to buffer
+		buf := slices.Clone(data)
+		// parse ip
+		ip, valid := parseIP(buf[:i])
+		// check that buffer is unmodified
+		if !bytes.Equal(data, buf) {
+			t.Fatal("buffer was modified")
+		}
+		switch i {
+		case 0:
+			// check that the zero length buffer generates the zero address
+			// and isn't valid
+			if ip.IsValid() {
+				t.Fatal("should be the zero address")
+			}
+			if valid {
+				t.Fatal("address must not be valid")
+			}
+		case 4:
+			// check that the 4 byte length buffer generates the correct IPv4
+			// address and is valid
+			if ip != mpa("1.2.3.4") {
+				t.Fatal("incorrect address")
+			}
+			if !valid {
+				t.Fatal("address must be valid")
+			}
+		case 16:
+			// check that the 16 byte length buffer generates the correct IPv6
+			// address and is valid
+			if ip != mpa("0102:0304:0506:0708:090a:0b0c:0d0e:0f10") {
+				t.Fatal("incorrect address")
+			}
+			if !valid {
+				t.Fatal("address must be valid")
+			}
+		default:
+			// check that the other byte lengths generate an IPv6 address but
+			// isn't considered valid
+			if !ip.Is6() {
+				t.Fatal("address must be valid")
+			}
+			if valid {
+				t.Fatal("address must not be valid")
+			}
+		}
 	}
 }
 
