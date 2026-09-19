@@ -18,8 +18,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/eclipse/paho.golang/autopaho/queue/file"
-	"github.com/eclipse/paho.golang/paho"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/smhanov/dawg"
@@ -116,14 +114,11 @@ type aggregateSenderFactory interface {
 
 // mqttConnectionManager is the MQTT connection surface used by the publisher.
 type mqttConnectionManager interface {
-	AwaitConnection(context.Context) error
 	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
-	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
 }
 
-// mqttFactory creates MQTT file queues and connection managers.
+// mqttFactory creates the MQTT connection manager
 type mqttFactory interface {
-	NewFileQueue(path, prefix, extension string) (*file.Queue, error)
 	NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error)
 }
 
@@ -354,10 +349,6 @@ func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL
 }
 
 type realMQTTFactory struct{}
-
-func (realMQTTFactory) NewFileQueue(path, prefix, extension string) (*file.Queue, error) {
-	return file.New(path, prefix, extension)
-}
 
 func (realMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
 	return autopaho.NewConnection(ctx, cfg)

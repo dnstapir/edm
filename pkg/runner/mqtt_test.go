@@ -253,15 +253,7 @@ type blockingMQTTConnectionManager struct {
 	concurrent     atomic.Bool
 }
 
-func (cm *blockingMQTTConnectionManager) AwaitConnection(context.Context) error {
-	return nil
-}
-
-func (cm *blockingMQTTConnectionManager) PublishViaQueue(context.Context, *autopaho.QueuePublish) error {
-	return nil
-}
-
-func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *paho.Publish) (*paho.PublishResponse, error) {
+func (cm *blockingMQTTConnectionManager) PublishViaQueue(ctx context.Context, publish *autopaho.QueuePublish) error {
 	if cm.active.Add(1) > 1 {
 		cm.concurrent.Store(true)
 	}
@@ -276,7 +268,7 @@ func (cm *blockingMQTTConnectionManager) Publish(ctx context.Context, publish *p
 	case <-cm.release:
 	case <-ctx.Done():
 	}
-	return nil, nil
+	return nil
 }
 
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
@@ -293,7 +285,7 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 		}
 
 		edm.autopahoWg.Go(func() {
-			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname")
 		})
 
 		edm.mqttSignedCh <- []byte("first")
@@ -343,89 +335,13 @@ func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 		}
 
 		edm.autopahoWg.Go(func() {
-			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname", false)
+			edm.mqttPublishWorker(ctx, cm, "events/up/test/new_qname")
 		})
 
 		synctest.Wait()
 
 		cancel()
 		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit after context cancel")
-	})
-}
-
-// TestMqttPublishWorkerLogsPublishError feeds a signed message at a fake
-// connection manager whose Publish returns errInjected; the worker logs
-// "error publishing" and continues to the next iteration rather than
-// exiting. Closing mqttSignedCh ends the loop.
-func TestMqttPublishWorkerLogsPublishError(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := slog.New(slog.NewJSONHandler(&buf, nil))
-		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-
-		edm.mqttSignedCh = make(chan []byte, 1)
-		conn := &fakeAutoPahoConnection{
-			publishedCh: make(chan struct{}, 1),
-			publishErr:  errInjected,
-		}
-
-		edm.autopahoWg.Go(func() {
-			edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
-		})
-
-		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
-		select {
-		case <-conn.publishedCh:
-		case <-time.After(2 * time.Second):
-			t.Fatal("Publish was never called")
-		}
-		close(edm.mqttSignedCh)
-		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
-
-		if !strings.Contains(buf.String(), "error publishing") {
-			t.Fatalf("expected error log, got: %q", buf.String())
-		}
-	})
-}
-
-// TestMqttPublishWorkerLogsNonZeroReasonCode covers the QoS-1+ "reason
-// code received" log: a non-nil PublishResponse with a ReasonCode that
-// is neither 0 (success) nor 16 (no-subscribers, which is silenced) is
-// logged at info.
-func TestMqttPublishWorkerLogsNonZeroReasonCode(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var buf bytes.Buffer
-		logger := slog.New(slog.NewJSONHandler(&buf, nil))
-		edm := newSynctestDnstapMinimiserWithLogger(t, defaultTC, logger)
-
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-
-		edm.mqttSignedCh = make(chan []byte, 1)
-		conn := &fakeAutoPahoConnection{
-			publishedCh: make(chan struct{}, 1),
-			publishResp: &paho.PublishResponse{ReasonCode: 0x80},
-		}
-
-		edm.autopahoWg.Go(func() {
-			edm.mqttPublishWorker(ctx, conn, "events/up/test/new_qname", false)
-		})
-
-		edm.mqttSignedCh <- []byte(`{"hi":"there"}`)
-		select {
-		case <-conn.publishedCh:
-		case <-time.After(2 * time.Second):
-			t.Fatal("Publish was never called")
-		}
-		close(edm.mqttSignedCh)
-		waitOrFail(t, &edm.autopahoWg, 2*time.Second, "mqttPublishWorker did not exit")
-
-		if !strings.Contains(buf.String(), "reason code received") {
-			t.Fatalf("expected reason code log, got: %q", buf.String())
-		}
 	})
 }
 
@@ -529,7 +445,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30, nil)
+		cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -541,13 +457,13 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 		cfg.OnClientError(errors.New("client"))
 		cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
 		cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
-		if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30, nil); err == nil {
+		if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30); err == nil {
 			t.Fatal("bad MQTT URL succeeded")
 		}
 
 		jwk := testJWK(t)
 		conn := &fakeAutoPahoConnection{}
-		edm.startMQTTPipeline(ctx, conn, jwk, true, 1)
+		edm.startMQTTPipeline(ctx, conn, jwk, 1)
 		edm.mqttPubCh <- []byte(`{"hello":"world"}`)
 		close(edm.mqttPubCh)
 		edm.autopahoWg.Wait()
@@ -577,7 +493,7 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 		jwk := testJWK(t)
 		conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-		edm.startMQTTPipeline(ctx, conn, jwk, false, 1)
+		edm.startMQTTPipeline(ctx, conn, jwk, 1)
 		edm.mqttPubCh <- []byte(`{"publish":"now"}`)
 		select {
 		case <-conn.publishedCh:
@@ -588,7 +504,7 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 		edm.autopahoWg.Wait()
 
 		conn.mu.Lock()
-		published := len(conn.published)
+		published := len(conn.queued)
 		conn.mu.Unlock()
 		if published != 1 {
 			t.Fatalf("published messages = %d, want 1", published)
@@ -596,53 +512,10 @@ func TestMQTTPipelinePublishPath(t *testing.T) {
 	})
 }
 
-func TestMQTTPublishWorkerAwaitError(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
-		conn := &fakeAutoPahoConnection{awaitErr: context.Canceled}
-
-		edm.autopahoWg.Go(func() {
-			edm.mqttPublishWorker(t.Context(), conn, "events/up/test/new_qname", false)
-		})
-		waitOrFail(t, &edm.autopahoWg, time.Second, "mqttPublishWorker did not exit after AwaitConnection error")
-	})
-}
-
 type fakeAutoPahoConnection struct {
 	mu          sync.Mutex
 	queued      []*autopaho.QueuePublish
-	published   []*paho.Publish
-	awaitErr    error
 	publishedCh chan struct{}
-	// publishErr, if non-nil, is returned from Publish so the
-	// mqttPublishWorker's error log branch can be exercised.
-	publishErr error
-	// publishResp, if non-nil, is returned from Publish; otherwise
-	// Publish returns &paho.PublishResponse{} (ReasonCode 0).
-	publishResp *paho.PublishResponse
-}
-
-func (f *fakeAutoPahoConnection) AwaitConnection(context.Context) error {
-	return f.awaitErr
-}
-
-func (f *fakeAutoPahoConnection) Publish(_ context.Context, p *paho.Publish) (*paho.PublishResponse, error) {
-	f.mu.Lock()
-	f.published = append(f.published, p)
-	f.mu.Unlock()
-	if f.publishedCh != nil {
-		select {
-		case f.publishedCh <- struct{}{}:
-		default:
-		}
-	}
-	if f.publishErr != nil {
-		return nil, f.publishErr
-	}
-	if f.publishResp != nil {
-		return f.publishResp, nil
-	}
-	return &paho.PublishResponse{}, nil
 }
 
 func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.QueuePublish) error {
@@ -782,7 +655,6 @@ func TestSetupMQTT(t *testing.T) {
 			edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 			edm.conf.MQTTServer = "mqtts://example.test:8883"
 			edm.conf.MQTTKeepalive = 30
-			edm.conf.DisableMQTTFilequeue = false
 			edm.conf.MQTTSignWorkers = 0 // exercise the GOMAXPROCS default branch
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -830,20 +702,6 @@ func TestSetupMQTT(t *testing.T) {
 		}
 	})
 
-	t.Run("queue dir creation failure", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		// Point DataDir below a regular file so MkdirAll fails with ENOTDIR
-		// regardless of the uid the tests run as.
-		blocker := writeTempFile(t, "blocker", []byte("x"))
-		edm.conf.DataDir = filepath.Join(blocker, "datadir")
-		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
-		edm.conf.DisableMQTTFilequeue = false
-		err := edm.setupMQTT(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "queue dir") {
-			t.Fatalf("setupMQTT error = %v, want queue dir failure", err)
-		}
-	})
-
 	t.Run("connection manager failure", func(t *testing.T) {
 		errConnect := errors.New("connect boom")
 		edm := newTestDnstapMinimiser(t, defaultTC)
@@ -856,7 +714,6 @@ func TestSetupMQTT(t *testing.T) {
 		edm.conf.DataDir = t.TempDir()
 		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
 		edm.conf.MQTTServer = "mqtts://example.test:8883"
-		edm.conf.DisableMQTTFilequeue = true
 		err := edm.setupMQTT(t.Context())
 		if !errors.Is(err, errConnect) {
 			t.Fatalf("setupMQTT error = %v, want %v", err, errConnect)

@@ -21,7 +21,6 @@ type Config struct {
 	DisableSessionFiles           bool   `toml:"disable-session-files" reload:"true"`
 	DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `toml:"disable-mqtt"`
-	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
 	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
 	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
 	InputUnix                     string `toml:"input-unix"`
