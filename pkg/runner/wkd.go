@@ -2,14 +2,13 @@ package runner
 
 import (
 	"fmt"
-	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 const dawgNotFound = -1
@@ -94,7 +93,6 @@ type wkdUpdate struct {
 	dawgIndex   int
 	suffixMatch bool
 	hllHash     uint64
-	ip          netip.Addr
 	msg         *dns.Msg
 	dawgModTime time.Time
 	retry       int
@@ -136,24 +134,17 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	close(wkd.retryerDone)
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
+func (wkd *wellKnownDomainsTracker) sendUpdate(dt *dnstap.Message, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
 	wu := wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,
 		dawgModTime: dawgModTime,
-		hllHash:     0,
 		retryLimit:  10,
 		msg:         msg,
 	}
 
-	// Create hash from IP address for use in HLL data
-	ip, ok := netip.AddrFromSlice(ipBytes)
-	if ok {
-		// We use a deterministic seed by design to be able to combine HLL
-		// datasets.
-		wu.hllHash = murmur3.Sum64(ipBytes)
-		wu.ip = ip
-	}
+	// get an identifier based on Query Address as the HLL Hash
+	wu.hllHash = ipToIdentifier(dt.QueryAddr)
 
 	// Counters based on header
 	switch msg.Rcode {

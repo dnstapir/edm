@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"net/netip"
 	"time"
 
 	"github.com/dnstapir/edm/pkg/dnstap"
@@ -18,23 +17,11 @@ import (
 // cryptopanCache is the worker-private Crypto-PAn LRU (nil disables
 // caching); Run creates it so a creation failure surfaces as a startup
 // error instead of a silently dead worker.
-func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, cryptopanCache *lru.Cache[netip.Addr, netip.Addr], seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
+func (edm *DnstapMinimiser) runMinimiser(ctx context.Context, minimiserID int, reloadConfigCh <-chan struct{}, seenQnameLRU *lru.Cache[string, struct{}], seenStore seenQnameStore, labelLimit int, wkdTracker *wellKnownDomainsTracker) {
 	dt := dnstap.Message{}
-
-	// Per-worker scratch buffer for the unpseudonymised client IP we pass
-	// to wkdTracker.sendUpdate for HLL hashing. Sized to fit IPv6 and
-	// resliced to len(QueryAddress) per frame.
-	var dangerScratch [16]byte
 
 	// startConf is used for things that do not handle reconfiguration at runtime
 	startConf := edm.getConfig()
-
-	// cryptopanLastGen tracks the last cryptopan-instance generation we
-	// saw; when setCryptopan installs a new key it bumps edm.cryptopanGen
-	// and we Purge on the next frame, so at most one frame after a key
-	// rotation can still return a cached old-key pseudonym before the
-	// cache is cleared.
-	cryptopanLastGen := edm.cryptopanGen.Load()
 
 	// conf is meant to be dynamically modified if the config changes at runtime
 	conf := edm.getConfig()
@@ -59,24 +46,10 @@ minimiserLoop:
 				continue
 			}
 
-			// Keep around the unpseudonymised client IP for HLL
-			// data, be careful with logging or otherwise handling
-			// this IP as it is sensitive. Borrow the per-worker
-			// scratch buffer, falling back to allocation only for an
-			// address longer than the scratch buffer (IPv4 and IPv6
-			// both fit).
-			dangerRealClientIP := append(dangerScratch[:0], dt.QueryAddr.AsSlice()...)
+			// pseudonymise IPs
+			edm.pseudonymiseIPs(&dt)
 
-			// Detect cryptopan key rotation; purge our local cache so
-			// no IPs anonymised under the old key bleed through.
-			if gen := edm.cryptopanGen.Load(); gen != cryptopanLastGen {
-				if cryptopanCache != nil {
-					cryptopanCache.Purge()
-				}
-				cryptopanLastGen = gen
-			}
-			edm.pseudonymiseDnstap(&dt, edm.cryptopan.Load(), cryptopanCache)
-
+			// parse DNS message
 			msg := edm.parsePacket(&dt)
 
 			// Create a less specific timestamp for data sent to
@@ -110,7 +83,7 @@ minimiserLoop:
 			// measurements.
 			dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
 			if dawgIndex != dawgNotFound {
-				wkdTracker.sendUpdate(dangerRealClientIP, msg, dawgIndex, suffixMatch, dawgModTime)
+				wkdTracker.sendUpdate(&dt, msg, dawgIndex, suffixMatch, dawgModTime)
 				continue
 			}
 
