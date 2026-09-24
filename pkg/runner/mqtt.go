@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 
+	queue "github.com/dnstapir/edm/pkg/mqtt-queue"
 	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/eclipse/paho.golang/autopaho/queue/file"
 	"github.com/eclipse/paho.golang/paho"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jws"
@@ -53,7 +52,7 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 	pel.logger.Error(fmt.Sprintf(format, v...))
 }
 
-func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
+func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16) (autopaho.ClientConfig, error) {
 	u, err := parseMQTTServerURL(server)
 	if err != nil {
 		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
@@ -66,6 +65,7 @@ func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 			GetClientCertificate: edm.mqttClientCertStore.getClientCertificate,
 			MinVersion:           tls.VersionTLS13,
 		},
+		Queue:          queue.NewRingQueue(8 * 1024),
 		KeepAlive:      mqttKeepAlive,
 		OnConnectionUp: func(*autopaho.ConnectionManager, *paho.Connack) { edm.log.Info("mqtt connection up") },
 		OnConnectError: func(err error) { edm.log.Error("error whilst attempting connection", "error", err) },
@@ -84,11 +84,6 @@ func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 				}
 			},
 		},
-	}
-
-	if localFileQueue != nil {
-		edm.log.Info("using file based queue for MQTT messages")
-		cliCfg.Queue = localFileQueue
 	}
 
 	return cliCfg, nil
@@ -119,7 +114,7 @@ func parseMQTTServerURL(server string) (*url.URL, error) {
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
 // sign workers parallelize CPU-bound JWS signing across cores while the lone
 // publisher preserves paho ConnectionManager's single-connection behavior.
-func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
+func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnectionManager, mqttJWK jwk.Key, signWorkers int) {
 	if signWorkers <= 0 {
 		signWorkers = 1
 	}
@@ -150,7 +145,7 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 	})
 
 	edm.autopahoWg.Go(func() {
-		edm.mqttPublishWorker(ctx, cm, topic, usingFileQueue)
+		edm.mqttPublishWorker(ctx, cm, topic)
 	})
 }
 
@@ -182,23 +177,12 @@ func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, mqttJWK jwk.Key)
 // mqttPublishWorker is the single goroutine that talks to paho. Single-writer
 // matches paho's ConnectionManager expectations; signing remains parallel
 // upstream while broker back-pressure is contained to this publisher.
-func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string, usingFileQueue bool) {
+func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string) {
 	var (
 		signedMsg []byte
 		ok        bool
 	)
 	for {
-		// We only need to wait for a server connection if we have no
-		// local queue. Otherwise we can just start appending messages
-		// to disk.
-		if !usingFileQueue {
-			err := cm.AwaitConnection(ctx)
-			if err != nil { // Should only happen when context is cancelled
-				edm.log.Error("publisher done", "AwaitConnection", err)
-				return
-			}
-		}
-
 		select {
 		case signedMsg, ok = <-edm.mqttSignedCh:
 			if !ok {
@@ -210,33 +194,15 @@ func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnec
 			return
 		}
 
-		if usingFileQueue {
-			err := cm.PublishViaQueue(ctx, &autopaho.QueuePublish{
-				Publish: &paho.Publish{
-					QoS:     0,
-					Topic:   topic,
-					Payload: signedMsg,
-				},
-			})
-			if err != nil {
-				edm.log.Error("error writing message to queue", "error", err)
-			}
-		} else {
-			pr, err := cm.Publish(ctx, &paho.Publish{
+		err := cm.PublishViaQueue(ctx, &autopaho.QueuePublish{
+			Publish: &paho.Publish{
 				QoS:     0,
 				Topic:   topic,
 				Payload: signedMsg,
-			})
-			if err != nil {
-				edm.log.Error("error publishing", "error", err)
-			} else if pr != nil && pr.ReasonCode != 0 && pr.ReasonCode != 16 {
-				// pr is only non-nil for QoS 1 and up;
-				// 16 = "no subscribers" which is fine.
-				edm.log.Info("reason code received", "reason_code", pr.ReasonCode)
-			}
-			if edm.debug {
-				edm.log.Info("sent message", "content", string(signedMsg))
-			}
+			},
+		})
+		if err != nil {
+			edm.log.Error("error writing message to queue", "error", err)
 		}
 
 		select {
@@ -271,27 +237,12 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 		}
 	}
 
-	var mqttFileQueue *file.Queue
-	if !conf.DisableMQTTFilequeue {
-		mqttQueueDir := filepath.Join(conf.DataDir, "mqtt", "queue")
-
-		err = edm.deps.FileSystem.MkdirAll(mqttQueueDir, 0o750)
-		if err != nil {
-			return fmt.Errorf("setupMQTT: unable to create MQTT queue dir %q: %w", mqttQueueDir, err)
-		}
-
-		mqttFileQueue, err = edm.deps.MQTTFactory.NewFileQueue(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
-		if err != nil {
-			return fmt.Errorf("setupMQTT: unable to init MQTT queue file based queue: %w", err)
-		}
-	}
-
 	mqttKeyID, _ := mqttJWK.KeyID()
 	mqttClientID := mqttKeyID + "-edm"
 
 	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
 
-	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
+	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive)
 	if err != nil {
 		return fmt.Errorf("setupMQTT: unable to create autopaho config: %w", err)
 	}
@@ -306,7 +257,7 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 	if signWorkers <= 0 {
 		signWorkers = runtime.GOMAXPROCS(0)
 	}
-	edm.startMQTTPipeline(ctx, autopahoCm, mqttJWK, mqttFileQueue != nil, signWorkers)
+	edm.startMQTTPipeline(ctx, autopahoCm, mqttJWK, signWorkers)
 
 	return nil
 }
