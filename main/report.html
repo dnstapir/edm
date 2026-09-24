@@ -63,27 +63,27 @@
 				
 				<option value="file3">github.com/dnstapir/edm/pkg/dnstap/message.go (99.2%)</option>
 				
-				<option value="file4">github.com/dnstapir/edm/pkg/protocols/protocols.go (100.0%)</option>
+				<option value="file4">github.com/dnstapir/edm/pkg/mqtt-queue/queue.go (100.0%)</option>
 				
-				<option value="file5">github.com/dnstapir/edm/pkg/runner/aggregate_sender.go (95.9%)</option>
+				<option value="file5">github.com/dnstapir/edm/pkg/protocols/protocols.go (100.0%)</option>
 				
-				<option value="file6">github.com/dnstapir/edm/pkg/runner/certs.go (100.0%)</option>
+				<option value="file6">github.com/dnstapir/edm/pkg/runner/aggregate_sender.go (96.4%)</option>
 				
-				<option value="file7">github.com/dnstapir/edm/pkg/runner/config.go (100.0%)</option>
+				<option value="file7">github.com/dnstapir/edm/pkg/runner/certs.go (100.0%)</option>
 				
-				<option value="file8">github.com/dnstapir/edm/pkg/runner/cryptopan.go (96.3%)</option>
+				<option value="file8">github.com/dnstapir/edm/pkg/runner/config.go (100.0%)</option>
 				
-				<option value="file9">github.com/dnstapir/edm/pkg/runner/data_collector.go (94.4%)</option>
+				<option value="file9">github.com/dnstapir/edm/pkg/runner/cryptopan.go (96.3%)</option>
 				
-				<option value="file10">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (79.7%)</option>
+				<option value="file10">github.com/dnstapir/edm/pkg/runner/data_collector.go (94.4%)</option>
 				
-				<option value="file11">github.com/dnstapir/edm/pkg/runner/dependencies.go (90.2%)</option>
+				<option value="file11">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (79.7%)</option>
 				
-				<option value="file12">github.com/dnstapir/edm/pkg/runner/disk_cleaner.go (83.3%)</option>
+				<option value="file12">github.com/dnstapir/edm/pkg/runner/dependencies.go (89.7%)</option>
 				
 				<option value="file13">github.com/dnstapir/edm/pkg/runner/dnstap_input.go (63.4%)</option>
 				
-				<option value="file14">github.com/dnstapir/edm/pkg/runner/histogram.go (90.8%)</option>
+				<option value="file14">github.com/dnstapir/edm/pkg/runner/histogram.go (93.2%)</option>
 				
 				<option value="file15">github.com/dnstapir/edm/pkg/runner/http_server.go (100.0%)</option>
 				
@@ -91,7 +91,7 @@
 				
 				<option value="file17">github.com/dnstapir/edm/pkg/runner/minimiser.go (91.0%)</option>
 				
-				<option value="file18">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.6%)</option>
+				<option value="file18">github.com/dnstapir/edm/pkg/runner/mqtt.go (93.8%)</option>
 				
 				<option value="file19">github.com/dnstapir/edm/pkg/runner/parquet_files.go (100.0%)</option>
 				
@@ -101,7 +101,7 @@
 				
 				<option value="file22">github.com/dnstapir/edm/pkg/runner/reload.go (96.8%)</option>
 				
-				<option value="file23">github.com/dnstapir/edm/pkg/runner/service.go (98.1%)</option>
+				<option value="file23">github.com/dnstapir/edm/pkg/runner/service.go (98.0%)</option>
 				
 				<option value="file24">github.com/dnstapir/edm/pkg/runner/session.go (95.6%)</option>
 				
@@ -377,7 +377,7 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
         <span class="cov5" title="27">fs.BoolVar(&amp;conf.DisableSessionFiles, "disable-session-files", conf.DisableSessionFiles, "do not write out session parquet files")
         fs.BoolVar(&amp;conf.DisableHistogramSender, "disable-histogram-sender", conf.DisableHistogramSender, "do not check for histogram files to upload to core")
         fs.BoolVar(&amp;conf.DisableMQTT, "disable-mqtt", conf.DisableMQTT, "disable MQTT message sending")
-        fs.BoolVar(&amp;conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "disable MQTT file based queue")
+        fs.BoolVar(&amp;conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "[DEPRECATED]")
         fs.BoolVar(&amp;conf.EnableManualParquetRotation, "enable-manual-parquet-rotation", conf.EnableManualParquetRotation, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
         fs.BoolVar(&amp;conf.PebbleSync, "pebble-sync", conf.PebbleSync, "fsync seen-qname pebble writes")
 </span>
@@ -1130,7 +1130,204 @@ func skipVARINT(data []byte) []byte {
 }
 </pre>
 		
-		<pre class="file" id="file4" style="display: none">package protocols
+		<pre class="file" id="file4" style="display: none">package queue
+
+import (
+        "container/ring"
+        "errors"
+        "io"
+        "strings"
+        "sync"
+
+        "github.com/eclipse/paho.golang/autopaho/queue"
+)
+
+var (
+        ErrDoublePeek = errors.New("peek was called twice")
+        ErrInvalid    = errors.New("invalid state")
+)
+
+type RingQueue struct {
+        // lock for struct
+        lock sync.Mutex
+
+        // stores the current wait channel
+        wait chan struct{}
+
+        // write and read positions of the ring
+        write *ring.Ring
+        read  *ring.Ring
+
+        // reference and status of peeked entry
+        peek     *entry
+        peekable bool
+}
+
+type entry struct {
+        queue   *RingQueue
+        payload string
+}
+
+// A ring buffer that implements the interface of autopaho's
+// queue.Queue. The queue may not be copied after its creation.
+//
+// The queue has n-1 slots for entries, and the "oldest" entry
+// is overwritten when the buffer becomes full. Also the entry's
+// "Leave" action is intentionally lossy. If n is less than 4,
+// then n is set to 4.
+func NewRingQueue(n int) *RingQueue {
+        <span class="cov7" title="8">if n &lt; 4 </span>{
+                <span class="cov1" title="1">n = 4
+</span>        }
+        <span class="cov7" title="8">r := ring.New(n)
+        return &amp;RingQueue{
+                wait:     make(chan struct{}),
+                write:    r,
+                read:     r,
+                peek:     nil,
+                peekable: true,
+</span>        }
+}
+
+func (r *RingQueue) Wait() chan struct{} {
+        <span class="cov8" title="13">r.lock.Lock()
+        defer r.lock.Unlock()
+        return r.wait
+</span>}
+
+func (r *RingQueue) Enqueue(rd io.Reader) error {
+        // copy payload into a string
+        <span class="cov9" title="19">var payload strings.Builder
+        _, err := io.Copy(&amp;payload, rd)
+        if err != nil </span>{
+                <span class="cov1" title="1">return err
+</span>        }
+
+        // lock if payload was read correctly
+        <span class="cov9" title="18">r.lock.Lock()
+        defer r.lock.Unlock()
+</span>
+        // if the queue is empty before enqueuing this
+        // entry =&gt; close the wait channel. We can do
+        // that now, since we are behind a lock.
+        <span class="cov9" title="18">if r.peek == nil &amp;&amp; r.write == r.read </span>{
+                <span class="cov6" title="6">close(r.wait)
+</span>        }
+
+        // store payload
+        <span class="cov9" title="18">r.write.Value = payload.String()
+</span>
+        // advance write location
+        <span class="cov9" title="18">r.write = r.write.Next()
+</span>        // if we catch up with the reader
+        <span class="cov9" title="18">if r.write == r.read </span>{
+                // discard the oldest entry by advancing
+                // the reader
+                <span class="cov5" title="4">r.read.Value = nil
+                r.read = r.read.Next()
+</span>        }
+
+        <span class="cov9" title="18">return nil</span>
+}
+
+func (r *RingQueue) Peek() (queue.Entry, error) {
+        <span class="cov10" title="21">r.lock.Lock()
+        defer r.lock.Unlock()
+</span>
+        // if one is in peek buffer
+        <span class="cov10" title="21">if r.peek != nil </span>{
+                <span class="cov6" title="6">switch r.peekable </span>{
+                case true:
+                        <span class="cov5" title="5">r.peekable = false
+                        return r.peek, nil</span>
+                case false:
+                        <span class="cov1" title="1">return nil, ErrDoublePeek</span>
+                }
+        }
+
+        // if queue is empty
+        <span class="cov9" title="15">if r.read == r.write </span>{
+                <span class="cov1" title="1">return nil, queue.ErrEmpty
+</span>        }
+
+        // if there is an entry in the queue
+        // =&gt; move it to peek
+        <span class="cov8" title="14">payload, ok := r.read.Value.(string)
+</span>        // if we can't interpret the value as a string
+        <span class="cov8" title="14">if !ok </span>{
+                // =&gt; advance the queue and discard the bad payload
+                <span class="cov1" title="1">r.read.Value = nil
+                r.read = r.read.Next()
+</span>                // return error
+                <span class="cov1" title="1">return nil, ErrInvalid
+</span>        }
+        <span class="cov8" title="13">r.peek = &amp;entry{r, payload}
+</span>        // and advance the queue
+        <span class="cov8" title="13">r.read.Value = nil
+        r.read = r.read.Next()
+</span>        // return peek
+        <span class="cov8" title="13">r.peekable = false
+        return r.peek, nil</span>
+}
+
+func (e *entry) Reader() (io.Reader, error) {
+        <span class="cov8" title="13">return strings.NewReader(e.payload), nil
+</span>}
+
+// the caller needs to have a lock on e.queue.lock
+func (e *entry) discard() error {
+        // handle non peeked entry and double/incorrect discards
+        <span class="cov10" title="21">if e.queue.peekable || e.queue.peek != e </span>{
+                <span class="cov7" title="8">return ErrInvalid
+</span>        }
+
+        // reset peek
+        <span class="cov8" title="13">e.queue.peek = nil
+        e.queue.peekable = true
+</span>
+        // if queue is empty
+        <span class="cov8" title="13">if e.queue.read == e.queue.write </span>{
+                // open new chan
+                <span class="cov6" title="6">e.queue.wait = make(chan struct{})
+</span>        }
+        <span class="cov8" title="13">return nil</span>
+}
+
+func (e *entry) Remove() error {
+        <span class="cov9" title="15">e.queue.lock.Lock()
+        defer e.queue.lock.Unlock()
+        return e.discard()
+</span>}
+
+func (e *entry) Quarantine() error {
+        <span class="cov5" title="4">e.queue.lock.Lock()
+        defer e.queue.lock.Unlock()
+        return e.discard()
+</span>}
+
+// Note: entry might be discarded instead of requeued
+func (e *entry) Leave() error {
+        <span class="cov7" title="9">e.queue.lock.Lock()
+        defer e.queue.lock.Unlock()
+</span>
+        // if write is just behind us, ie the queue is full
+        <span class="cov7" title="9">if e.queue.write == e.queue.read.Prev() </span>{
+                // =&gt; discard peek
+                <span class="cov3" title="2">return e.discard()
+</span>        }
+
+        // handle non peeked entry and double/incorrect leaves
+        <span class="cov6" title="7">if e.queue.peekable || e.queue.peek != e </span>{
+                <span class="cov3" title="2">return ErrInvalid
+</span>        }
+
+        // make peek peekable again
+        <span class="cov5" title="5">e.queue.peekable = true
+        return nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package protocols
 
 import (
         "time"
@@ -1249,10 +1446,10 @@ func NewQnameEvent(msg *dns.Msg, ts time.Time) NewQnameJSON {
 }
 </pre>
 		
-		<pre class="file" id="file5" style="display: none">package runner
+		<pre class="file" id="file6" style="display: none">package runner
 
 import (
-        "bufio"
+        "bytes"
         "context"
         "crypto/ed25519"
         "crypto/tls"
@@ -1263,7 +1460,6 @@ import (
         "net"
         "net/http"
         "net/url"
-        "path/filepath"
         "runtime"
         "strconv"
         "time"
@@ -1281,20 +1477,19 @@ type realAggregateSender struct {
         caCertPool        *x509.CertPool
         signingHTTPClient *httpsign.Client
         httpTransport     *http.Transport
-        fs                fileSystem
         clock             clock
 }
 
-func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (realAggregateSender, error) {
-        <span class="cov8" title="11">var signingKey ed25519.PrivateKey
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (realAggregateSender, error) {
+        <span class="cov8" title="8">var signingKey ed25519.PrivateKey
 </span>
-        <span class="cov8" title="11">err := jwk.Export(signingJwk, &amp;signingKey)
+        <span class="cov8" title="8">err := jwk.Export(signingJwk, &amp;signingKey)
         if err != nil </span>{
                 <span class="cov1" title="1">return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 </span>        }
 
-        // Create HTTP handler for sending aggregate files to aggrec
-        <span class="cov8" title="10">httpTransport := &amp;http.Transport{
+        // Create HTTP handler for sending aggregate data to aggrec
+        <span class="cov8" title="7">httpTransport := &amp;http.Transport{
                 DialContext: (&amp;net.Dialer{
                         Timeout:   30 * time.Second,
                         KeepAlive: 30 * time.Second,
@@ -1307,73 +1502,58 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
                         MinVersion:           tls.VersionTLS13,
                 },
 </span>        }
-        <span class="cov8" title="10">httpClient := http.Client{
+        <span class="cov8" title="7">httpClient := http.Client{
                 Transport: httpTransport,
 </span>        }
 
-        <span class="cov8" title="10">keyID, _ := signingJwk.KeyID()
+        <span class="cov8" title="7">keyID, _ := signingJwk.KeyID()
         keyAlg, _ := signingJwk.Algorithm()
         log.Info("creating HTTP signer", "key_id", keyID, "key_alg", keyAlg)
 </span>
         // Create signer and wrapped HTTP client
-        <span class="cov8" title="10">signer, err := httpsign.NewEd25519Signer(signingKey,
+        <span class="cov8" title="7">signer, err := httpsign.NewEd25519Signer(signingKey,
                 httpsign.NewSignConfig().SetKeyID(keyID),
                 httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
         if err != nil </span>{
                 <span class="cov0" title="0">return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
 </span>        }
 
-        <span class="cov8" title="10">client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
+        <span class="cov8" title="7">client := httpsign.NewClient(httpClient, httpsign.NewClientConfig().SetSignatureName("sig1").SetSigner(signer)) // sign requests, don't verify responses
 </span>
-        <span class="cov8" title="10">return realAggregateSender{
+        <span class="cov8" title="7">return realAggregateSender{
                 log:               log,
                 aggrecURL:         aggrecURL,
                 caCertPool:        caCertPool,
                 signingHTTPClient: client,
                 httpTransport:     httpTransport,
-                fs:                fs,
                 clock:             clock,
         }, nil</span>
 }
 
 // Send sends histogram data via signed HTTP message to aggregate-receiver.
-func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error {
-        <span class="cov8" title="11">fs := as.fs
-        if fs == nil </span>{
-                <span class="cov0" title="0">fs = osFileSystem{}
-</span>        }
-        <span class="cov8" title="11">clock := as.clock
+func (as realAggregateSender) Send(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error {
+        <span class="cov8" title="7">clock := as.clock
         if clock == nil </span>{
                 <span class="cov0" title="0">clock = realClock{}
 </span>        }
 
-        <span class="cov8" title="11">fileName = filepath.Clean(fileName)
-        file, err := fs.Open(fileName)
-        if err != nil </span>{
-                <span class="cov1" title="1">return fmt.Errorf("sendAggregateFile: unable to open file: %w", err)
+        <span class="cov8" title="7">if buf == nil </span>{
+                <span class="cov1" title="1">return fmt.Errorf("sendAggregateData: buffer is nil")
 </span>        }
-        <span class="cov8" title="10">defer func() </span>{
-                <span class="cov8" title="10">if cerr := file.Close(); cerr != nil </span>{
-                        <span class="cov0" title="0">as.log.Error("sendAggregateFile: close file failed", "filename", fileName, "error", cerr)
-</span>                }
-        }()
 
-        <span class="cov8" title="10">fileInfo, err := file.Stat()
-        if err != nil </span>{
-                <span class="cov0" title="0">return fmt.Errorf("sendAggregateFile: unable to stat file: %w", err)
-</span>        }
-        <span class="cov8" title="10">fileSize := fileInfo.Size()
+        // store buffer size for setting the Content-Length header
+        <span class="cov7" title="6">fileSize := int64(buf.Len())
 </span>
         // Path based on https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
-        <span class="cov8" title="10">histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
+        <span class="cov7" title="6">histogramURL, err := url.JoinPath(as.aggrecURL.String(), "api", "v1", "aggregate", "histogram")
         if err != nil </span>{
-                <span class="cov0" title="0">return fmt.Errorf("sendAggregateFile: unable to join URL paths: %w", err)
+                <span class="cov0" title="0">return fmt.Errorf("sendAggregateData: unable to join URL paths: %w", err)
 </span>        }
 
         // Send signed HTTP POST message
-        <span class="cov8" title="10">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, bufio.NewReader(file))
+        <span class="cov7" title="6">req, err := http.NewRequestWithContext(ctx, "POST", histogramURL, buf)
         if err != nil </span>{
-                <span class="cov0" title="0">return fmt.Errorf("sendAggregateFile: unable to create request: %w", err)
+                <span class="cov0" title="0">return fmt.Errorf("sendAggregateData: unable to create request: %w", err)
 </span>        }
 
         // From https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-digest-headers-13#section-6.3:
@@ -1383,63 +1563,59 @@ func (as realAggregateSender) Send(ctx context.Context, fileName string, ts time
         // protects Integrity fields but not other "representation metadata"
         // can expose the communication to tampering.
         // ===
-        <span class="cov8" title="10">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
+        <span class="cov7" title="6">req.Header.Add("Content-Type", "application/vnd.apache.parquet")
 </span>
         // This is set automatically by the transport, but we need to add it
         // here as well to make the signer see it, otherwise it errors out:
         // ===
         // failed to sign request: header content-length not found
         // ===
-        <span class="cov8" title="10">req.Header.Add("Content-Length", strconv.FormatInt(fileSize, 10))
-</span>
-        // Beacuse we are using a bufio.Reader we need to set the length
-        // here as well, otherwise net/http will set the header
-        // "Transfer-Encoding: chunked" and remove the Content-Length header.
-        <span class="cov8" title="10">req.ContentLength = fileSize
+        <span class="cov7" title="6">req.Header.Add("Content-Length", strconv.FormatInt(fileSize, 10))
 </span>
         // Expected by aggrec, e.g:
         // Aggregate-Interval: 2023-11-16T09:24:13+01:00/PT45S
-        <span class="cov8" title="10">req.Header.Add("Aggregate-Interval", fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration)))
+        <span class="cov7" title="6">aggregateInterval := fmt.Sprintf("%s/%s", ts.Format(time.RFC3339), iso8601Duration(duration))
+        req.Header.Add("Aggregate-Interval", aggregateInterval)
 </span>
         // Add a User-Agent based on what version of EDM we are running, eg:
         // edm/63aad075ec62baf21f4c0323fdcd55e4d5bb4333 linux/amd64
-        <span class="cov8" title="10">req.Header.Add("User-Agent", userAgent)
+        <span class="cov7" title="6">req.Header.Add("User-Agent", userAgent)
 </span>
-        <span class="cov8" title="10">as.log.Info("aggregateSender.send", "filename", fileName, "url", histogramURL)
+        <span class="cov7" title="6">as.log.Info("aggregateSender.send", "url", histogramURL, "aggregate-interval", aggregateInterval)
         startTime := clock.Now()
         res, err := as.signingHTTPClient.Do(req)
         elapsedTime := clock.Now().Sub(startTime)
         if err != nil </span>{
-                <span class="cov4" title="3">return fmt.Errorf("sendAggregateFile: unable to send request, elapsed time %s: %w", elapsedTime, err)
+                <span class="cov0" title="0">return fmt.Errorf("sendAggregateData: unable to send request, elapsed time %s: %w", elapsedTime, err)
 </span>        }
-        <span class="cov7" title="7">defer res.Body.Close()
+        <span class="cov7" title="6">defer res.Body.Close()
 </span>
-        <span class="cov7" title="7">bodyData, err := io.ReadAll(res.Body)
+        <span class="cov7" title="6">bodyData, err := io.ReadAll(res.Body)
         if err != nil </span>{
-                <span class="cov1" title="1">return fmt.Errorf("sendAggregateFile: unable to read response body: %w", err)
+                <span class="cov1" title="1">return fmt.Errorf("sendAggregateData: unable to read response body: %w", err)
 </span>        }
 
-        <span class="cov6" title="6">if res.StatusCode != http.StatusCreated </span>{
+        <span class="cov6" title="5">if res.StatusCode != http.StatusCreated </span>{
                 <span class="cov1" title="1">as.log.Error(string(bodyData))
-                return fmt.Errorf("sendAggregateFile: unexpected status code: %d", res.StatusCode)
+                return fmt.Errorf("sendAggregateData: unexpected status code: %d", res.StatusCode)
 </span>        }
 
-        <span class="cov6" title="5">locationURL, err := url.Parse(res.Header.Get("Location"))
+        <span class="cov6" title="4">locationURL, err := url.Parse(res.Header.Get("Location"))
         if err != nil </span>{
-                <span class="cov1" title="1">return fmt.Errorf("sendAggregateFile: unable to parse Location header (file was still uploaded, took %s): %w", elapsedTime, err)
+                <span class="cov1" title="1">return fmt.Errorf("sendAggregateData: unable to parse Location header (data was still uploaded, took %s): %w", elapsedTime, err)
 </span>        }
 
         // Make it so we log a reachable link if the content in Location header is relative
-        <span class="cov5" title="4">if locationURL.Scheme == "" </span>{
-                <span class="cov5" title="4">locationURL.Scheme = as.aggrecURL.Scheme
+        <span class="cov4" title="3">if locationURL.Scheme == "" </span>{
+                <span class="cov4" title="3">locationURL.Scheme = as.aggrecURL.Scheme
 </span>        }
-        <span class="cov5" title="4">if locationURL.Host == "" </span>{
-                <span class="cov5" title="4">locationURL.Host = as.aggrecURL.Host
+        <span class="cov4" title="3">if locationURL.Host == "" </span>{
+                <span class="cov4" title="3">locationURL.Host = as.aggrecURL.Host
 </span>        }
 
-        <span class="cov5" title="4">as.log.Info("aggregateSender.send: file uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
+        <span class="cov4" title="3">as.log.Info("aggregateSender.send: data uploaded", "elapsed", elapsedTime.String(), "url", locationURL.String())
 </span>
-        <span class="cov5" title="4">return nil</span>
+        <span class="cov4" title="3">return nil</span>
 }
 
 // CloseIdleConnections closes idle HTTP connections held by the sender.
@@ -1454,28 +1630,28 @@ func (as realAggregateSender) CloseIdleConnections() {
 // Sub-second precision is preserved as a fractional seconds component.
 // Non-positive durations yield "PT0S".
 func iso8601Duration(duration time.Duration) string {
-        <span class="cov10" title="16">if duration &lt;= 0 </span>{
+        <span class="cov10" title="12">if duration &lt;= 0 </span>{
                 <span class="cov3" title="2">return "PT0S"
 </span>        }
 
-        <span class="cov9" title="14">total := int64(duration / time.Second)
+        <span class="cov9" title="10">total := int64(duration / time.Second)
         nanoseconds := duration % time.Second
 </span>
-        <span class="cov9" title="14">hours := total / 3600
+        <span class="cov9" title="10">hours := total / 3600
         total %= 3600
         minutes := total / 60
         seconds := total % 60
 </span>
-        <span class="cov9" title="14">res := "PT"
+        <span class="cov9" title="10">res := "PT"
         if hours &gt; 0 </span>{
                 <span class="cov1" title="1">res += strconv.FormatInt(hours, 10) + "H"
 </span>        }
-        <span class="cov9" title="14">if minutes &gt; 0 </span>{
-                <span class="cov8" title="10">res += strconv.FormatInt(minutes, 10) + "M"
+        <span class="cov9" title="10">if minutes &gt; 0 </span>{
+                <span class="cov7" title="6">res += strconv.FormatInt(minutes, 10) + "M"
 </span>        }
-        <span class="cov9" title="14">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span>{
+        <span class="cov9" title="10">if seconds &gt; 0 || nanoseconds &gt; 0 || res == "PT" </span>{
                 <span class="cov6" title="5">if nanoseconds == 0 </span>{
-                        <span class="cov5" title="4">res += strconv.FormatInt(seconds, 10)
+                        <span class="cov6" title="4">res += strconv.FormatInt(seconds, 10)
 </span>                } else {
                         <span class="cov1" title="1">secondsFloat := float64(seconds) + float64(nanoseconds)/float64(time.Second)
                         res += strconv.FormatFloat(secondsFloat, 'f', -1, 64)
@@ -1483,20 +1659,20 @@ func iso8601Duration(duration time.Duration) string {
                 <span class="cov6" title="5">res += "S"</span>
         }
 
-        <span class="cov9" title="14">return res</span>
+        <span class="cov9" title="10">return res</span>
 }
 
 func (edm *DnstapMinimiser) setupHistogramSender() error {
-        <span class="cov8" title="11">conf := edm.getConfig()
+        <span class="cov9" title="11">conf := edm.getConfig()
 </span>
-        <span class="cov8" title="11">httpURL, err := url.Parse(conf.HTTPURL)
+        <span class="cov9" title="11">httpURL, err := url.Parse(conf.HTTPURL)
         if err != nil </span>{
                 <span class="cov3" title="2">return fmt.Errorf("setupHistogramSender: unable to parse 'http-url' setting: %w", err)
 </span>        }
 
         <span class="cov8" title="9">httpSigningJwk, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.HTTPSigningKeyFile)
         if err != nil </span>{
-                <span class="cov6" title="6">return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
+                <span class="cov7" title="6">return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
 </span>        }
 
         // Leaving these nil will use the OS default CA certs
@@ -1512,7 +1688,7 @@ func (edm *DnstapMinimiser) setupHistogramSender() error {
 
         // Build the new sender first so a failed rebuild leaves the existing
         // working sender in place instead of zeroing it.
-        <span class="cov4" title="3">newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
+        <span class="cov4" title="3">newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
         if err != nil </span>{
                 <span class="cov0" title="0">return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
 </span>        }
@@ -1530,7 +1706,7 @@ func (edm *DnstapMinimiser) setupHistogramSender() error {
 }
 </pre>
 		
-		<pre class="file" id="file6" style="display: none">package runner
+		<pre class="file" id="file7" style="display: none">package runner
 
 import (
         "crypto/tls"
@@ -1568,7 +1744,7 @@ func (cs *certStore) loadCert(loader keyMaterialLoader, certPath string, keyPath
 }
 
 func newCertStore() *certStore {
-        <span class="cov10" title="276">return &amp;certStore{}
+        <span class="cov10" title="268">return &amp;certStore{}
 </span>}
 
 func (edm *DnstapMinimiser) loadHTTPClientCert() error {
@@ -1587,7 +1763,7 @@ func (edm *DnstapMinimiser) loadMQTTClientCert() error {
 </span>}
 </pre>
 		
-		<pre class="file" id="file7" style="display: none">package runner
+		<pre class="file" id="file8" style="display: none">package runner
 
 import (
         "bytes"
@@ -1610,7 +1786,7 @@ type Config struct {
         DisableSessionFiles           bool   `toml:"disable-session-files" reload:"true"`
         DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
         DisableMQTT                   bool   `toml:"disable-mqtt"`
-        DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
+        DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"` // DEPRECATED
         EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
         PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
         InputUnix                     string `toml:"input-unix"`
@@ -1860,29 +2036,29 @@ func tomlErrorDetail(err error) string {
 }
 
 func (edm *DnstapMinimiser) updateConfig() error {
-        <span class="cov7" title="146">edm.confMutex.Lock()
+        <span class="cov7" title="142">edm.confMutex.Lock()
         defer edm.confMutex.Unlock()
 </span>
-        <span class="cov7" title="146">conf, err := edm.configer.GetConfig()
+        <span class="cov7" title="142">conf, err := edm.configer.GetConfig()
         if err != nil </span>{
                 <span class="cov1" title="1">return err
 </span>        }
 
-        <span class="cov7" title="145">edm.conf = conf
+        <span class="cov7" title="141">edm.conf = conf
 </span>
-        <span class="cov7" title="145">return nil</span>
+        <span class="cov7" title="141">return nil</span>
 }
 
 func (edm *DnstapMinimiser) getConfig() Config {
-        <span class="cov10" title="1037">edm.confMutex.RLock()
+        <span class="cov10" title="1036">edm.confMutex.RLock()
         conf := edm.conf
         edm.confMutex.RUnlock()
 </span>
-        <span class="cov10" title="1037">return conf
+        <span class="cov10" title="1036">return conf
 </span>}
 </pre>
 		
-		<pre class="file" id="file8" style="display: none">package runner
+		<pre class="file" id="file9" style="display: none">package runner
 
 import (
         "errors"
@@ -1922,19 +2098,19 @@ func (edm *DnstapMinimiser) setCryptopan(key string, salt string, cacheEntries i
         // installs the cryptopan instance and signals workers to purge their caches
         // on the next call. Changing cryptopan-address-entries therefore takes
         // effect only on restart, which is why that field is not reloadable.
-        <span class="cov10" title="172">if cacheEntries &lt; 0 </span>{
+        <span class="cov10" title="168">if cacheEntries &lt; 0 </span>{
                 <span class="cov1" title="1">return fmt.Errorf("setCryptopan: invalid cache size %d", cacheEntries)
 </span>        }
 
-        <span class="cov9" title="171">cpn, err := edm.deps.CryptopanFactory.NewCryptopan(key, salt)
+        <span class="cov9" title="167">cpn, err := edm.deps.CryptopanFactory.NewCryptopan(key, salt)
         if err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("setCryptopan: unable to create cryptopan: %w", err)
 </span>        }
 
-        <span class="cov9" title="170">edm.cryptopan.Store(cpn)
+        <span class="cov9" title="166">edm.cryptopan.Store(cpn)
         edm.cryptopanGen.Add(1)
 </span>
-        <span class="cov9" title="170">return nil</span>
+        <span class="cov9" title="166">return nil</span>
 }
 
 func createCryptopan(key string, salt string) (*cryptopan.Cryptopan, error) {
@@ -2011,7 +2187,7 @@ func (edm *DnstapMinimiser) pseudonymiseIP(addr netip.Addr, cpn *cryptopan.Crypt
 }
 </pre>
 		
-		<pre class="file" id="file9" style="display: none">package runner
+		<pre class="file" id="file10" style="display: none">package runner
 
 import (
         "fmt"
@@ -2219,7 +2395,7 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 }
 </pre>
 		
-		<pre class="file" id="file10" style="display: none">package runner
+		<pre class="file" id="file11" style="display: none">package runner
 
 import (
         "crypto/sha256"
@@ -2371,9 +2547,10 @@ func (edm *DnstapMinimiser) prepareDawgStaging() error {
 }
 </pre>
 		
-		<pre class="file" id="file11" style="display: none">package runner
+		<pre class="file" id="file12" style="display: none">package runner
 
 import (
+        "bytes"
         "context"
         "crypto/tls"
         "crypto/x509"
@@ -2391,8 +2568,6 @@ import (
         "github.com/cockroachdb/pebble"
         dnstap "github.com/dnstap/golang-dnstap"
         "github.com/eclipse/paho.golang/autopaho"
-        "github.com/eclipse/paho.golang/autopaho/queue/file"
-        "github.com/eclipse/paho.golang/paho"
         "github.com/lestrrat-go/jwx/v3/jwa"
         "github.com/lestrrat-go/jwx/v3/jwk"
         "github.com/smhanov/dawg"
@@ -2416,7 +2591,6 @@ type fileSystem interface {
         Create(name string) (fsFile, error)
         Chmod(name string, mode os.FileMode) error
         ReadFile(name string) ([]byte, error)
-        ReadDir(name string) ([]os.DirEntry, error)
         Stat(name string) (os.FileInfo, error)
         MkdirAll(path string, perm os.FileMode) error
         Rename(oldpath, newpath string) error
@@ -2476,27 +2650,24 @@ type httpServerRunner interface {
         ListenAndServeHTTP(server *http.Server) error
 }
 
-// aggregateSender sends histogram parquet files to aggregate-receiver.
+// aggregateSender sends histogram parquet data to aggregate-receiver.
 type aggregateSender interface {
-        Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error
+        Send(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error
         CloseIdleConnections()
 }
 
 // aggregateSenderFactory creates AggregateSender instances.
 type aggregateSenderFactory interface {
-        NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error)
+        NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error)
 }
 
 // mqttConnectionManager is the MQTT connection surface used by the publisher.
 type mqttConnectionManager interface {
-        AwaitConnection(context.Context) error
         PublishViaQueue(context.Context, *autopaho.QueuePublish) error
-        Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
 }
 
-// mqttFactory creates MQTT file queues and connection managers.
+// mqttFactory creates the MQTT connection manager
 type mqttFactory interface {
-        NewFileQueue(path, prefix, extension string) (*file.Queue, error)
         NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error)
 }
 
@@ -2532,69 +2703,61 @@ type dependencies struct {
         DawgLoader             dawgLoader
         CryptopanFactory       cryptopanFactory
 
-        DiskCleanerInterval     time.Duration
-        MonitorChannelInterval  time.Duration
-        HistogramSenderInterval time.Duration
-        HistogramSenderBackoff  time.Duration
+        MonitorChannelInterval       time.Duration
+        HistogramSenderRetryInterval time.Duration
 }
 
 func defaultDependencies() dependencies {
-        <span class="cov5" title="156">return fillDependencies(dependencies{})
+        <span class="cov8" title="145">return fillDependencies(dependencies{})
 </span>}
 
 func fillDependencies(deps dependencies) dependencies {
-        <span class="cov5" title="294">if deps.FileSystem == nil </span>{
-                <span class="cov5" title="159">deps.FileSystem = osFileSystem{}
+        <span class="cov10" title="279">if deps.FileSystem == nil </span>{
+                <span class="cov8" title="148">deps.FileSystem = osFileSystem{}
 </span>        }
-        <span class="cov5" title="294">if deps.Clock == nil </span>{
-                <span class="cov5" title="159">deps.Clock = realClock{}
+        <span class="cov10" title="279">if deps.Clock == nil </span>{
+                <span class="cov8" title="148">deps.Clock = realClock{}
 </span>        }
-        <span class="cov5" title="294">if deps.ListenerFactory == nil </span>{
-                <span class="cov5" title="159">deps.ListenerFactory = netListenerFactory{}
+        <span class="cov10" title="279">if deps.ListenerFactory == nil </span>{
+                <span class="cov8" title="148">deps.ListenerFactory = netListenerFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.DnstapInputFactory == nil </span>{
-                <span class="cov5" title="159">deps.DnstapInputFactory = realDnstapInputFactory{}
+        <span class="cov10" title="279">if deps.DnstapInputFactory == nil </span>{
+                <span class="cov8" title="148">deps.DnstapInputFactory = realDnstapInputFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.SeenQnameStoreFactory == nil </span>{
-                <span class="cov5" title="159">deps.SeenQnameStoreFactory = pebbleSeenQnameStoreFactory{}
+        <span class="cov10" title="279">if deps.SeenQnameStoreFactory == nil </span>{
+                <span class="cov8" title="148">deps.SeenQnameStoreFactory = pebbleSeenQnameStoreFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.HTTPServerRunner == nil </span>{
-                <span class="cov5" title="159">deps.HTTPServerRunner = realHTTPServerRunner{}
+        <span class="cov10" title="279">if deps.HTTPServerRunner == nil </span>{
+                <span class="cov8" title="148">deps.HTTPServerRunner = realHTTPServerRunner{}
 </span>        }
-        <span class="cov5" title="294">if deps.AggregateSenderFactory == nil </span>{
-                <span class="cov5" title="159">deps.AggregateSenderFactory = realAggregateSenderFactory{}
+        <span class="cov10" title="279">if deps.AggregateSenderFactory == nil </span>{
+                <span class="cov8" title="148">deps.AggregateSenderFactory = realAggregateSenderFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.MQTTFactory == nil </span>{
-                <span class="cov5" title="159">deps.MQTTFactory = realMQTTFactory{}
+        <span class="cov10" title="279">if deps.MQTTFactory == nil </span>{
+                <span class="cov8" title="148">deps.MQTTFactory = realMQTTFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.KeyMaterialLoader == nil </span>{
-                <span class="cov5" title="159">deps.KeyMaterialLoader = realKeyMaterialLoader{fs: deps.FileSystem}
+        <span class="cov10" title="279">if deps.KeyMaterialLoader == nil </span>{
+                <span class="cov8" title="148">deps.KeyMaterialLoader = realKeyMaterialLoader{fs: deps.FileSystem}
 </span>        }
-        <span class="cov5" title="294">if deps.DawgLoader == nil </span>{
-                <span class="cov5" title="159">deps.DawgLoader = realDawgLoader{fs: deps.FileSystem}
+        <span class="cov10" title="279">if deps.DawgLoader == nil </span>{
+                <span class="cov8" title="148">deps.DawgLoader = realDawgLoader{fs: deps.FileSystem}
 </span>        }
-        <span class="cov5" title="294">if deps.CryptopanFactory == nil </span>{
-                <span class="cov5" title="158">deps.CryptopanFactory = realCryptopanFactory{}
+        <span class="cov10" title="279">if deps.CryptopanFactory == nil </span>{
+                <span class="cov8" title="147">deps.CryptopanFactory = realCryptopanFactory{}
 </span>        }
-        <span class="cov5" title="294">if deps.DiskCleanerInterval == 0 </span>{
-                <span class="cov5" title="159">deps.DiskCleanerInterval = time.Minute
+        <span class="cov10" title="279">if deps.MonitorChannelInterval == 0 </span>{
+                <span class="cov8" title="148">deps.MonitorChannelInterval = time.Second
 </span>        }
-        <span class="cov5" title="294">if deps.MonitorChannelInterval == 0 </span>{
-                <span class="cov5" title="159">deps.MonitorChannelInterval = time.Second
+        <span class="cov10" title="279">if deps.HistogramSenderRetryInterval == 0 </span>{
+                <span class="cov8" title="148">deps.HistogramSenderRetryInterval = 97 * time.Second
 </span>        }
-        <span class="cov5" title="294">if deps.HistogramSenderInterval == 0 </span>{
-                <span class="cov5" title="159">deps.HistogramSenderInterval = 10 * time.Second
-</span>        }
-        <span class="cov5" title="294">if deps.HistogramSenderBackoff == 0 </span>{
-                <span class="cov5" title="159">deps.HistogramSenderBackoff = 15 * time.Second
-</span>        }
-        <span class="cov5" title="294">return deps</span>
+        <span class="cov10" title="279">return deps</span>
 }
 
 type osFileSystem struct{}
 
 func (osFileSystem) Open(name string) (fsFile, error) {
-        <span class="cov5" title="226">return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
+        <span class="cov9" title="215">return os.Open(name) // #nosec G304 -- production adapter intentionally opens configured runtime paths.
 </span>}
 
 func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (fsFile, error) {
@@ -2602,7 +2765,7 @@ func (osFileSystem) OpenFile(name string, flag int, perm os.FileMode) (fsFile, e
 </span>}
 
 func (osFileSystem) Create(name string) (fsFile, error) {
-        <span class="cov3" title="16">return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
+        <span class="cov5" title="14">return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
 </span>}
 
 func (osFileSystem) Chmod(name string, mode os.FileMode) error {
@@ -2610,41 +2773,37 @@ func (osFileSystem) Chmod(name string, mode os.FileMode) error {
 </span>}
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {
-        <span class="cov4" title="74">return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
-</span>}
-
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-        <span class="cov9" title="60012">return os.ReadDir(name)
+        <span class="cov7" title="73">return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 </span>}
 
 func (osFileSystem) Stat(name string) (os.FileInfo, error) {
-        <span class="cov5" title="232">return os.Stat(name)
+        <span class="cov9" title="228">return os.Stat(name)
 </span>}
 
 func (osFileSystem) MkdirAll(path string, perm os.FileMode) error {
-        <span class="cov2" title="10">return os.MkdirAll(path, perm)
+        <span class="cov2" title="3">return os.MkdirAll(path, perm)
 </span>}
 
 func (osFileSystem) Rename(oldpath, newpath string) error {
-        <span class="cov2" title="10">return os.Rename(oldpath, newpath)
+        <span class="cov2" title="2">return os.Rename(oldpath, newpath)
 </span>}
 
 func (osFileSystem) Remove(name string) error {
-        <span class="cov3" title="12">return os.Remove(name)
+        <span class="cov4" title="11">return os.Remove(name)
 </span>}
 
 type realClock struct{}
 
 func (realClock) Now() time.Time {
-        <span class="cov4" title="52">return time.Now()
+        <span class="cov7" title="43">return time.Now()
 </span>}
 
 func (realClock) After(d time.Duration) &lt;-chan time.Time {
-        <span class="cov2" title="6">return time.After(d)
+        <span class="cov2" title="3">return time.After(d)
 </span>}
 
 func (realClock) NewTicker(d time.Duration) ticker {
-        <span class="cov3" title="36">return realTicker{Ticker: time.NewTicker(d)}
+        <span class="cov6" title="28">return realTicker{Ticker: time.NewTicker(d)}
 </span>}
 
 type realTicker struct {
@@ -2652,17 +2811,17 @@ type realTicker struct {
 }
 
 func (rt realTicker) C() &lt;-chan time.Time {
-        <span class="cov10" title="62086">return rt.Ticker.C
+        <span class="cov7" title="62">return rt.Ticker.C
 </span>}
 
 type netListenerFactory struct{}
 
 func (netListenerFactory) Listen(network, address string) (net.Listener, error) {
-        <span class="cov2" title="5">return net.Listen(network, address)
+        <span class="cov3" title="5">return net.Listen(network, address)
 </span>}
 
 func (netListenerFactory) ListenTLS(network, address string, config *tls.Config) (net.Listener, error) {
-        <span class="cov1" title="2">return tls.Listen(network, address, config)
+        <span class="cov2" title="2">return tls.Listen(network, address, config)
 </span>}
 
 type realDnstapInputFactory struct{}
@@ -2671,17 +2830,17 @@ type realDnstapInputFactory struct{}
 // supersedes but returns the runner's own [socketDnstapInput], which adds
 // context cancellation and graceful close on top of the library behavior.
 func (realDnstapInputFactory) NewFrameStreamSockInput(listener net.Listener) dnstapInput {
-        <span class="cov2" title="6">return newSocketDnstapInput(listener)
+        <span class="cov3" title="6">return newSocketDnstapInput(listener)
 </span>}
 
 type pebbleSeenQnameStoreFactory struct{}
 
 func (pebbleSeenQnameStoreFactory) OpenSeenQnameStore(path string) (seenQnameStore, error) {
-        <span class="cov2" title="11">db, err := pebble.Open(path, &amp;pebble.Options{})
+        <span class="cov4" title="11">db, err := pebble.Open(path, &amp;pebble.Options{})
         if err != nil </span>{
                 <span class="cov0" title="0">return nil, err
 </span>        }
-        <span class="cov2" title="11">return &amp;pebbleSeenQnameStore{db: db}, nil</span>
+        <span class="cov4" title="11">return &amp;pebbleSeenQnameStore{db: db}, nil</span>
 }
 
 type pebbleSeenQnameStore struct {
@@ -2689,29 +2848,29 @@ type pebbleSeenQnameStore struct {
 }
 
 func (ps *pebbleSeenQnameStore) Has(qname string) (bool, error) {
-        <span class="cov2" title="8">_, closer, err := ps.db.Get([]byte(qname))
+        <span class="cov4" title="8">_, closer, err := ps.db.Get([]byte(qname))
         if err == nil </span>{
                 <span class="cov1" title="1">if err := closer.Close(); err != nil </span>{
                         <span class="cov0" title="0">return true, err
 </span>                }
                 <span class="cov1" title="1">return true, nil</span>
         }
-        <span class="cov2" title="7">if errors.Is(err, pebble.ErrNotFound) </span>{
-                <span class="cov2" title="7">return false, nil
+        <span class="cov4" title="7">if errors.Is(err, pebble.ErrNotFound) </span>{
+                <span class="cov4" title="7">return false, nil
 </span>        }
         <span class="cov0" title="0">return false, err</span>
 }
 
 func (ps *pebbleSeenQnameStore) MarkSeen(qname string, sync bool) error {
-        <span class="cov2" title="7">writeOpts := pebble.NoSync
+        <span class="cov4" title="7">writeOpts := pebble.NoSync
         if sync </span>{
                 <span class="cov0" title="0">writeOpts = pebble.Sync
 </span>        }
-        <span class="cov2" title="7">return ps.db.Set([]byte(qname), []byte{}, writeOpts)</span>
+        <span class="cov4" title="7">return ps.db.Set([]byte(qname), []byte{}, writeOpts)</span>
 }
 
 func (ps *pebbleSeenQnameStore) Close() error {
-        <span class="cov2" title="11">return ps.db.Close()
+        <span class="cov4" title="11">return ps.db.Close()
 </span>}
 
 type realHTTPServerRunner struct{}
@@ -2722,15 +2881,11 @@ func (realHTTPServerRunner) ListenAndServeHTTP(server *http.Server) error {
 
 type realAggregateSenderFactory struct{}
 
-func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error) {
-        <span class="cov1" title="3">return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, fs, clock)
+func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error) {
+        <span class="cov2" title="3">return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, clock)
 </span>}
 
 type realMQTTFactory struct{}
-
-func (realMQTTFactory) NewFileQueue(path, prefix, extension string) (*file.Queue, error) {
-        <span class="cov1" title="2">return file.New(path, prefix, extension)
-</span>}
 
 func (realMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
         <span class="cov0" title="0">return autopaho.NewConnection(ctx, cfg)
@@ -2741,23 +2896,23 @@ type realKeyMaterialLoader struct {
 }
 
 func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Certificate, error) {
-        <span class="cov3" title="33">certPath = filepath.Clean(certPath)
+        <span class="cov6" title="33">certPath = filepath.Clean(certPath)
         keyPath = filepath.Clean(keyPath)
 </span>
-        <span class="cov3" title="33">certPEMBlock, err := rkl.fs.ReadFile(certPath)
+        <span class="cov6" title="33">certPEMBlock, err := rkl.fs.ReadFile(certPath)
         if err != nil </span>{
-                <span class="cov3" title="20">return tls.Certificate{}, fmt.Errorf("read cert file %q: %w", certPath, err)
+                <span class="cov5" title="20">return tls.Certificate{}, fmt.Errorf("read cert file %q: %w", certPath, err)
 </span>        }
-        <span class="cov3" title="13">keyPEMBlock, err := rkl.fs.ReadFile(keyPath)
+        <span class="cov5" title="13">keyPEMBlock, err := rkl.fs.ReadFile(keyPath)
         if err != nil </span>{
-                <span class="cov1" title="2">return tls.Certificate{}, fmt.Errorf("read key file %q: %w", keyPath, err)
+                <span class="cov2" title="2">return tls.Certificate{}, fmt.Errorf("read key file %q: %w", keyPath, err)
 </span>        }
 
-        <span class="cov2" title="11">cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
+        <span class="cov4" title="11">cert, err := tls.X509KeyPair(certPEMBlock, keyPEMBlock)
         if err != nil </span>{
                 <span class="cov0" title="0">return tls.Certificate{}, fmt.Errorf("parse key pair %q/%q: %w", certPath, keyPath, err)
 </span>        }
-        <span class="cov2" title="11">return cert, nil</span>
+        <span class="cov4" title="11">return cert, nil</span>
 }
 
 // LoadEdDSAJWK loads a JWK from fileName and verifies it is an EdDSA
@@ -2770,13 +2925,13 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 // the HTTP signer's keyid and the MQTT topic/client ID are derived from it,
 // and a missing value would surface only as a downstream verification failure.
 func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) {
-        <span class="cov3" title="22">fileName = filepath.Clean(fileName)
+        <span class="cov5" title="21">fileName = filepath.Clean(fileName)
         keyFile, err := rkl.fs.ReadFile(fileName)
         if err != nil </span>{
-                <span class="cov2" title="9">return nil, err
+                <span class="cov4" title="9">return nil, err
 </span>        }
 
-        <span class="cov3" title="13">jwkKey, err := jwk.ParseKey(keyFile)
+        <span class="cov4" title="12">jwkKey, err := jwk.ParseKey(keyFile)
         if err != nil </span>{
                 <span class="cov1" title="1">return nil, err
 </span>        }
@@ -2785,41 +2940,41 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
         // always true here. Even if it were not, Crv reports an invalid curve
         // that fails the Ed25519/Ed448 check below, so the ok value can be
         // discarded.
-        <span class="cov3" title="12">var crv jwa.EllipticCurveAlgorithm
+        <span class="cov4" title="11">var crv jwa.EllipticCurveAlgorithm
         switch key := jwkKey.(type) </span>{
         case jwk.OKPPrivateKey:
-                <span class="cov2" title="11">crv, _ = key.Crv()</span>
+                <span class="cov4" title="10">crv, _ = key.Crv()</span>
         case jwk.OKPPublicKey:
                 <span class="cov1" title="1">crv, _ = key.Crv()</span>
         default:
                 <span class="cov0" title="0">return nil, fmt.Errorf("%w: key type %q", errNotEdDSAJWK, jwkKey.KeyType())</span>
         }
-        <span class="cov3" title="12">if crv != jwa.Ed25519() &amp;&amp; crv != jwa.Ed448() </span>{
-                <span class="cov1" title="2">return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
+        <span class="cov4" title="11">if crv != jwa.Ed25519() &amp;&amp; crv != jwa.Ed448() </span>{
+                <span class="cov2" title="2">return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
 </span>        }
 
-        <span class="cov2" title="10">if kid, ok := jwkKey.KeyID(); !ok || kid == "" </span>{
+        <span class="cov4" title="9">if kid, ok := jwkKey.KeyID(); !ok || kid == "" </span>{
                 <span class="cov1" title="1">return nil, errJWKMissingKeyID
 </span>        }
 
-        <span class="cov2" title="9">if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil </span>{
+        <span class="cov4" title="8">if err := jwkKey.Set(jwk.AlgorithmKey, jwa.EdDSA()); err != nil </span>{
                 <span class="cov0" title="0">return nil, err
 </span>        }
-        <span class="cov2" title="9">return jwkKey, nil</span>
+        <span class="cov4" title="8">return jwkKey, nil</span>
 }
 
 func (rkl realKeyMaterialLoader) LoadCertPool(fileName string) (*x509.CertPool, error) {
-        <span class="cov2" title="7">fileName = filepath.Clean(fileName)
+        <span class="cov4" title="7">fileName = filepath.Clean(fileName)
         cert, err := rkl.fs.ReadFile(fileName)
         if err != nil </span>{
                 <span class="cov1" title="1">return nil, err
 </span>        }
-        <span class="cov2" title="6">certPool := x509.NewCertPool()
+        <span class="cov3" title="6">certPool := x509.NewCertPool()
         ok := certPool.AppendCertsFromPEM(cert)
         if !ok </span>{
-                <span class="cov1" title="3">return nil, errAppendCertsFromPEM
+                <span class="cov2" title="3">return nil, errAppendCertsFromPEM
 </span>        }
-        <span class="cov1" title="3">return certPool, nil</span>
+        <span class="cov2" title="3">return certPool, nil</span>
 }
 
 type realDawgLoader struct {
@@ -2827,86 +2982,21 @@ type realDawgLoader struct {
 }
 
 func (rdl realDawgLoader) LoadDawgFile(dawgFile string) (dawg.Finder, time.Time, error) {
-        <span class="cov5" title="228">dawgFileInfo, err := rdl.fs.Stat(dawgFile)
+        <span class="cov9" title="228">dawgFileInfo, err := rdl.fs.Stat(dawgFile)
         if err != nil </span>{
                 <span class="cov1" title="1">return nil, time.Time{}, err
 </span>        }
 
-        <span class="cov5" title="227">if dawgFileInfo.Size() == 0 </span>{
+        <span class="cov9" title="227">if dawgFileInfo.Size() == 0 </span>{
                 <span class="cov1" title="1">return nil, time.Time{}, errEmptyDawgFile
 </span>        }
 
-        <span class="cov5" title="226">dawgFinder, err := dawg.Load(dawgFile)
+        <span class="cov9" title="226">dawgFinder, err := dawg.Load(dawgFile)
         if err != nil </span>{
                 <span class="cov0" title="0">return nil, time.Time{}, err
 </span>        }
 
-        <span class="cov5" title="224">return dawgFinder, dawgFileInfo.ModTime(), nil</span>
-}
-</pre>
-		
-		<pre class="file" id="file12" style="display: none">package runner
-
-import (
-        "context"
-        "errors"
-        "io/fs"
-        "path/filepath"
-        "strings"
-        "time"
-)
-
-const sentHistogramRetention = 24 * time.Hour
-
-func sentHistogramExpired(modTime, now time.Time) bool {
-        <span class="cov2" title="4">return now.Sub(modTime) &gt; sentHistogramRetention
-</span>}
-
-func (edm *DnstapMinimiser) diskCleaner(ctx context.Context, sentDir string) {
-        // We will scan the directory each tick for sent files to remove.
-
-        <span class="cov2" title="8">ticker := edm.deps.Clock.NewTicker(edm.deps.DiskCleanerInterval)
-        defer ticker.Stop()
-</span>
-<span class="cov2" title="8">timerLoop:
-        for </span>{
-                <span class="cov10" title="61008">select </span>{
-                case &lt;-ticker.C():
-                        <span class="cov9" title="61000">dirEntries, err := edm.deps.FileSystem.ReadDir(sentDir)
-                        if err != nil </span>{
-                                <span class="cov6" title="1000">if errors.Is(err, fs.ErrNotExist) </span>{
-                                        // The directory has not been created yet, this is OK
-                                        <span class="cov0" title="0">continue</span>
-                                }
-                                <span class="cov6" title="1000">edm.log.Error("histogramSender: unable to read sent dir", "error", err)
-                                continue</span>
-                        }
-                        <span class="cov9" title="60000">for _, dirEntry := range dirEntries </span>{
-                                <span class="cov1" title="1">if dirEntry.IsDir() </span>{
-                                        <span class="cov0" title="0">continue</span>
-                                }
-                                <span class="cov1" title="1">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span>{
-                                        <span class="cov1" title="1">fileInfo, err := dirEntry.Info()
-                                        if err != nil </span>{
-                                                <span class="cov0" title="0">edm.log.Error("diskCleaner: unable to get fileInfo for filename", "error", err, "filename", dirEntry.Name())
-                                                continue</span>
-                                        }
-
-                                        <span class="cov1" title="1">if sentHistogramExpired(fileInfo.ModTime(), edm.deps.Clock.Now()) </span>{
-                                                <span class="cov1" title="1">absPath := filepath.Join(sentDir, dirEntry.Name())
-                                                edm.log.Info("diskCleaner: removing file", "filename", absPath)
-                                                err = edm.deps.FileSystem.Remove(absPath)
-                                                if err != nil </span>{
-                                                        <span class="cov0" title="0">edm.log.Error("diskCleaner: unable to remove sent histogram file", "error", err)
-</span>                                                }
-                                        }
-                                }
-                        }
-                case &lt;-ctx.Done():
-                        <span class="cov2" title="8">break timerLoop</span>
-                }
-        }
-        <span class="cov2" title="8">edm.log.Info("exiting diskCleaner loop")</span>
+        <span class="cov9" title="224">return dawgFinder, dawgFileInfo.ModTime(), nil</span>
 }
 </pre>
 		
@@ -3215,12 +3305,11 @@ func (noOpDnstapLogger) Printf(string, ...interface{}) {<span class="cov1" title
 		<pre class="file" id="file14" style="display: none">package runner
 
 import (
+        "bytes"
         "context"
         "errors"
         "fmt"
         "io"
-        "io/fs"
-        "path/filepath"
         "strings"
         "time"
 
@@ -3254,7 +3343,7 @@ func (dsb *edmStatusBits) String() string {
 }
 
 func (dsb *edmStatusBits) set(flag edmStatusBits) {
-        <span class="cov7" title="17">*dsb = *dsb | flag
+        <span class="cov8" title="16">*dsb = *dsb | flag
 </span>}
 
 const (
@@ -3263,14 +3352,6 @@ const (
 
         // Always leave max at the end to signal unused bits
         edmStatusMax
-)
-
-// Histogram parquet files are named histogramFileBase + "-&lt;start&gt;_&lt;stop&gt;" +
-// parquetFileSuffix (see [buildParquetFilenames]); the same pair is used to
-// recognize histogram files in the outbox and sent directories.
-const (
-        histogramFileBase = "dns_histogram"
-        parquetFileSuffix = ".parquet"
 )
 
 // Histogram struct implementing description at https://github.com/dnstapir/datasets/blob/main/HistogramReport.md
@@ -3306,7 +3387,7 @@ type histogramData struct {
 }
 
 func getHllDefaults(explicitThreshold int) hll.Settings {
-        <span class="cov7" title="17">return hll.Settings{
+        <span class="cov8" title="16">return hll.Settings{
                 Log2m:             10,
                 Regwidth:          4,
                 ExplicitThreshold: explicitThreshold,
@@ -3314,127 +3395,127 @@ func getHllDefaults(explicitThreshold int) hll.Settings {
 </span>        }
 }
 
-func (edm *DnstapMinimiser) createHistogramFile(prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, outboxDir string) (string, error) {
-        <span class="cov2" title="2">startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime)
-</span>
-        <span class="cov2" title="2">absoluteTmpFileName, absoluteFileName := buildParquetFilenames(outboxDir, histogramFileBase, startTime, prevWellKnownDomainsData.rotationTime)
-</span>
-        <span class="cov2" title="2">absoluteTmpFileName = filepath.Clean(absoluteTmpFileName)
-</span>
-        <span class="cov2" title="2">name, err := edm.writeRotatedParquet("histogram", absoluteTmpFileName, absoluteFileName, func(w io.Writer) error </span>{
-                <span class="cov1" title="1">return edm.writeHistogramParquet(w, startTime, prevWellKnownDomainsData, labelLimit)
-</span>        })
-        <span class="cov2" title="2">if err != nil </span>{
-                <span class="cov1" title="1">return "", fmt.Errorf("createHistogramFile: %w", err)
+func (edm *DnstapMinimiser) sendHistogram(ctx context.Context, prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int, buf *bytes.Buffer) error {
+        <span class="cov7" title="11">if prevWellKnownDomainsData == nil </span>{
+                <span class="cov1" title="1">return nil
 </span>        }
-        <span class="cov1" title="1">return name, nil</span>
+        // gather data
+        <span class="cov7" title="10">startTime := intervalStartFromTimes(prevWellKnownDomainsData.startTime, prevWellKnownDomainsData.rotationTime).UTC()
+        duration := prevWellKnownDomainsData.rotationTime.Truncate(time.Second).Sub(startTime.Truncate(time.Second))
+</span>        // reset shared buffer
+        <span class="cov7" title="10">buf.Reset()
+</span>        // marshal histogram
+        <span class="cov7" title="10">err := edm.writeHistogramParquet(buf, startTime, prevWellKnownDomainsData, labelLimit)
+        if err != nil </span>{
+                <span class="cov0" title="0">return fmt.Errorf("sendHistogram: %w", err)
+</span>        }
+        // add a restrictive timeout to the sender
+        <span class="cov7" title="10">ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+        defer cancel()
+</span>        // send histogram
+        <span class="cov7" title="10">err = edm.aggregSend(ctx, buf, startTime, duration)
+        if err != nil </span>{
+                <span class="cov6" title="8">return fmt.Errorf("sendHistogram: %w", err)
+</span>        }
+        <span class="cov2" title="2">return nil</span>
 }
 
-func (edm *DnstapMinimiser) histogramWriter(labelLimit int, outboxDir string) {
-        <span class="cov5" title="7">edm.log.Info("histogramWriter: starting")
-</span>
-        <span class="cov5" title="7">for prevWellKnownDomainsData := range edm.histogramWriterCh </span>{
-                <span class="cov1" title="1">_, err := edm.createHistogramFile(prevWellKnownDomainsData, labelLimit, outboxDir)
-                if err != nil </span>{
-                        <span class="cov1" title="1">edm.log.Error("histogramWriter", "error", err.Error())
-</span>                }
+func (edm *DnstapMinimiser) aggregSend(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error {
+        // Make a copy of the struct under lock
+        // so the network communication from
+        // send() does not block aggregSender
+        // management.
+        <span class="cov7" title="10">edm.aggregSenderMutex.RLock()
+        as := edm.aggregSender
+        edm.aggregSenderMutex.RUnlock()
+        if as == nil </span>{
+                <span class="cov1" title="1">return errors.New("aggregSend: aggregate sender is not initialized")
+</span>        }
+        // send
+        <span class="cov6" title="9">return as.Send(ctx, buf, ts, duration)</span>
+}
 
+func (edm *DnstapMinimiser) histogramSender(ctx context.Context, labelLimit int) {
+        <span class="cov7" title="13">var buf bytes.Buffer
+</span>
+        // load configuration
+        <span class="cov7" title="13">disableHistogramSender := edm.getConfig().DisableHistogramSender
+</span>
+        // log state
+        <span class="cov7" title="13">switch disableHistogramSender </span>{
+        case true:
+                <span class="cov6" title="9">edm.log.Info("histogramSender: starting", "state", "disabled")</span>
+        case false:
+                <span class="cov4" title="4">edm.log.Info("histogramSender: starting", "state", "enabled")</span>
         }
-        <span class="cov4" title="5">edm.log.Info("histogramWriter: exiting loop")</span>
-}
 
-func (edm *DnstapMinimiser) histogramSender(ctx context.Context, outboxDir string, sentDir string) {
-        <span class="cov6" title="12">backoffDuration := edm.deps.HistogramSenderBackoff
+        // retry ticker
+        <span class="cov7" title="13">retryTicker := edm.deps.Clock.NewTicker(edm.deps.HistogramSenderRetryInterval)
+        defer retryTicker.Stop()
 </span>
-        // We will scan the outbox directory each tick for histogram parquet
-        // files to send
-        <span class="cov6" title="12">ticker := edm.deps.Clock.NewTicker(edm.deps.HistogramSenderInterval)
-        defer ticker.Stop()
-</span>
-        <span class="cov6" title="12">conf := edm.getConfig()
-</span>
-        <span class="cov6" title="12">stateString := "enabled"
-        if conf.DisableHistogramSender </span>{
-                <span class="cov5" title="8">stateString = "disabled"
-</span>        }
-
-        <span class="cov6" title="12">edm.log.Info("histogramSender: starting", "state", stateString)
-timerLoop:
+<span class="cov7" title="13">loop:
         for </span>{
-                <span class="cov10" title="44">select </span>{
-                case &lt;-ticker.C():
-                        <span class="cov9" title="33">if conf.DisableHistogramSender </span>{
-                                <span class="cov8" title="21">continue</span>
+                <span class="cov10" title="29">select </span>{
+                case prevWellKnownDomainsData, ok := &lt;-edm.histogramWriterCh:
+                        // handle primary queue
+
+                        // if channel closed =&gt; exit
+                        <span class="cov9" title="20">if !ok </span>{
+                                <span class="cov7" title="11">break loop</span>
                         }
-                        <span class="cov6" title="12">dirEntries, err := edm.deps.FileSystem.ReadDir(outboxDir)
+                        // if sender disabled =&gt; discard
+                        <span class="cov6" title="9">if disableHistogramSender </span>{
+                                <span class="cov3" title="3">continue loop</span>
+                        }
+                        // try sending the histogram, on error =&gt; try adding to retry queue
+                        <span class="cov5" title="6">err := edm.sendHistogram(ctx, prevWellKnownDomainsData, labelLimit, &amp;buf)
                         if err != nil </span>{
-                                <span class="cov0" title="0">if errors.Is(err, fs.ErrNotExist) </span>{
-                                        // The directory has not been created yet, this is OK
-                                        <span class="cov0" title="0">continue</span>
+                                // try queuing it for a retry
+                                <span class="cov3" title="3">select </span>{
+                                case edm.histogramRetryWriterCh &lt;- prevWellKnownDomainsData:
+                                        <span class="cov2" title="2">edm.log.Error("histogramSender", "error", err.Error(), "retry-queued", true)</span>
+                                default:
+                                        <span class="cov1" title="1">edm.log.Error("histogramSender", "error", err.Error(), "retry-queued", false)</span>
                                 }
-                                <span class="cov0" title="0">edm.log.Error("histogramSender: unable to read outbox dir", "error", err)
-                                continue</span>
                         }
-                        <span class="cov6" title="12">for _, dirEntry := range dirEntries </span>{
-                                <span class="cov6" title="9">if dirEntry.IsDir() </span>{
-                                        <span class="cov0" title="0">continue</span>
-                                }
-                                <span class="cov6" title="9">if strings.HasPrefix(dirEntry.Name(), histogramFileBase+"-") &amp;&amp; strings.HasSuffix(dirEntry.Name(), parquetFileSuffix) </span>{
-                                        <span class="cov6" title="9">startTS, stopTS, err := timestampsFromFilename(dirEntry.Name())
-                                        if err != nil </span>{
-                                                <span class="cov4" title="5">edm.log.Error("histogramSender: unable to parse timestamps from histogram filename", "error", err)
-                                                continue</span>
+                case &lt;-retryTicker.C():
+                        // handle retry queue
+                <span class="cov3" title="3">retryLoop:
+                        for </span>{
+                                <span class="cov7" title="12">select </span>{
+                                case prevWellKnownDomainsData := &lt;-edm.histogramRetryWriterCh:
+                                        // if sender disabled =&gt; discard
+                                        <span class="cov6" title="9">if disableHistogramSender </span>{
+                                                <span class="cov4" title="4">continue retryLoop</span>
                                         }
-                                        <span class="cov4" title="4">duration := stopTS.Sub(startTS)
-</span>
-                                        <span class="cov4" title="4">absPath := filepath.Join(outboxDir, dirEntry.Name())
-                                        absPathSent := filepath.Join(sentDir, dirEntry.Name())
-</span>
-                                        // Make a copy of the struct under lock
-                                        // so the network communication from
-                                        // send() does not block aggregSender
-                                        // management.
-                                        <span class="cov4" title="4">edm.aggregSenderMutex.RLock()
-                                        as := edm.aggregSender
-                                        edm.aggregSenderMutex.RUnlock()
-                                        if as == nil </span>{
-                                                <span class="cov0" title="0">edm.log.Error("histogramSender: aggregate sender is not initialized")
-                                                continue</span>
-                                        }
-                                        <span class="cov4" title="4">err = as.Send(ctx, absPath, startTS, duration)
+                                        // try sending the histogram, on error =&gt; discard
+                                        <span class="cov5" title="5">err := edm.sendHistogram(ctx, prevWellKnownDomainsData, labelLimit, &amp;buf)
                                         if err != nil </span>{
-                                                <span class="cov3" title="3">edm.log.Error("histogramSender: unable to send histogram file", "error", err, "backoff_duration", backoffDuration)
-                                                select </span>{
-                                                case &lt;-edm.deps.Clock.After(backoffDuration):<span class="cov1" title="1"></span>
-                                                case &lt;-ctx.Done():
-                                                        <span class="cov2" title="2">break timerLoop</span>
-                                                }
-                                                <span class="cov1" title="1">continue</span>
-                                        }
-                                        <span class="cov1" title="1">err = edm.renameFile(absPath, absPathSent)
-                                        if err != nil </span>{
-                                                <span class="cov0" title="0">edm.log.Error("histogramSender: unable to rename sent histogram file", "error", err)
+                                                <span class="cov5" title="5">edm.log.Error("histogramSender.retry", "error", err.Error())
 </span>                                        }
+                                default:
+                                        // return to normal activites if retry queue is empty
+                                        <span class="cov3" title="3">break retryLoop</span>
                                 }
                         }
                 case &lt;-edm.reloadHistogramSenderConfigCh:
-                        <span class="cov1" title="1">edm.log.Info("histogramSender: reloading config")
-                        newConf := edm.getConfig()
+                        // handle configuration change
+                        <span class="cov4" title="4">edm.log.Info("histogramSender: reloading config")
+                        newDisableHistogramSender := edm.getConfig().DisableHistogramSender
 </span>
-                        <span class="cov1" title="1">if conf.DisableHistogramSender != newConf.DisableHistogramSender </span>{
-                                <span class="cov1" title="1">if newConf.DisableHistogramSender </span>{
-                                        <span class="cov0" title="0">edm.log.Info("histogramSender: disabling histogram sender")
-</span>                                } else {
-                                        <span class="cov1" title="1">edm.log.Info("histogramSender: enabling histogram sender")
-</span>                                }
-
-                                <span class="cov1" title="1">conf = newConf</span>
+                        <span class="cov4" title="4">if disableHistogramSender != newDisableHistogramSender </span>{
+                                <span class="cov2" title="2">switch newDisableHistogramSender </span>{
+                                case true:
+                                        <span class="cov1" title="1">edm.log.Info("histogramSender: disabling histogram sender")</span>
+                                case false:
+                                        <span class="cov1" title="1">edm.log.Info("histogramSender: enabling histogram sender")</span>
+                                }
+                                <span class="cov2" title="2">disableHistogramSender = newDisableHistogramSender</span>
                         }
-                case &lt;-ctx.Done():
-                        <span class="cov6" title="10">break timerLoop</span>
                 }
         }
-        <span class="cov6" title="12">edm.log.Info("histogramSender: exiting loop")</span>
+
+        <span class="cov7" title="11">edm.log.Info("histogramSender: exiting loop")</span>
 }
 
 // Unfortunately the hll library does not expose what format
@@ -3469,18 +3550,18 @@ const (
 )
 
 func parseHllStorageType(hllBytes []byte) (hllStorageType, error) {
-        <span class="cov8" title="19">if len(hllBytes) == 0 </span>{
+        <span class="cov8" title="17">if len(hllBytes) == 0 </span>{
                 <span class="cov1" title="1">return 0, fmt.Errorf("parseHLLStorageType: empty HLL byte slice")
 </span>        }
-        <span class="cov7" title="18">version := hllBytes[0] &gt;&gt; hllVersionShift
+        <span class="cov8" title="16">version := hllBytes[0] &gt;&gt; hllVersionShift
 </span>        // Verify the HLL format is at the expected version so we do
         // not make the wrong assumptions about the meaning of the bytes
-        <span class="cov7" title="18">if version != supportedHLLVersion </span>{
+        <span class="cov8" title="16">if version != supportedHLLVersion </span>{
                 <span class="cov1" title="1">return 0, fmt.Errorf("parseHllStorageType: unexpected version: %d", version)
 </span>        }
-        <span class="cov7" title="17">storageType := hllStorageType(hllBytes[0] &amp; hllTypeMask)
+        <span class="cov8" title="15">storageType := hllStorageType(hllBytes[0] &amp; hllTypeMask)
 </span>
-        <span class="cov7" title="17">return storageType, nil</span>
+        <span class="cov8" title="15">return storageType, nil</span>
 }
 
 func (edm *DnstapMinimiser) writeHistogramParquet(output io.Writer, startTime time.Time, prevWellKnownDomainsData *wellKnownDomainsData, labelLimit int) error {
@@ -3491,67 +3572,67 @@ func (edm *DnstapMinimiser) writeHistogramParquet(output io.Writer, startTime ti
         // for the GC to reclaim once no reader references it, matching the
         // ignoredQuestions/ignoredClients atomic-reload policy.
 
-        <span class="cov5" title="6">snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
+        <span class="cov8" title="15">snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
         parquetWriter := parquet.NewGenericWriter[histogramData](output, parquet.Compression(snappyCodec))
 </span>
-        <span class="cov5" title="6">startTimeMicro := startTime.UnixMicro()
+        <span class="cov8" title="15">startTimeMicro := startTime.UnixMicro()
 </span>
-        <span class="cov5" title="6">for index, hGramData := range prevWellKnownDomainsData.m </span>{
-                <span class="cov6" title="9">domain, err := prevWellKnownDomainsData.dawgFinder.AtIndex(index)
+        <span class="cov8" title="15">for index, hGramData := range prevWellKnownDomainsData.m </span>{
+                <span class="cov6" title="8">domain, err := prevWellKnownDomainsData.dawgFinder.AtIndex(index)
                 if err != nil </span>{
                         <span class="cov1" title="1">return fmt.Errorf("writeHistogramParquet: unable to find DAWG index %d: %w", index, err)
 </span>                }
 
-                <span class="cov5" title="8">labels := dns.SplitDomainName(domain)
+                <span class="cov6" title="7">labels := dns.SplitDomainName(domain)
 </span>
                 // Setting the labels now when we are out of the hot path.
-                <span class="cov5" title="8">edm.setLabels(labels, labelLimit, &amp;hGramData.dnsLabels)
+                <span class="cov6" title="7">edm.setLabels(labels, labelLimit, &amp;hGramData.dnsLabels)
                 hGramData.StartTime = startTimeMicro
 </span>
-                <span class="cov5" title="8">hGramData.V4ClientCount = hGramData.v4ClientHLL.Cardinality()
+                <span class="cov6" title="7">hGramData.V4ClientCount = hGramData.v4ClientHLL.Cardinality()
                 hGramData.V6ClientCount = hGramData.v6ClientHLL.Cardinality()
 </span>
-                <span class="cov5" title="8">v4HLLBytes := hGramData.v4ClientHLL.ToBytes()
+                <span class="cov6" title="7">v4HLLBytes := hGramData.v4ClientHLL.ToBytes()
                 v4HLLType, err := parseHllStorageType(v4HLLBytes)
                 if err != nil </span>{
                         <span class="cov0" title="0">return fmt.Errorf("writeHistogramParquet: IPv4 HLL parsing failed: %w", err)
 </span>                }
 
-                <span class="cov5" title="8">v6HLLBytes := hGramData.v6ClientHLL.ToBytes()
+                <span class="cov6" title="7">v6HLLBytes := hGramData.v6ClientHLL.ToBytes()
                 v6HLLType, err := parseHllStorageType(v6HLLBytes)
                 if err != nil </span>{
                         <span class="cov0" title="0">return fmt.Errorf("writeHistogramParquet: IPv6 HLL parsing failed: %w", err)
 </span>                }
 
                 // Include bytes from our hll data structures if they are stored with a probabilistic storage type
-                <span class="cov5" title="8">if v4HLLType == hllSparse || v4HLLType == hllDense </span>{
+                <span class="cov6" title="7">if v4HLLType == hllSparse || v4HLLType == hllDense </span>{
                         <span class="cov3" title="3">hGramData.V4ClientCountHLLBytes = v4HLLBytes
 </span>                }
-                <span class="cov5" title="8">if v6HLLType == hllSparse || v6HLLType == hllDense </span>{
+                <span class="cov6" title="7">if v6HLLType == hllSparse || v6HLLType == hllDense </span>{
                         <span class="cov2" title="2">hGramData.V6ClientCountHLLBytes = v6HLLBytes
 </span>                }
 
-                <span class="cov5" title="8">_, err = parquetWriter.Write([]histogramData{*hGramData})
+                <span class="cov6" title="7">_, err = parquetWriter.Write([]histogramData{*hGramData})
                 if err != nil </span>{
                         <span class="cov0" title="0">return fmt.Errorf("writeHistogramParquet: unable to call Write() on parquet writer: %w", err)
 </span>                }
         }
 
-        <span class="cov4" title="5">err := parquetWriter.Close()
+        <span class="cov8" title="14">err := parquetWriter.Close()
         if err != nil </span>{
                 <span class="cov0" title="0">return fmt.Errorf("writeHistogramParquet: unable to call Close() on parquet writer: %w", err)
 </span>        }
 
-        <span class="cov4" title="5">return nil</span>
+        <span class="cov8" title="14">return nil</span>
 }
 
 func (edm *DnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMatch bool) *histogramData {
         // We leave the label0-9 fields set to nil here. Since this is in
         // the hot path of dealing with dnstap packets the less work we do the
         // better. They are filled in prior to writing out the parquet file.
-        <span class="cov6" title="12">hd := &amp;histogramData{}
+        <span class="cov7" title="11">hd := &amp;histogramData{}
 </span>
-        <span class="cov6" title="12">var err error
+        <span class="cov7" title="11">var err error
         hd.v4ClientHLL, err = hll.NewHll(hllSettings)
         if err != nil </span>{
                 <span class="cov0" title="0">edm.log.Error("unable to initialize IPv4 HLL", "error", err)
@@ -3559,22 +3640,22 @@ func (edm *DnstapMinimiser) newHistogramData(hllSettings hll.Settings, suffixMat
                 <span class="cov0" title="0">panic(err)</span>
         }
 
-        <span class="cov6" title="12">hd.v6ClientHLL, err = hll.NewHll(hllSettings)
+        <span class="cov7" title="11">hd.v6ClientHLL, err = hll.NewHll(hllSettings)
         if err != nil </span>{
                 <span class="cov0" title="0">edm.log.Error("unable to initialize IPv6 HLL", "error", err)
 </span>                // This is never expected to happen
                 <span class="cov0" title="0">panic(err)</span>
         }
 
-        <span class="cov6" title="12">esb := new(edmStatusBits)
+        <span class="cov7" title="11">esb := new(edmStatusBits)
         if suffixMatch </span>{
                 <span class="cov1" title="1">esb.set(edmStatusWellKnownWildcard)
 </span>        } else {
-                <span class="cov6" title="11">esb.set(edmStatusWellKnownExact)
+                <span class="cov7" title="10">esb.set(edmStatusWellKnownExact)
 </span>        }
-        <span class="cov6" title="12">hd.EDMStatusBits = uint64(*esb)
+        <span class="cov7" title="11">hd.EDMStatusBits = uint64(*esb)
 </span>
-        <span class="cov6" title="12">return hd</span>
+        <span class="cov7" title="11">return hd</span>
 }
 </pre>
 		
@@ -3753,7 +3834,7 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 }
 
 func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
-        <span class="cov6" title="1125">return edm.ignoredClientCIDRsParsed.Load()
+        <span class="cov6" title="1129">return edm.ignoredClientCIDRsParsed.Load()
 </span>}
 
 // dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is
@@ -3767,11 +3848,11 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
-        <span class="cov6" title="1165">ipset := edm.ignoredClientsIPSet.Load()
+        <span class="cov6" title="1169">ipset := edm.ignoredClientsIPSet.Load()
         if ipset == nil </span>{
-                <span class="cov6" title="475">return false
+                <span class="cov6" title="445">return false
 </span>        }
-        <span class="cov6" title="690">if !dt.QueryAddr.IsValid() </span>{
+        <span class="cov6" title="724">if !dt.QueryAddr.IsValid() </span>{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
                 // and ignore such packets as well while making noise in logs
@@ -3780,30 +3861,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
                 edm.promClientIPIgnoredError.Inc()
                 return true
 </span>        }
-        <span class="cov6" title="688">if ipset.Contains(dt.QueryAddr) </span>{
-                <span class="cov5" title="358">edm.promClientIPIgnored.Inc()
+        <span class="cov6" title="722">if ipset.Contains(dt.QueryAddr) </span>{
+                <span class="cov5" title="370">edm.promClientIPIgnored.Inc()
                 return true
 </span>        }
-        <span class="cov5" title="330">return false</span>
+        <span class="cov5" title="352">return false</span>
 }
 
 func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
-        <span class="cov10" title="53208">holder := edm.ignoredQuestions.Load()
+        <span class="cov10" title="42052">holder := edm.ignoredQuestions.Load()
         if holder == nil </span>{
-                <span class="cov9" title="22314">return false
+                <span class="cov9" title="22416">return false
 </span>        }
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov9" title="30894">for _, question := range msg.Question </span>{
-                <span class="cov9" title="30896">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+        <span class="cov9" title="19636">for _, question := range msg.Question </span>{
+                <span class="cov9" title="19638">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
                 if dawgIndex != dawgNotFound </span>{
-                        <span class="cov8" title="9494">edm.promQuestionNameIgnored.Inc()
+                        <span class="cov8" title="6283">edm.promQuestionNameIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov9" title="21400">return false</span>
+        <span class="cov9" title="13353">return false</span>
 }
 </pre>
 		
@@ -3984,13 +4065,12 @@ import (
         "fmt"
         "log/slog"
         "net/url"
-        "path/filepath"
         "runtime"
         "strings"
         "sync"
 
+        queue "github.com/dnstapir/edm/pkg/mqtt-queue"
         "github.com/eclipse/paho.golang/autopaho"
-        "github.com/eclipse/paho.golang/autopaho/queue/file"
         "github.com/eclipse/paho.golang/paho"
         "github.com/lestrrat-go/jwx/v3/jwk"
         "github.com/lestrrat-go/jwx/v3/jws"
@@ -4029,7 +4109,7 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
         <span class="cov1" title="1">pel.logger.Error(fmt.Sprintf(format, v...))
 </span>}
 
-func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16, localFileQueue *file.Queue) (autopaho.ClientConfig, error) {
+func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16) (autopaho.ClientConfig, error) {
         <span class="cov6" title="5">u, err := parseMQTTServerURL(server)
         if err != nil </span>{
                 <span class="cov1" title="1">return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
@@ -4042,6 +4122,7 @@ func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
                         GetClientCertificate: edm.mqttClientCertStore.getClientCertificate,
                         MinVersion:           tls.VersionTLS13,
                 },
+                Queue:          queue.NewRingQueue(8 * 1024),
                 KeepAlive:      mqttKeepAlive,
                 OnConnectionUp: func(*autopaho.ConnectionManager, *paho.Connack) </span>{ <span class="cov1" title="1">edm.log.Info("mqtt connection up") }</span>,
                 OnConnectError: func(err error) { <span class="cov1" title="1">edm.log.Error("error whilst attempting connection", "error", err) }</span>,
@@ -4061,11 +4142,6 @@ func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
                         },
                 },
         }
-
-        <span class="cov5" title="4">if localFileQueue != nil </span>{
-                <span class="cov3" title="2">edm.log.Info("using file based queue for MQTT messages")
-                cliCfg.Queue = localFileQueue
-</span>        }
 
         <span class="cov5" title="4">return cliCfg, nil</span>
 }
@@ -4095,7 +4171,7 @@ func parseMQTTServerURL(server string) (*url.URL, error) {
 // startMQTTPipeline launches N JWS sign workers and 1 paho publisher. The
 // sign workers parallelize CPU-bound JWS signing across cores while the lone
 // publisher preserves paho ConnectionManager's single-connection behavior.
-func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnectionManager, mqttJWK jwk.Key, usingFileQueue bool, signWorkers int) {
+func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnectionManager, mqttJWK jwk.Key, signWorkers int) {
         <span class="cov5" title="4">if signWorkers &lt;= 0 </span>{
                 <span class="cov0" title="0">signWorkers = 1
 </span>        }
@@ -4126,14 +4202,14 @@ func (edm *DnstapMinimiser) startMQTTPipeline(ctx context.Context, cm mqttConnec
 </span>        })
 
         <span class="cov5" title="4">edm.autopahoWg.Go(func() </span>{
-                <span class="cov5" title="4">edm.mqttPublishWorker(ctx, cm, topic, usingFileQueue)
+                <span class="cov5" title="4">edm.mqttPublishWorker(ctx, cm, topic)
 </span>        })
 }
 
 // mqttSignWorker drains mqttPubCh, JWS-signs each message, and forwards to
 // mqttSignedCh. Exits when mqttPubCh is closed.
 func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, mqttJWK jwk.Key) {
-        <span class="cov9" title="14">for unsignedMsg := range edm.mqttPubCh </span>{
+        <span class="cov10" title="14">for unsignedMsg := range edm.mqttPubCh </span>{
                 // The signing algorithm is read from the key for each message.
                 // A key without an algorithm cannot be used to sign, so the
                 // message is logged and skipped rather than aborting the worker.
@@ -4142,13 +4218,13 @@ func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, mqttJWK jwk.Key)
                         <span class="cov1" title="1">edm.log.Error("mqttSignWorker: skipping message, JWK has no algorithm set")
                         continue</span>
                 }
-                <span class="cov7" title="8">signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(alg, mqttJWK))
+                <span class="cov8" title="8">signedMsg, err := jws.Sign(unsignedMsg, jws.WithJSON(), jws.WithKey(alg, mqttJWK))
                 if err != nil </span>{
                         <span class="cov1" title="1">edm.log.Error("mqttSignWorker: failed to create JWS message", "error", err)
                         continue</span>
                 }
                 <span class="cov7" title="7">select </span>{
-                case edm.mqttSignedCh &lt;- signedMsg:<span class="cov6" title="6"></span>
+                case edm.mqttSignedCh &lt;- signedMsg:<span class="cov7" title="6"></span>
                 case &lt;-ctx.Done():
                         <span class="cov1" title="1">return</span>
                 }
@@ -4158,27 +4234,16 @@ func (edm *DnstapMinimiser) mqttSignWorker(ctx context.Context, mqttJWK jwk.Key)
 // mqttPublishWorker is the single goroutine that talks to paho. Single-writer
 // matches paho's ConnectionManager expectations; signing remains parallel
 // upstream while broker back-pressure is contained to this publisher.
-func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string, usingFileQueue bool) {
-        <span class="cov8" title="9">var (
+func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnectionManager, topic string) {
+        <span class="cov7" title="6">var (
                 signedMsg []byte
                 ok        bool
         )
         for </span>{
-                // We only need to wait for a server connection if we have no
-                // local queue. Otherwise we can just start appending messages
-                // to disk.
-                <span class="cov10" title="16">if !usingFileQueue </span>{
-                        <span class="cov8" title="11">err := cm.AwaitConnection(ctx)
-                        if err != nil </span>{ // Should only happen when context is cancelled
-                                <span class="cov1" title="1">edm.log.Error("publisher done", "AwaitConnection", err)
-                                return
-</span>                        }
-                }
-
-                <span class="cov9" title="15">select </span>{
+                <span class="cov9" title="11">select </span>{
                 case signedMsg, ok = &lt;-edm.mqttSignedCh:
-                        <span class="cov9" title="13">if !ok </span>{
-                                <span class="cov6" title="6">edm.log.Info("mqttPublishWorker: signed queue closed, exiting")
+                        <span class="cov8" title="9">if !ok </span>{
+                                <span class="cov5" title="4">edm.log.Info("mqttPublishWorker: signed queue closed, exiting")
                                 return
 </span>                        }
                 case &lt;-ctx.Done():
@@ -4186,40 +4251,22 @@ func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnec
                         return</span>
                 }
 
-                <span class="cov7" title="7">if usingFileQueue </span>{
-                        <span class="cov3" title="2">err := cm.PublishViaQueue(ctx, &amp;autopaho.QueuePublish{
-                                Publish: &amp;paho.Publish{
-                                        QoS:     0,
-                                        Topic:   topic,
-                                        Payload: signedMsg,
-                                },
-                        })
-                        if err != nil </span>{
-                                <span class="cov0" title="0">edm.log.Error("error writing message to queue", "error", err)
-</span>                        }
-                } else {
-                        <span class="cov6" title="5">pr, err := cm.Publish(ctx, &amp;paho.Publish{
+                <span class="cov6" title="5">err := cm.PublishViaQueue(ctx, &amp;autopaho.QueuePublish{
+                        Publish: &amp;paho.Publish{
                                 QoS:     0,
                                 Topic:   topic,
                                 Payload: signedMsg,
-                        })
-                        if err != nil </span>{
-                                <span class="cov1" title="1">edm.log.Error("error publishing", "error", err)
-</span>                        } else <span class="cov5" title="4">if pr != nil &amp;&amp; pr.ReasonCode != 0 &amp;&amp; pr.ReasonCode != 16 </span>{
-                                // pr is only non-nil for QoS 1 and up;
-                                // 16 = "no subscribers" which is fine.
-                                <span class="cov1" title="1">edm.log.Info("reason code received", "reason_code", pr.ReasonCode)
-</span>                        }
-                        <span class="cov6" title="5">if edm.debug </span>{
-                                <span class="cov0" title="0">edm.log.Info("sent message", "content", string(signedMsg))
-</span>                        }
-                }
+                        },
+                })
+                if err != nil </span>{
+                        <span class="cov0" title="0">edm.log.Error("error writing message to queue", "error", err)
+</span>                }
 
-                <span class="cov7" title="7">select </span>{
+                <span class="cov6" title="5">select </span>{
                 case &lt;-ctx.Done():
                         <span class="cov0" title="0">edm.log.Info("publisher done")
                         return</span>
-                default:<span class="cov7" title="7"></span>
+                default:<span class="cov6" title="5"></span>
                 }
         }
 }
@@ -4229,36 +4276,21 @@ func (edm *DnstapMinimiser) mqttPublishWorker(ctx context.Context, cm mqttConnec
 // decide how to react (Run terminates the process). This mirrors the
 // error-returning style of setupHistogramSender.
 func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
-        <span class="cov7" title="7">conf := edm.getConfig()
+        <span class="cov7" title="6">conf := edm.getConfig()
 </span>
-        <span class="cov7" title="7">mqttJWK, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.MQTTSigningKeyFile)
+        <span class="cov7" title="6">mqttJWK, err := edm.deps.KeyMaterialLoader.LoadEdDSAJWK(conf.MQTTSigningKeyFile)
         if err != nil </span>{
                 <span class="cov3" title="2">return fmt.Errorf("setupMQTT: unable to parse jwk from 'mqtt-signing-key-file': %w", err)
 </span>        }
 
         // Leaving these nil will use the OS default CA certs
-        <span class="cov6" title="5">var mqttCACertPool *x509.CertPool
+        <span class="cov5" title="4">var mqttCACertPool *x509.CertPool
 </span>
-        <span class="cov6" title="5">if conf.MQTTCAFile != "" </span>{
+        <span class="cov5" title="4">if conf.MQTTCAFile != "" </span>{
                 // Setup CA cert for validating the MQTT connection
                 <span class="cov1" title="1">mqttCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.MQTTCAFile)
                 if err != nil </span>{
                         <span class="cov1" title="1">return fmt.Errorf("setupMQTT: failed to create CA cert pool for '--mqtt-ca-file': %w", err)
-</span>                }
-        }
-
-        <span class="cov5" title="4">var mqttFileQueue *file.Queue
-        if !conf.DisableMQTTFilequeue </span>{
-                <span class="cov4" title="3">mqttQueueDir := filepath.Join(conf.DataDir, "mqtt", "queue")
-</span>
-                <span class="cov4" title="3">err = edm.deps.FileSystem.MkdirAll(mqttQueueDir, 0o750)
-                if err != nil </span>{
-                        <span class="cov1" title="1">return fmt.Errorf("setupMQTT: unable to create MQTT queue dir %q: %w", mqttQueueDir, err)
-</span>                }
-
-                <span class="cov3" title="2">mqttFileQueue, err = edm.deps.MQTTFactory.NewFileQueue(filepath.Join(conf.DataDir, "mqtt", "queue"), "queue", ".msg")
-                if err != nil </span>{
-                        <span class="cov0" title="0">return fmt.Errorf("setupMQTT: unable to init MQTT queue file based queue: %w", err)
 </span>                }
         }
 
@@ -4267,7 +4299,7 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 </span>
         <span class="cov4" title="3">edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
 </span>
-        <span class="cov4" title="3">autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive, mqttFileQueue)
+        <span class="cov4" title="3">autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive)
         if err != nil </span>{
                 <span class="cov0" title="0">return fmt.Errorf("setupMQTT: unable to create autopaho config: %w", err)
 </span>        }
@@ -4282,7 +4314,7 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
         if signWorkers &lt;= 0 </span>{
                 <span class="cov3" title="2">signWorkers = runtime.GOMAXPROCS(0)
 </span>        }
-        <span class="cov3" title="2">edm.startMQTTPipeline(ctx, autopahoCm, mqttJWK, mqttFileQueue != nil, signWorkers)
+        <span class="cov3" title="2">edm.startMQTTPipeline(ctx, autopahoCm, mqttJWK, signWorkers)
 </span>
         <span class="cov3" title="2">return nil</span>
 }
@@ -4330,23 +4362,23 @@ import (
 // concurrent rotations in log lines (e.g. "session" or "histogram"). Returns
 // finalName on success.
 func (edm *DnstapMinimiser) writeRotatedParquet(label, tmpName, finalName string, write func(io.Writer) error) (string, error) {
-        <span class="cov8" title="11">edm.log.Info("writing out "+label+" file", "filename", tmpName)
+        <span class="cov7" title="9">edm.log.Info("writing out "+label+" file", "filename", tmpName)
 </span>
-        <span class="cov8" title="11">outFile, err := edm.createFile(tmpName)
+        <span class="cov7" title="9">outFile, err := edm.createFile(tmpName)
         if err != nil </span>{
-                <span class="cov4" title="3">return "", fmt.Errorf("unable to open %s file: %w", label, err)
+                <span class="cov3" title="2">return "", fmt.Errorf("unable to open %s file: %w", label, err)
 </span>        }
-        <span class="cov7" title="8">fileOpen := true
+        <span class="cov7" title="7">fileOpen := true
         writeFailed := false
         defer func() </span>{
                 // Closing a *os.File twice returns an error, so only do it if
                 // we have not already tried to close it.
-                <span class="cov7" title="8">if fileOpen </span>{
+                <span class="cov7" title="7">if fileOpen </span>{
                         <span class="cov4" title="3">if err := outFile.Close(); err != nil </span>{
                                 <span class="cov1" title="1">edm.log.Error("unable to do deferred close of "+label+" outFile", "error", err)
 </span>                        }
                 }
-                <span class="cov7" title="8">if writeFailed </span>{
+                <span class="cov7" title="7">if writeFailed </span>{
                         <span class="cov5" title="4">edm.log.Info("cleaning up "+label+" file because write failed", "filename", outFile.Name())
                         if err := edm.deps.FileSystem.Remove(outFile.Name()); err != nil </span>{
                                 <span class="cov1" title="1">edm.log.Error("unable to remove "+label+" outFile", "error", err, "filename", outFile.Name())
@@ -4354,141 +4386,82 @@ func (edm *DnstapMinimiser) writeRotatedParquet(label, tmpName, finalName string
                 }
         }()
 
-        <span class="cov7" title="8">if err := write(outFile); err != nil </span>{
+        <span class="cov7" title="7">if err := write(outFile); err != nil </span>{
                 <span class="cov4" title="3">writeFailed = true
                 return "", fmt.Errorf("writing parquet data failed: %w", err)
 </span>        }
 
         // We need to close the file before renaming it.
-        <span class="cov5" title="5">err = outFile.Close()
+        <span class="cov5" title="4">err = outFile.Close()
 </span>        // At this point we do not want the defer to close the file for us when returning.
-        <span class="cov5" title="5">fileOpen = false
+        <span class="cov5" title="4">fileOpen = false
         if err != nil </span>{
                 <span class="cov1" title="1">writeFailed = true
                 return "", fmt.Errorf("unable to call Close() on file: %w", err)
 </span>        }
 
         // Atomically rename the file to its real name so it can be picked up downstream.
-        <span class="cov5" title="4">edm.log.Info("renaming "+label+" file", "from", tmpName, "to", finalName)
+        <span class="cov4" title="3">edm.log.Info("renaming "+label+" file", "from", tmpName, "to", finalName)
         if err := edm.deps.FileSystem.Rename(tmpName, finalName); err != nil </span>{
                 <span class="cov1" title="1">return "", fmt.Errorf("unable to rename output file: %w", err)
 </span>        }
-        <span class="cov4" title="3">return finalName, nil</span>
-}
-
-func (edm *DnstapMinimiser) renameFile(src string, dst string) error {
-        <span class="cov7" title="8">dstDir := filepath.Dir(dst)
-</span>
-        // We are prepared for the destination directory not existing and will
-        // create it if needed and retry the rename in this case.
-        <span class="cov7" title="8">for </span>{
-                <span class="cov8" title="11">err := edm.deps.FileSystem.Rename(src, dst)
-                if err == nil </span>{
-                        // Rename went well, we are done
-                        <span class="cov4" title="3">return nil
-</span>                }
-
-                <span class="cov7" title="8">if errors.Is(err, fs.ErrNotExist) </span>{
-                        <span class="cov6" title="7">if _, statErr := edm.deps.FileSystem.Stat(dstDir); statErr == nil </span>{
-                                <span class="cov3" title="2">return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
-</span>                        } else <span class="cov5" title="5">if !errors.Is(statErr, fs.ErrNotExist) </span>{
-                                <span class="cov1" title="1">return fmt.Errorf("renameFile: unable to stat destination dir: %s: %w", dstDir, statErr)
-</span>                        }
-                        // If the destination directory does not exist we will
-                        // need to create it and then retry the Rename() in the
-                        // next iteration of the loop.
-                        <span class="cov5" title="4">err = edm.deps.FileSystem.MkdirAll(dstDir, 0o750)
-                        if err != nil </span>{
-                                <span class="cov1" title="1">return fmt.Errorf("renameFile: unable to create destination dir: %s: %w", dstDir, err)
-</span>                        }
-                        <span class="cov4" title="3">edm.log.Info("renameFile: created directory", "dir", dstDir)</span>
-                } else {
-                        // Some other error occured
-                        <span class="cov1" title="1">return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
-</span>                }
-        }
+        <span class="cov3" title="2">return finalName, nil</span>
 }
 
 func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) {
-        <span class="cov9" title="16">dstDir := filepath.Dir(dst)
+        <span class="cov9" title="14">dstDir := filepath.Dir(dst)
 </span>
         // Make gosec happy
-        <span class="cov9" title="16">dst = filepath.Clean(dst)
+        <span class="cov9" title="14">dst = filepath.Clean(dst)
 </span>
         // We are prepared for the destination directory not existing and will
         // create it if needed and retry the creation in this case.
-        <span class="cov9" title="16">for </span>{
-                <span class="cov10" title="20">outFile, err := edm.deps.FileSystem.Create(dst)
+        <span class="cov9" title="14">for </span>{
+                <span class="cov10" title="17">outFile, err := edm.deps.FileSystem.Create(dst)
                 if err == nil </span>{
                         // Creation went well, we are done
-                        <span class="cov7" title="10">return outFile, nil
+                        <span class="cov7" title="9">return outFile, nil
 </span>                }
 
-                <span class="cov7" title="10">if errors.Is(err, fs.ErrNotExist) </span>{
+                <span class="cov7" title="8">if errors.Is(err, fs.ErrNotExist) </span>{
                         // If the destination directory does not exist we will
                         // need to create it and then retry the file Create()
                         // the next iteration of the loop.
-                        <span class="cov5" title="5">err = edm.deps.FileSystem.MkdirAll(dstDir, 0o750)
+                        <span class="cov5" title="4">err = edm.deps.FileSystem.MkdirAll(dstDir, 0o750)
                         if err != nil </span>{
                                 <span class="cov1" title="1">return nil, fmt.Errorf("createFile: unable to create destination dir: %s: %w", dstDir, err)
 </span>                        }
-                        <span class="cov5" title="4">edm.log.Info("createFile: created directory", "dir", dstDir)</span>
+                        <span class="cov4" title="3">edm.log.Info("createFile: created directory", "dir", dstDir)</span>
                 } else {
                         // Some other error occured
-                        <span class="cov5" title="5">return nil, fmt.Errorf("createFile: unable to create file, dst: %s: %w", dst, err)
+                        <span class="cov5" title="4">return nil, fmt.Errorf("createFile: unable to create file, dst: %s: %w", dst, err)
 </span>                }
         }
-}
-
-func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) {
-        // expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
-        <span class="cov9" title="16">trimmedName := strings.TrimSuffix(name, ".parquet")
-        nameParts := strings.SplitN(trimmedName, "-", 2)
-        if len(nameParts) != 2 </span>{
-                <span class="cov1" title="1">err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
-                return
-</span>        }
-        <span class="cov9" title="15">times := strings.Split(nameParts[1], "_")
-        if len(times) != 2 </span>{
-                <span class="cov6" title="6">err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
-                return
-</span>        }
-        <span class="cov7" title="9">startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
-        if err != nil </span>{
-                <span class="cov3" title="2">err = fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
-                return
-</span>        }
-        <span class="cov6" title="7">stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
-        if err != nil </span>{
-                <span class="cov3" title="2">err = fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
-                return
-</span>        }
-        <span class="cov5" title="5">return</span>
 }
 
 func buildParquetFilenames(baseDir string, baseName string, timeStart time.Time, timeStop time.Time) (string, string) {
         // Use timestamp for files, replace ":" with "-" to not have to escape
         // characters in the shell, e.g: 2009-11-10T23-00-00Z
-        <span class="cov5" title="5">startTS := timestampToFileString(timeStart.UTC())
+        <span class="cov4" title="3">startTS := timestampToFileString(timeStart.UTC())
         stopTS := timestampToFileString(timeStop.UTC())
-        fileName := fmt.Sprintf("%s-%s_%s%s", baseName, startTS, stopTS, parquetFileSuffix)
+        fileName := fmt.Sprintf("%s-%s_%s.parquet", baseName, startTS, stopTS)
 </span>
         // Write output to a .tmp file so we can atomically rename it to the real
         // name when the file has been written in full
-        <span class="cov5" title="5">tmpFileName := fileName + ".tmp"
+        <span class="cov4" title="3">tmpFileName := fileName + ".tmp"
 </span>
-        <span class="cov5" title="5">absoluteFileName := filepath.Join(baseDir, fileName)
+        <span class="cov4" title="3">absoluteFileName := filepath.Join(baseDir, fileName)
         absoluteTmpFileName := filepath.Join(baseDir, tmpFileName)
 </span>
-        <span class="cov5" title="5">return absoluteTmpFileName, absoluteFileName
+        <span class="cov4" title="3">return absoluteTmpFileName, absoluteFileName
 </span>}
 
 func timestampToFileString(ts time.Time) string {
         // Use timestamp for files, replace ":" with "-" to not have to escape
         // characters in the shell, e.g: 2009-11-10T23-00-00Z
-        <span class="cov8" title="11">timeString := strings.ReplaceAll(ts.Format(time.RFC3339), ":", "-")
+        <span class="cov7" title="7">timeString := strings.ReplaceAll(ts.Format(time.RFC3339), ":", "-")
 </span>
-        <span class="cov8" title="11">return timeString
+        <span class="cov7" title="7">return timeString
 </span>}
 </pre>
 		
@@ -4824,8 +4797,8 @@ type dnstapMinimiserOptions struct {
 
 // WithLoggerLevel sets the mutable log level used by [DnstapMinimiser.Run].
 func WithLoggerLevel(loggerLevel *slog.LevelVar) DnstapMinimiserOption {
-        <span class="cov1" title="2">return func(options *dnstapMinimiserOptions) </span>{
-                <span class="cov1" title="2">options.loggerLevel = loggerLevel
+        <span class="cov2" title="2">return func(options *dnstapMinimiserOptions) </span>{
+                <span class="cov2" title="2">options.loggerLevel = loggerLevel
 </span>        }
 }
 
@@ -4833,8 +4806,8 @@ func WithLoggerLevel(loggerLevel *slog.LevelVar) DnstapMinimiserOption {
 //
 // Nil fields in deps are filled with production implementations.
 func withDependencies(deps dependencies) DnstapMinimiserOption {
-        <span class="cov7" title="136">return func(options *dnstapMinimiserOptions) </span>{
-                <span class="cov7" title="136">options.deps = deps
+        <span class="cov9" title="132">return func(options *dnstapMinimiserOptions) </span>{
+                <span class="cov9" title="132">options.deps = deps
 </span>        }
 }
 
@@ -4844,21 +4817,21 @@ func withDependencies(deps dependencies) DnstapMinimiserOption {
 // ctx is cancelled after startup, workers drain in shutdown order and Run
 // returns nil.
 func (edm *DnstapMinimiser) Run(ctx context.Context) error {
-        <span class="cov4" title="17">if ctx == nil </span>{
+        <span class="cov6" title="17">if ctx == nil </span>{
                 <span class="cov1" title="1">return ErrNilRunContext
 </span>        }
 
-        <span class="cov4" title="16">if !edm.state.CompareAndSwap(runStateIdle, runStateRunning) </span>{
-                <span class="cov1" title="2">if edm.state.Load() == runStateRunning </span>{
+        <span class="cov6" title="16">if !edm.state.CompareAndSwap(runStateIdle, runStateRunning) </span>{
+                <span class="cov2" title="2">if edm.state.Load() == runStateRunning </span>{
                         <span class="cov1" title="1">return ErrDnstapMinimiserRunning
 </span>                }
                 <span class="cov1" title="1">return ErrDnstapMinimiserAlreadyRun</span>
         }
 
-        <span class="cov4" title="14">ctx, stop := context.WithCancel(ctx)
+        <span class="cov5" title="14">ctx, stop := context.WithCancel(ctx)
         var configUpdaterWg sync.WaitGroup
         defer func() </span>{
-                <span class="cov4" title="14">stop()
+                <span class="cov5" title="14">stop()
                 configUpdaterWg.Wait()
                 edm.state.Store(runStateDone)
 </span>        }()
@@ -4871,18 +4844,18 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
         // Create startConf for some initial setup. Other edm methods that need
         // to read the config should call edm.getConfig() internally so they
         // get the latest config.
-        <span class="cov4" title="14">startConf := edm.getConfig()
+        <span class="cov5" title="14">startConf := edm.getConfig()
 </span>
-        <span class="cov4" title="14">if startConf.DebugEnableBlockProfiling </span>{
+        <span class="cov5" title="14">if startConf.DebugEnableBlockProfiling </span>{
                 <span class="cov0" title="0">edm.log.Info("enabling blocking profiling")
                 runtime.SetBlockProfileRate(int(time.Millisecond))
 </span>        }
-        <span class="cov4" title="14">if startConf.DebugEnableMutexProfiling </span>{
+        <span class="cov5" title="14">if startConf.DebugEnableMutexProfiling </span>{
                 <span class="cov0" title="0">edm.log.Info("enabling mutex profiling")
                 runtime.SetMutexProfileFraction(100)
 </span>        }
 
-        <span class="cov4" title="14">if startConf.Debug </span>{
+        <span class="cov5" title="14">if startConf.Debug </span>{
                 <span class="cov0" title="0">if edm.loggerLevel != nil </span>{
                         <span class="cov0" title="0">edm.loggerLevel.Set(slog.LevelDebug)
 </span>                }
@@ -4890,40 +4863,40 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 
         // Clear any DAWG copies orphaned by a previous process before the first
         // staged load below reads from the staging directory.
-        <span class="cov4" title="14">if err := edm.prepareDawgStaging(); err != nil </span>{
+        <span class="cov5" title="14">if err := edm.prepareDawgStaging(); err != nil </span>{
                 <span class="cov0" title="0">return fmt.Errorf("unable to prepare DAWG staging directory: %w", err)
 </span>        }
 
-        <span class="cov4" title="14">if err := edm.setIgnoredClientIPs(); err != nil </span>{
+        <span class="cov5" title="14">if err := edm.setIgnoredClientIPs(); err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("unable to configure ignored client IPs: %w", err)
 </span>        }
 
-        <span class="cov4" title="13">if err := edm.setIgnoredQuestionNames(); err != nil </span>{
+        <span class="cov5" title="13">if err := edm.setIgnoredQuestionNames(); err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("unable to configure ignored question names: %w", err)
 </span>        }
 
         // Configuration is reloaded on SIGHUP (systemctl reload). The channel
         // buffer of 1 combined with signal.Notify's non-blocking send coalesces
         // signals arriving while a reload is already in progress.
-        <span class="cov4" title="12">hupCh := make(chan os.Signal, 1)
+        <span class="cov5" title="12">hupCh := make(chan os.Signal, 1)
         signal.Notify(hupCh, syscall.SIGHUP)
         defer signal.Stop(hupCh)
 </span>
-        <span class="cov4" title="12">configUpdaterWg.Go(func() </span>{ <span class="cov4" title="12">configUpdater(ctx, hupCh, edm) }</span>)
+        <span class="cov5" title="12">configUpdaterWg.Go(func() </span>{ <span class="cov5" title="12">configUpdater(ctx, hupCh, edm) }</span>)
 
-        <span class="cov4" title="12">pdbDir := filepath.Join(startConf.DataDir, "pebble")
+        <span class="cov5" title="12">pdbDir := filepath.Join(startConf.DataDir, "pebble")
         seenStore, err := edm.deps.SeenQnameStoreFactory.OpenSeenQnameStore(pdbDir)
         if err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("unable to open pebble database %q: %w", pdbDir, err)
 </span>        }
-        <span class="cov4" title="11">defer func() </span>{
-                <span class="cov4" title="11">if err := seenStore.Close(); err != nil </span>{
+        <span class="cov5" title="11">defer func() </span>{
+                <span class="cov5" title="11">if err := seenStore.Close(); err != nil </span>{
                         <span class="cov0" title="0">edm.log.Error("unable to close pebble database", "error", err)
 </span>                }
         }()
 
-        <span class="cov4" title="11">if !startConf.DisableHistogramSender </span>{
-                <span class="cov1" title="2">if err := edm.loadHTTPClientCert(); err != nil </span>{
+        <span class="cov5" title="11">if !startConf.DisableHistogramSender </span>{
+                <span class="cov2" title="2">if err := edm.loadHTTPClientCert(); err != nil </span>{
                         <span class="cov1" title="1">return fmt.Errorf("unable to load x509 HTTP client cert: %w", err)
 </span>                }
 
@@ -4932,10 +4905,10 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 </span>                }
         }
 
-        <span class="cov3" title="9">var mqttCtx context.Context
+        <span class="cov5" title="9">var mqttCtx context.Context
         var mqttCancel context.CancelFunc
         if !startConf.DisableMQTT </span>{
-                <span class="cov1" title="2">if err := edm.loadMQTTClientCert(); err != nil </span>{
+                <span class="cov2" title="2">if err := edm.loadMQTTClientCert(); err != nil </span>{
                         <span class="cov0" title="0">return fmt.Errorf("unable to load x509 mqtt client cert: %w", err)
 </span>                }
 
@@ -4945,7 +4918,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
                 // (see the shutdown ordering above). The pipeline is stopped by the
                 // explicit mqttCancel() on the shutdown path below; the deferred
                 // mqttCancel() covers the error returns in between.
-                <span class="cov1" title="2">mqttCtx, mqttCancel = context.WithCancel(context.Background())
+                <span class="cov2" title="2">mqttCtx, mqttCancel = context.WithCancel(context.Background())
                 if err := edm.setupMQTT(mqttCtx); err != nil </span>{
                         <span class="cov1" title="1">mqttCancel()
                         return fmt.Errorf("unable to setup mqtt: %w", err)
@@ -4953,12 +4926,12 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
                 <span class="cov1" title="1">defer mqttCancel()</span>
         }
 
-        <span class="cov3" title="8">dti, err := edm.setupDnstapInput(edm.log, startConf)
+        <span class="cov4" title="8">dti, err := edm.setupDnstapInput(edm.log, startConf)
         if err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("unable to setup dnstap input: %w", err)
 </span>        }
-        <span class="cov3" title="7">defer func() </span>{
-                <span class="cov3" title="7">if err := dti.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
+        <span class="cov4" title="7">defer func() </span>{
+                <span class="cov4" title="7">if err := dti.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
                         <span class="cov0" title="0">edm.log.Error("Run: dnstap input close error", "error", err)
 </span>                }
         }()
@@ -4967,29 +4940,29 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
         // domain list yet we have seen since we started. To limit the
         // possibility of unbounded memory usage we use a LRU cache instead of
         // something simpler like a map.
-        <span class="cov3" title="7">seenQnameLRU, err := lru.New[string, struct{}](startConf.QnameSeenEntries)
+        <span class="cov4" title="7">seenQnameLRU, err := lru.New[string, struct{}](startConf.QnameSeenEntries)
         if err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("unable to create seen-qname LRU: %w", err)
 </span>        }
 
-        <span class="cov3" title="6">var wg sync.WaitGroup
+        <span class="cov4" title="6">var wg sync.WaitGroup
 </span>
         // The HTTP servers are tracked in their own WaitGroup so the deferred
         // cleanup below can stop them and wait for their goroutines on every
         // return path, including the early error returns during setup.
-        <span class="cov3" title="6">var serverWg sync.WaitGroup
+        <span class="cov4" title="6">var serverWg sync.WaitGroup
 </span>
-        <span class="cov3" title="6">pprofServer := newPprofServer(startConf.PprofListenAddr)
+        <span class="cov4" title="6">pprofServer := newPprofServer(startConf.PprofListenAddr)
         serverWg.Go(func() </span>{
-                <span class="cov3" title="6">err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
+                <span class="cov4" title="6">err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
                 if err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) </span>{
                         <span class="cov0" title="0">edm.log.Error("pprofServer error", "error", err)
 </span>                }
         })
 
-        <span class="cov3" title="6">metricsServer := edm.newMetricsServer(ctx, startConf.MetricsListenAddr, startConf.EnableManualParquetRotation)
+        <span class="cov4" title="6">metricsServer := edm.newMetricsServer(ctx, startConf.MetricsListenAddr, startConf.EnableManualParquetRotation)
         serverWg.Go(func() </span>{
-                <span class="cov3" title="6">err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(metricsServer)
+                <span class="cov4" title="6">err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(metricsServer)
                 if err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) </span>{
                         <span class="cov0" title="0">edm.log.Error("metricsServer error", "error", err)
 </span>                }
@@ -4999,43 +4972,34 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
         // error paths included), giving each its own deadline so the second
         // shutdown never inherits an exhausted context, then wait for the
         // listener goroutines to exit.
-        <span class="cov3" title="6">defer func() </span>{
-                <span class="cov3" title="6">pprofCtx, pprofCancel := context.WithTimeout(context.Background(), 5*time.Second)
+        <span class="cov4" title="6">defer func() </span>{
+                <span class="cov4" title="6">pprofCtx, pprofCancel := context.WithTimeout(context.Background(), 5*time.Second)
                 if err := pprofServer.Shutdown(pprofCtx); err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) </span>{
                         <span class="cov0" title="0">edm.log.Error("pprofServer shutdown error", "error", err)
 </span>                }
-                <span class="cov3" title="6">pprofCancel()
+                <span class="cov4" title="6">pprofCancel()
 </span>
-                <span class="cov3" title="6">metricsCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
+                <span class="cov4" title="6">metricsCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
                 if err := metricsServer.Shutdown(metricsCtx); err != nil &amp;&amp; !errors.Is(err, http.ErrServerClosed) </span>{
                         <span class="cov0" title="0">edm.log.Error("metricsServer shutdown error", "error", err)
 </span>                }
-                <span class="cov3" title="6">metricsCancel()
+                <span class="cov4" title="6">metricsCancel()
 </span>
-                <span class="cov3" title="6">serverWg.Wait()</span>
+                <span class="cov4" title="6">serverWg.Wait()</span>
         }()
 
-        // Write histogram file to an outbox dir where it will get picked up by
-        // the histogram sender. Upon being sent it will be moved to the sent dir.
-        <span class="cov3" title="6">dataDir := startConf.DataDir
-        outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
-        sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
-</span>
-        <span class="cov3" title="6">wg.Go(func() </span>{ <span class="cov3" title="6">edm.monitorChannelLen(ctx) }</span>)
+        <span class="cov4" title="6">wg.Go(func() </span>{ <span class="cov4" title="6">edm.monitorChannelLen(ctx) }</span>)
 
         // Start record writers and data senders in the background
-        <span class="cov3" title="6">wg.Go(func() </span>{ <span class="cov3" title="6">edm.sessionWriter(dataDir) }</span>)
-        <span class="cov3" title="6">wg.Go(func() </span>{ <span class="cov3" title="6">edm.histogramWriter(defaultLabelLimit, outboxDir) }</span>)
-        <span class="cov3" title="6">wg.Go(func() </span>{ <span class="cov3" title="6">edm.histogramSender(ctx, outboxDir, sentDir) }</span>)
-        <span class="cov3" title="6">if !startConf.DisableMQTT </span>{
+        <span class="cov4" title="6">wg.Go(func() </span>{ <span class="cov4" title="6">edm.sessionWriter(startConf.DataDir) }</span>)
+        <span class="cov4" title="6">wg.Go(func() </span>{ <span class="cov4" title="6">edm.histogramSender(ctx, defaultLabelLimit) }</span>)
+        <span class="cov4" title="6">if !startConf.DisableMQTT </span>{
                 <span class="cov1" title="1">wg.Go(func() </span>{ <span class="cov1" title="1">edm.newQnamePublisher(mqttCtx) }</span>)
         }
 
-        <span class="cov3" title="6">wg.Go(func() </span>{ <span class="cov3" title="6">edm.diskCleaner(ctx, sentDir) }</span>)
-
-        <span class="cov3" title="6">dawgFile := startConf.WellKnownDomainsFile
+        <span class="cov4" title="6">dawgFile := startConf.WellKnownDomainsFile
 </span>
-        <span class="cov3" title="6">dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(dawgFile)
+        <span class="cov4" title="6">dawgFinder, dawgModTime, err := edm.loadDawgFileStaged(dawgFile)
         if err != nil </span>{
                 <span class="cov1" title="1">return fmt.Errorf("DawgLoader.LoadDawgFile failed: %w", err)
 </span>        }
@@ -5070,9 +5034,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
         }
 
         // Start minimiser
-        <span class="cov2" title="4">edm.reloadMinimiserMutex.Lock()
+        <span class="cov3" title="4">edm.reloadMinimiserMutex.Lock()
         for minimiserID := 0; minimiserID &lt; numMinimiserWorkers; minimiserID++ </span>{
-                <span class="cov2" title="4">edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
+                <span class="cov3" title="4">edm.log.Info("Run: starting minimiser worker", "minimiser_id", minimiserID)
 </span>                // This append aims to map 1:1 between offset in the resulting
                 // slice and minimiserID of a worker, so edm.reloadMinimiserConfigCh[3]
                 // should be a channel sending to the worker with minimiserID 3.
@@ -5081,38 +5045,38 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
                 //
                 // Capacity is set to 1 so we can do a send without hanging if
                 // the worker is currently busy.
-                <span class="cov2" title="4">reloadConfigCh := make(chan struct{}, 1)
+                <span class="cov3" title="4">reloadConfigCh := make(chan struct{}, 1)
                 edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
                 minimiserWg.Go(func() </span>{
-                        <span class="cov2" title="4">edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
+                        <span class="cov3" title="4">edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 </span>                })
         }
-        <span class="cov2" title="4">edm.reloadMinimiserMutex.Unlock()
+        <span class="cov3" title="4">edm.reloadMinimiserMutex.Unlock()
 </span>
         // The single producer goroutine below is synchronized by
         // dnstapInputWg.Wait(), which makes its dnstapInputErr write visible
         // before the error is read on the shutdown path.
-        <span class="cov2" title="4">var dnstapInputErr error
+        <span class="cov3" title="4">var dnstapInputErr error
         var dnstapInputWg sync.WaitGroup
         dnstapInputWg.Go(func() </span>{
-                <span class="cov2" title="4">if err := dti.ReadInto(ctx, edm.inputChannel); err != nil </span>{
+                <span class="cov3" title="4">if err := dti.ReadInto(ctx, edm.inputChannel); err != nil </span>{
                         <span class="cov1" title="1">dnstapInputErr = err
                         stop()
 </span>                }
         })
 
         // Wait here until all instances of runMinimiser() is done
-        <span class="cov2" title="4">minimiserWg.Wait()
+        <span class="cov3" title="4">minimiserWg.Wait()
         dnstapInputWg.Wait()
 </span>
         // Tell collector it is time to stop reading data
-        <span class="cov2" title="4">close(wkdTracker.stop)
+        <span class="cov3" title="4">close(wkdTracker.stop)
 </span>
         // Make sure writers have completed their work
-        <span class="cov2" title="4">close(edm.newQnamePublisherCh)
+        <span class="cov3" title="4">close(edm.newQnamePublisherCh)
 </span>
         // Stop the MQTT publisher
-        <span class="cov2" title="4">if !startConf.DisableMQTT </span>{
+        <span class="cov3" title="4">if !startConf.DisableMQTT </span>{
                 <span class="cov1" title="1">edm.log.Info("Run: stopping MQTT publisher")
                 mqttCancel()
 </span>        }
@@ -5121,25 +5085,25 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
         // shutdown never reloads state that later teardown steps are releasing.
         // The deferred signal.Stop detaches hupCh afterwards; signals delivered
         // past this point are ignored.
-        <span class="cov2" title="4">configUpdaterWg.Wait()
+        <span class="cov3" title="4">configUpdaterWg.Wait()
 </span>
         // Wait for all workers to exit. The HTTP servers are shut down by the
         // deferred cleanup registered when they were started.
-        <span class="cov2" title="4">edm.log.Info("Run: waiting for other workers to exit")
+        <span class="cov3" title="4">edm.log.Info("Run: waiting for other workers to exit")
         wg.Wait()
 </span>
         // Wait for graceful disconnection from MQTT bus
-        <span class="cov2" title="4">if !startConf.DisableMQTT </span>{
+        <span class="cov3" title="4">if !startConf.DisableMQTT </span>{
                 <span class="cov1" title="1">edm.log.Info("Run: waiting on MQTT disconnection")
                 edm.autopahoWg.Wait()
 </span>        }
 
-        <span class="cov2" title="4">if dnstapInputErr != nil &amp;&amp;
+        <span class="cov3" title="4">if dnstapInputErr != nil &amp;&amp;
                 !errors.Is(dnstapInputErr, context.Canceled) &amp;&amp;
                 !errors.Is(dnstapInputErr, context.DeadlineExceeded) </span>{
                 <span class="cov1" title="1">return fmt.Errorf("dnstap input failed: %w", dnstapInputErr)
 </span>        }
-        <span class="cov2" title="3">return nil</span>
+        <span class="cov3" title="3">return nil</span>
 }
 
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.
@@ -5181,6 +5145,7 @@ type DnstapMinimiser struct {
         debug                     bool // if we should print debug messages during operation
         sessionWriterCh           chan *prevSessions
         histogramWriterCh         chan *wellKnownDomainsData
+        histogramRetryWriterCh    chan *wellKnownDomainsData
         parquetRotationRequestCh  chan parquetRotationRequest
         newQnamePublisherCh       chan *protocols.NewQnameJSON
         sessionCollectorCh        chan *sessionData
@@ -5215,33 +5180,33 @@ type DnstapMinimiser struct {
 // The returned service is ready to run but has no active run context until
 // [DnstapMinimiser.Run] is called.
 func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...DnstapMinimiserOption) (*DnstapMinimiser, error) {
-        <span class="cov7" title="139">if provider == nil </span>{
+        <span class="cov10" title="135">if provider == nil </span>{
                 <span class="cov1" title="1">return nil, ErrNilConfigProvider
 </span>        }
-        <span class="cov7" title="138">if logger == nil </span>{
+        <span class="cov9" title="134">if logger == nil </span>{
                 <span class="cov1" title="1">return nil, ErrNilLogger
 </span>        }
 
-        <span class="cov7" title="137">var options dnstapMinimiserOptions
+        <span class="cov9" title="133">var options dnstapMinimiserOptions
         for _, opt := range opts </span>{
-                <span class="cov7" title="138">opt(&amp;options)
+                <span class="cov9" title="134">opt(&amp;options)
 </span>        }
-        <span class="cov7" title="137">options.deps = fillDependencies(options.deps)
+        <span class="cov9" title="133">options.deps = fillDependencies(options.deps)
 </span>
-        <span class="cov7" title="137">edm := &amp;DnstapMinimiser{
+        <span class="cov9" title="133">edm := &amp;DnstapMinimiser{
                 configer:    provider,
                 deps:        options.deps,
                 loggerLevel: options.loggerLevel,
 </span>        }
 
-        <span class="cov7" title="137">err := edm.updateConfig()
+        <span class="cov9" title="133">err := edm.updateConfig()
         if err != nil </span>{
                 <span class="cov0" title="0">return nil, fmt.Errorf("NewDnstapMinimiser: unable to set config: %w", err)
 </span>        }
 
-        <span class="cov7" title="137">conf := edm.getConfig()
+        <span class="cov9" title="133">conf := edm.getConfig()
 </span>
-        <span class="cov7" title="137">err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+        <span class="cov9" title="133">err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
         if err != nil </span>{
                 <span class="cov0" title="0">return nil, fmt.Errorf("NewDnstapMinimiser: %w", err)
 </span>        }
@@ -5253,97 +5218,97 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
         // panic: duplicate metrics collector registration attempted
         // ===
         // Some more info at https://github.com/prometheus/client_golang/issues/716
-        <span class="cov7" title="137">promReg := prometheus.NewRegistry()
+        <span class="cov9" title="133">promReg := prometheus.NewRegistry()
 </span>
         // Mimic default collectors used by the global prometheus instance
-        <span class="cov7" title="137">promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+        <span class="cov9" title="133">promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
         promReg.MustRegister(collectors.NewGoCollector())
 </span>
-        <span class="cov7" title="137">edm.promCryptopanCacheHit = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promCryptopanCacheHit = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_cryptopan_lru_hit_total",
                 Help: "The total number of times we got a hit in the cryptopan address LRU cache",
         })
 </span>
-        <span class="cov7" title="137">edm.promCryptopanCacheEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promCryptopanCacheEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_cryptopan_lru_evicted_total",
                 Help: "The total number of times something was evicted from the cryptopan address LRU cache",
         })
 </span>
-        <span class="cov7" title="137">edm.promDnstapProcessed = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promDnstapProcessed = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_processed_dnstap_total",
                 Help: "The total number of processed dnstap packets",
         })
 </span>
-        <span class="cov7" title="137">edm.promNewQnameQueued = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promNewQnameQueued = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_new_qname_queued_total",
                 Help: "The total number of queued new_qname events",
         })
 </span>
-        <span class="cov7" title="137">edm.promNewQnameDiscarded = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promNewQnameDiscarded = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_new_qname_discarded_total",
                 Help: "The total number of discarded new_qname events",
         })
 </span>
-        <span class="cov7" title="137">edm.promSeenQnameLRUEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promSeenQnameLRUEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_seen_qname_lru_evicted_total",
                 Help: "The total number of times something was evicted from the new_qname LRU cache",
         })
 </span>
-        <span class="cov7" title="137">edm.promNewQnameChannelLen = promauto.With(promReg).NewGauge(prometheus.GaugeOpts{
+        <span class="cov9" title="133">edm.promNewQnameChannelLen = promauto.With(promReg).NewGauge(prometheus.GaugeOpts{
                 Name: "edm_new_qname_ch_len",
                 Help: "The number of new_qname events in the channel buffer",
         })
 </span>
-        <span class="cov7" title="137">edm.promClientIPIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promClientIPIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_client_ip_total",
                 Help: "The total number of times we have ignored a dnstap packet because of client IP",
         })
 </span>
-        <span class="cov7" title="137">edm.promClientIPIgnoredError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promClientIPIgnoredError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_client_ip_error_total",
                 Help: "The total number of times we have ignored a dnstap packet because of client IP error, should always be 0",
         })
 </span>
-        <span class="cov7" title="137">edm.promQuestionNameIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promQuestionNameIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_question_name_total",
                 Help: "The total number of times we have ignored a dnstap packet because of the name in the question section",
         })
 </span>
-        <span class="cov7" title="137">edm.promDNSParseError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promDNSParseError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_dns_parse_error_total",
                 Help: "The total number of times we have ignored a dnstap packet because we were unable to parse the DNS data",
         })
 </span>
-        <span class="cov7" title="137">edm.promEmptyQuestionSection = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promEmptyQuestionSection = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_empty_question_section_total",
                 Help: "The total number of times we have ignored a dnstap packet because it had no entries in the question section",
         })
 </span>
-        <span class="cov7" title="137">edm.promInvalidQuestionName = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
+        <span class="cov9" title="133">edm.promInvalidQuestionName = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
                 Name: "edm_ignored_invalid_question_name_total",
                 Help: "The total number of times we have ignored a dnstap packet because it contained an invalid name in the question section",
         })
 </span>
-        <span class="cov7" title="137">edm.promReg = promReg
+        <span class="cov9" title="133">edm.promReg = promReg
 </span>        // Buffer enough frames to absorb scheduling jitter under high QPS.
         // A 1024-frame buffer keeps producers from stalling without growing
         // memory meaningfully for typical dnstap frame sizes.
-        <span class="cov7" title="137">edm.inputChannel = make(chan []byte, 1024)
+        <span class="cov9" title="133">edm.inputChannel = make(chan []byte, 1024)
         edm.log = logger
         edm.debug = conf.Debug
 </span>
         // Capacity is set to 1 so we can do a send without hanging if
         // the histogram sender is currently busy.
-        <span class="cov7" title="137">edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
+        <span class="cov9" title="133">edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 </span>
         // Prepare client cert/key storage for mTLS authentication
-        <span class="cov7" title="137">edm.httpClientCertStore = newCertStore()
+        <span class="cov9" title="133">edm.httpClientCertStore = newCertStore()
         edm.mqttClientCertStore = newCertStore()
 </span>
         // Setup channels for the MQTT publish pipeline. mqttPubCh holds
         // unsigned events from minimisers; mqttSignedCh holds signed
         // envelopes ready for paho to publish.
-        <span class="cov7" title="137">edm.mqttPubCh = make(chan []byte, 1024)
+        <span class="cov9" title="133">edm.mqttPubCh = make(chan []byte, 1024)
         edm.mqttSignedCh = make(chan []byte, 1024)
 </span>
         // Setup channels for feeding writers and data senders that should do
@@ -5351,26 +5316,27 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
         // to not block the loop if writing/sending data is slow.
         // NOTE: Remember to close all of these channels at the end of the
         // minimiser loop, otherwise the program can hang on shutdown.
-        <span class="cov7" title="137">edm.sessionWriterCh = make(chan *prevSessions, 100)
+        <span class="cov9" title="133">edm.sessionWriterCh = make(chan *prevSessions, 100)
         edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
+        edm.histogramRetryWriterCh = make(chan *wellKnownDomainsData, 4)
         edm.parquetRotationRequestCh = make(chan parquetRotationRequest, 1)
         edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, conf.NewQnameBuffer)
         edm.sessionCollectorCh = make(chan *sessionData, 100)
 </span>
-        <span class="cov7" title="137">return edm, nil</span>
+        <span class="cov9" title="133">return edm, nil</span>
 }
 
 func (edm *DnstapMinimiser) monitorChannelLen(ctx context.Context) {
-        <span class="cov3" title="7">ticker := edm.deps.Clock.NewTicker(edm.deps.MonitorChannelInterval)
+        <span class="cov4" title="6">ticker := edm.deps.Clock.NewTicker(edm.deps.MonitorChannelInterval)
         defer ticker.Stop()
 </span>
-        <span class="cov3" title="7">edm.log.Info("monitorChannelLen: starting")
+        <span class="cov4" title="6">edm.log.Info("monitorChannelLen: starting")
         for </span>{
-                <span class="cov10" title="1007">select </span>{
+                <span class="cov4" title="6">select </span>{
                 case &lt;-ticker.C():
-                        <span class="cov9" title="1000">edm.promNewQnameChannelLen.Set(float64(len(edm.newQnamePublisherCh)))</span>
+                        <span class="cov0" title="0">edm.promNewQnameChannelLen.Set(float64(len(edm.newQnamePublisherCh)))</span>
                 case &lt;-ctx.Done():
-                        <span class="cov3" title="7">edm.log.Info("monitorChannelLen: exiting loop")
+                        <span class="cov4" title="6">edm.log.Info("monitorChannelLen: exiting loop")
                         return</span>
                 }
         }
@@ -5479,20 +5445,20 @@ type prevSessions struct {
 func (edm *DnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLabels) {
         // If labels is nil (the "." zone) we can depend on the zero type of
         // the label fields being nil, so nothing to do
-        <span class="cov7" title="23">if labels == nil </span>{
+        <span class="cov7" title="22">if labels == nil </span>{
                 <span class="cov1" title="1">return
 </span>        }
 
-        <span class="cov7" title="22">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
+        <span class="cov7" title="21">reverseLabels := edm.reverseLabelsBounded(labels, labelLimit)
 </span>
-        <span class="cov7" title="22">for index := range reverseLabels </span>{
-                <span class="cov10" title="76">switch index </span>{
+        <span class="cov7" title="21">for index := range reverseLabels </span>{
+                <span class="cov10" title="74">switch index </span>{
                 case 0:
-                        <span class="cov7" title="22">l.Label0 = &amp;reverseLabels[index]</span>
+                        <span class="cov7" title="21">l.Label0 = &amp;reverseLabels[index]</span>
                 case 1:
-                        <span class="cov7" title="22">l.Label1 = &amp;reverseLabels[index]</span>
+                        <span class="cov7" title="21">l.Label1 = &amp;reverseLabels[index]</span>
                 case 2:
-                        <span class="cov5" title="11">l.Label2 = &amp;reverseLabels[index]</span>
+                        <span class="cov6" title="11">l.Label2 = &amp;reverseLabels[index]</span>
                 case 3:
                         <span class="cov3" title="3">l.Label3 = &amp;reverseLabels[index]</span>
                 case 4:
@@ -5513,26 +5479,26 @@ func (edm *DnstapMinimiser) setLabels(labels []string, labelLimit int, l *dnsLab
 
 func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []string {
         // If labels is nil (the "." zone) there is nothing to do
-        <span class="cov7" title="24">if labels == nil </span>{
+        <span class="cov7" title="23">if labels == nil </span>{
                 <span class="cov1" title="1">return nil
 </span>        }
 
-        <span class="cov7" title="23">boundedReverseLabels := []string{}
+        <span class="cov7" title="22">boundedReverseLabels := []string{}
 </span>
-        <span class="cov7" title="23">remainderElems := 0
+        <span class="cov7" title="22">remainderElems := 0
         if len(labels) &gt; maxLen </span>{
                 <span class="cov1" title="1">remainderElems = len(labels) - maxLen
 </span>        }
 
         // Append all labels except the last one
-        <span class="cov7" title="23">for i := len(labels) - 1; i &gt; remainderElems; i-- </span>{
-                <span class="cov9" title="56">boundedReverseLabels = append(boundedReverseLabels, labels[i])
+        <span class="cov7" title="22">for i := len(labels) - 1; i &gt; remainderElems; i-- </span>{
+                <span class="cov9" title="55">boundedReverseLabels = append(boundedReverseLabels, labels[i])
 </span>        }
 
         // If the labels fit inside maxLen then just append the last remaining
         // label as-is
-        <span class="cov7" title="23">if len(labels) &lt;= maxLen </span>{
-                <span class="cov7" title="22">boundedReverseLabels = append(boundedReverseLabels, labels[0])
+        <span class="cov7" title="22">if len(labels) &lt;= maxLen </span>{
+                <span class="cov7" title="21">boundedReverseLabels = append(boundedReverseLabels, labels[0])
 </span>        } else {
                 // If there are more labels than maxLen we need to concatenate
                 // them before appending the last element
@@ -5545,23 +5511,23 @@ func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
                         <span class="cov1" title="1">boundedReverseLabels = append(boundedReverseLabels, strings.Join(remainderLabels, "."))</span>
                 }
         }
-        <span class="cov7" title="23">return boundedReverseLabels</span>
+        <span class="cov7" title="22">return boundedReverseLabels</span>
 }
 
 func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLimit int) *sessionData {
-        <span class="cov5" title="11">sd := &amp;sessionData{}
+        <span class="cov6" title="11">sd := &amp;sessionData{}
 </span>
-        <span class="cov5" title="11">if dt.HasFlags(dnstap.ValidQueryPort) </span>{
+        <span class="cov6" title="11">if dt.HasFlags(dnstap.ValidQueryPort) </span>{
                 <span class="cov5" title="9">sd.SourcePort = new(int32(dt.QueryPort))
 </span>        }
 
-        <span class="cov5" title="11">if dt.HasFlags(dnstap.ValidResponsePort) </span>{
+        <span class="cov6" title="11">if dt.HasFlags(dnstap.ValidResponsePort) </span>{
                 <span class="cov5" title="9">sd.DestPort = new(int32(dt.ResponsePort))
 </span>        }
 
-        <span class="cov5" title="11">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
+        <span class="cov6" title="11">edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &amp;sd.dnsLabels)
 </span>
-        <span class="cov5" title="11">if dt.IsQuery </span>{
+        <span class="cov6" title="11">if dt.IsQuery </span>{
                 <span class="cov1" title="1">sd.QueryMessage = new(string(dt.Message))
                 sd.QueryTime = new(dt.Timestamp.UnixMicro())
 </span>        } else {
@@ -5569,11 +5535,11 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
                 sd.ResponseTime = new(dt.Timestamp.UnixMicro())
 </span>        }
 
-        <span class="cov5" title="11">if len(dt.Identity) != 0 </span>{
+        <span class="cov6" title="11">if len(dt.Identity) != 0 </span>{
                 <span class="cov5" title="9">sd.ServerID = new(string(dt.Identity))
 </span>        }
 
-        <span class="cov5" title="11">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
+        <span class="cov6" title="11">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
                 <span class="cov4" title="6">switch </span>{
                 case dt.QueryAddr.Is4():
                         <span class="cov4" title="5">sourceIPInt, err := ipBytesToInt(dt.QueryAddr.AsSlice())
@@ -5593,7 +5559,7 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
                 }
         }
 
-        <span class="cov5" title="11">if dt.HasFlags(dnstap.ValidResponseAddr) </span>{
+        <span class="cov6" title="11">if dt.HasFlags(dnstap.ValidResponseAddr) </span>{
                 <span class="cov4" title="6">switch </span>{
                 case dt.ResponseAddr.Is4():
                         <span class="cov4" title="5">destIPInt, err := ipBytesToInt(dt.ResponseAddr.AsSlice())
@@ -5613,11 +5579,11 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
                 }
         }
 
-        <span class="cov5" title="11">if dt.HasFlags(dnstap.ValidSocketProtocol) </span>{
+        <span class="cov6" title="11">if dt.HasFlags(dnstap.ValidSocketProtocol) </span>{
                 <span class="cov5" title="10">sd.DNSProtocol = new(int32(dt.SocketProtocol))
 </span>        }
 
-        <span class="cov5" title="11">return sd</span>
+        <span class="cov6" title="11">return sd</span>
 }
 
 func (edm *DnstapMinimiser) createSessionFile(ps *prevSessions, dataDir string) (string, error) {
@@ -5715,14 +5681,14 @@ func getStartTimeFromRotationTime(rotationTime time.Time) time.Time {
         // except for the very first collection at startup based on what
         // second the program started, but in that case we just pretend we have
         // the full minute.
-        <span class="cov6" title="5">return rotationTime.Add(-time.Second * 60)
+        <span class="cov9" title="13">return rotationTime.Add(-time.Second * 60)
 </span>}
 
 func intervalStartFromTimes(startTime time.Time, rotationTime time.Time) time.Time {
-        <span class="cov5" title="4">if !startTime.IsZero() </span>{
+        <span class="cov9" title="12">if !startTime.IsZero() </span>{
                 <span class="cov0" title="0">return startTime
 </span>        }
-        <span class="cov5" title="4">return getStartTimeFromRotationTime(rotationTime)</span>
+        <span class="cov9" title="12">return getStartTimeFromRotationTime(rotationTime)</span>
 }
 
 func timeUntilNextMinute() time.Duration {
@@ -5803,24 +5769,24 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 // well as if it was found based on a suffix string or not.
 func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
         // Ignore capitalisation in labels
-        <span class="cov9" title="30919">name = strings.ToLower(name)
+        <span class="cov9" title="19661">name = strings.ToLower(name)
 </span>
         // Try exact match first
-        <span class="cov9" title="30919">dawgIndex := dawgFinder.IndexOf(name)
+        <span class="cov9" title="19661">dawgIndex := dawgFinder.IndexOf(name)
 </span>
-        <span class="cov9" title="30919">if dawgIndex == dawgNotFound </span>{
+        <span class="cov9" title="19661">if dawgIndex == dawgNotFound </span>{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                <span class="cov9" title="27588">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
-                        <span class="cov10" title="39967">dawgIndex = dawgFinder.IndexOf(name[index-1:])
+                <span class="cov9" title="17308">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
+                        <span class="cov10" title="25161">dawgIndex = dawgFinder.IndexOf(name[index-1:])
                         if dawgIndex != dawgNotFound </span>{
-                                <span class="cov8" title="6178">return dawgIndex, true
+                                <span class="cov8" title="3945">return dawgIndex, true
 </span>                        }
                 }
         }
 
-        <span class="cov9" title="24741">return dawgIndex, false</span>
+        <span class="cov9" title="15716">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5873,7 +5839,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 }
 
 func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
-        <span class="cov2" title="10">wu := wkdUpdate{
+        <span class="cov3" title="10">wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
                 dawgModTime: dawgModTime,
@@ -5883,7 +5849,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 </span>        }
 
         // Create hash from IP address for use in HLL data
-        <span class="cov2" title="10">ip, ok := netip.AddrFromSlice(ipBytes)
+        <span class="cov3" title="10">ip, ok := netip.AddrFromSlice(ipBytes)
         if ok </span>{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
@@ -5892,7 +5858,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 </span>        }
 
         // Counters based on header
-        <span class="cov2" title="10">switch msg.Rcode </span>{
+        <span class="cov3" title="10">switch msg.Rcode </span>{
         case dns.RcodeSuccess:
                 <span class="cov2" title="7">wu.OKCount++</span>
         case dns.RcodeNameError:
@@ -5904,7 +5870,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov2" title="10">if msg.Question[0].Qclass == dns.ClassINET </span>{
+        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span>{
                 <span class="cov2" title="9">switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:
                         <span class="cov2" title="5">wu.ACount++</span>
@@ -5921,7 +5887,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 <span class="cov1" title="1">wu.NonINCount++
 </span>        }
 
-        <span class="cov2" title="10">wkd.updateCh &lt;- wu</span>
+        <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
