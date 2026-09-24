@@ -9,8 +9,10 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Labels 0-9
-const defaultLabelLimit = 10
+const (
+	defaultLabelLimit                = 10 // Labels 0-9
+	maxHistogramHLLExplicitThreshold = 1 << 17
+)
 
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
@@ -107,6 +109,8 @@ func (conf Config) Validate() (err error) {
 
 	if conf.HistogramHLLExplicitThreshold < 1 {
 		errs = append(errs, errors.New("histogram-hll-explicit-threshold must be greater than 0"))
+	} else if conf.HistogramHLLExplicitThreshold > maxHistogramHLLExplicitThreshold {
+		errs = append(errs, fmt.Errorf("histogram-hll-explicit-threshold must not exceed %d", maxHistogramHLLExplicitThreshold))
 	}
 	if conf.CryptopanAddressEntries < 0 {
 		errs = append(errs, errors.New("cryptopan-address-entries must not be negative"))
