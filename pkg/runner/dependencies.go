@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -43,7 +44,6 @@ type fileSystem interface {
 	Create(name string) (fsFile, error)
 	Chmod(name string, mode os.FileMode) error
 	ReadFile(name string) ([]byte, error)
-	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
 	MkdirAll(path string, perm os.FileMode) error
 	Rename(oldpath, newpath string) error
@@ -103,15 +103,15 @@ type httpServerRunner interface {
 	ListenAndServeHTTP(server *http.Server) error
 }
 
-// aggregateSender sends histogram parquet files to aggregate-receiver.
+// aggregateSender sends histogram parquet data to aggregate-receiver.
 type aggregateSender interface {
-	Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error
+	Send(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error
 	CloseIdleConnections()
 }
 
 // aggregateSenderFactory creates AggregateSender instances.
 type aggregateSenderFactory interface {
-	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error)
+	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error)
 }
 
 // mqttConnectionManager is the MQTT connection surface used by the publisher.
@@ -159,10 +159,8 @@ type dependencies struct {
 	DawgLoader             dawgLoader
 	CryptopanFactory       cryptopanFactory
 
-	DiskCleanerInterval     time.Duration
-	MonitorChannelInterval  time.Duration
-	HistogramSenderInterval time.Duration
-	HistogramSenderBackoff  time.Duration
+	MonitorChannelInterval       time.Duration
+	HistogramSenderRetryInterval time.Duration
 }
 
 func defaultDependencies() dependencies {
@@ -203,17 +201,11 @@ func fillDependencies(deps dependencies) dependencies {
 	if deps.CryptopanFactory == nil {
 		deps.CryptopanFactory = realCryptopanFactory{}
 	}
-	if deps.DiskCleanerInterval == 0 {
-		deps.DiskCleanerInterval = time.Minute
-	}
 	if deps.MonitorChannelInterval == 0 {
 		deps.MonitorChannelInterval = time.Second
 	}
-	if deps.HistogramSenderInterval == 0 {
-		deps.HistogramSenderInterval = 10 * time.Second
-	}
-	if deps.HistogramSenderBackoff == 0 {
-		deps.HistogramSenderBackoff = 15 * time.Second
+	if deps.HistogramSenderRetryInterval == 0 {
+		deps.HistogramSenderRetryInterval = 97 * time.Second
 	}
 	return deps
 }
@@ -238,10 +230,6 @@ func (osFileSystem) Chmod(name string, mode os.FileMode) error {
 
 func (osFileSystem) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
-}
-
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-	return os.ReadDir(name)
 }
 
 func (osFileSystem) Stat(name string) (os.FileInfo, error) {
@@ -349,8 +337,8 @@ func (realHTTPServerRunner) ListenAndServeHTTP(server *http.Server) error {
 
 type realAggregateSenderFactory struct{}
 
-func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error) {
-	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, fs, clock)
+func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error) {
+	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, clock)
 }
 
 type realMQTTFactory struct{}
