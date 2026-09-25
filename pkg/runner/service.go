@@ -37,6 +37,8 @@ var (
 	ErrNilLogger = errors.New("nil logger")
 	// ErrNilRunContext is returned when Run is called with a nil context.
 	ErrNilRunContext = errors.New("nil run context")
+	// ErrShutdownDrainTimeout is returned when minimisers exceed the shutdown drain deadline.
+	ErrShutdownDrainTimeout = errors.New("shutdown drain timed out")
 	// ErrInvalidConfig is wrapped by every error returned from
 	// [Config.Validate] so callers can match configuration validation
 	// failures with [errors.Is].
@@ -58,6 +60,8 @@ const (
 	runStateIdle int32 = iota
 	runStateRunning
 	runStateDone
+
+	shutdownDrainTimeout = time.Second
 )
 
 // DnstapMinimiserOption customizes a [DnstapMinimiser] at construction time.
@@ -87,8 +91,9 @@ func withDependencies(deps dependencies) DnstapMinimiserOption {
 // Run starts the minimiser and blocks until it stops.
 //
 // Run is not reentrant. It returns startup and runtime errors directly. When
-// ctx is cancelled after startup, workers drain in shutdown order and Run
-// returns nil.
+// ctx is cancelled after startup, workers drain in shutdown order. If the
+// minimiser drain exceeds one second, Run aborts it and reports
+// [ErrShutdownDrainTimeout] after shutdown finishes.
 func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilRunContext
@@ -110,9 +115,10 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}()
 
 	// Shutdown ordering is load-bearing:
-	// minimisers exit → close wkdTracker.stop → close newQnamePublisherCh →
-	// (if MQTT) mqttCancel → configUpdater exits →
-	// wg.Wait → (if MQTT) autopahoWg.Wait.
+	// input readers exit → close inputChannel → minimisers drain until done
+	// or deadline → close wkdTracker.stop → close newQnamePublisherCh →
+	// (if MQTT) mqttCancel → configUpdater exits → wg.Wait → (if MQTT)
+	// autopahoWg.Wait.
 
 	// Create startConf for some initial setup. Other edm methods that need
 	// to read the config should call edm.getConfig() internally so they
@@ -286,6 +292,11 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
 	var minimiserWg sync.WaitGroup
+	// Caller cancellation stops the input first. Minimisers use a separate
+	// abort context so they keep consuming until the input owner closes the
+	// channel without conflating graceful shutdown with a forced stop.
+	minimiserCtx, abortMinimisers := context.WithCancel(context.WithoutCancel(ctx))
+	defer abortMinimisers()
 
 	numMinimiserWorkers := startConf.MinimiserWorkers
 	if numMinimiserWorkers <= 0 {
@@ -321,7 +332,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Go(func() {
-			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(minimiserCtx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
@@ -334,13 +345,27 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	dnstapInputWg.Go(func() {
 		if err := dti.ReadInto(ctx, edm.inputChannel); err != nil {
 			dnstapInputErr = err
-			stop()
 		}
+		close(edm.inputChannel)
+		stop()
 	})
 
-	// Wait here until all instances of runMinimiser() is done
-	minimiserWg.Wait()
+	minimiserDone := make(chan struct{})
+	go func() {
+		minimiserWg.Wait()
+		close(minimiserDone)
+	}()
+
 	dnstapInputWg.Wait()
+	var runErr error
+	select {
+	case <-minimiserDone:
+	case <-edm.deps.Clock.After(shutdownDrainTimeout):
+		runErr = ErrShutdownDrainTimeout
+		edm.log.Error("Run: shutdown drain timed out", "timeout", shutdownDrainTimeout, "queued_frames", len(edm.inputChannel))
+		abortMinimisers()
+		<-minimiserDone
+	}
 
 	// Tell collector it is time to stop reading data
 	close(wkdTracker.stop)
@@ -374,9 +399,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	if dnstapInputErr != nil &&
 		!errors.Is(dnstapInputErr, context.Canceled) &&
 		!errors.Is(dnstapInputErr, context.DeadlineExceeded) {
-		return fmt.Errorf("dnstap input failed: %w", dnstapInputErr)
+		runErr = errors.Join(runErr, fmt.Errorf("dnstap input failed: %w", dnstapInputErr))
 	}
-	return nil
+	return runErr
 }
 
 // DnstapMinimiser runs the Edge DNSTAP Minimiser service.

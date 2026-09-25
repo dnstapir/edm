@@ -70,6 +70,7 @@ type listenerFactory interface {
 
 // dnstapInput is the DNSTAP input surface used by Run.
 type dnstapInput interface {
+	// ReadInto returns only after every sender to output has stopped.
 	ReadInto(context.Context, chan<- []byte) error
 	SetTimeout(time.Duration)
 	SetLogger(dnstap.Logger)
