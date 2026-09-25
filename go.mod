@@ -16,11 +16,8 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/segmentio/go-hll v1.0.1
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
-	github.com/twmb/murmur3 v1.1.8
 	github.com/yaronf/httpsign v0.5.1
-	github.com/yawning/cryptopan v0.0.0-20170504040949-65bca51288fe
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
-	golang.org/x/crypto v0.57.0
 	google.golang.org/protobuf v1.36.11
 )
 
@@ -67,6 +64,7 @@ require (
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/twpayne/go-geom v1.6.1 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect

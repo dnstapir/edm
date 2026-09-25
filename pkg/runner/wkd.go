@@ -2,14 +2,12 @@ package runner
 
 import (
 	"fmt"
-	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 const dawgNotFound = -1
@@ -91,14 +89,14 @@ type wkdUpdate struct {
 	// embed histogramData so we automatically have access to all the
 	// fields we may want to increment with an update message.
 	histogramData
-	dawgIndex   int
-	suffixMatch bool
-	hllHash     uint64
-	ip          netip.Addr
-	msg         *dns.Msg
-	dawgModTime time.Time
-	retry       int
-	retryLimit  int
+	dawgIndex     int
+	suffixMatch   bool
+	hllDataSource IdentifierType
+	hllHash       uint64
+	msg           *dns.Msg
+	dawgModTime   time.Time
+	retry         int
+	retryLimit    int
 }
 
 func (wkd *wellKnownDomainsTracker) lookup(msg *dns.Msg) (int, bool, time.Time) {
@@ -136,24 +134,20 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	close(wkd.retryerDone)
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
+func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
 	wu := wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,
 		dawgModTime: dawgModTime,
-		hllHash:     0,
 		retryLimit:  10,
 		msg:         msg,
 	}
 
-	// Create hash from IP address for use in HLL data
-	ip, ok := netip.AddrFromSlice(ipBytes)
-	if ok {
-		// We use a deterministic seed by design to be able to combine HLL
-		// datasets.
-		wu.hllHash = murmur3.Sum64(ipBytes)
-		wu.ip = ip
-	}
+	// get an identifier based on the Query Address as the HLL Hash
+	wu.hllHash = pdt.QueryAddrAsIdentifier()
+
+	// store the source of the HLL Hash
+	wu.hllDataSource = pdt.QueryAddrType
 
 	// Counters based on header
 	switch msg.Rcode {
