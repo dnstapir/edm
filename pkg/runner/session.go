@@ -1,10 +1,8 @@
 package runner
 
 import (
-	"encoding/binary"
 	"fmt"
 	"io"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
@@ -77,18 +75,24 @@ type sessionData struct {
 	ServerID     *string `parquet:"server_id"`
 	QueryTime    *int64  `parquet:"query_time"`
 	ResponseTime *int64  `parquet:"response_time"`
-	SourceIPv4   *int32  `parquet:"source_ipv4"`
-	DestIPv4     *int32  `parquet:"dest_ipv4"`
-	// IPv6 addresses are split up into a network and host part, for one thing go does not have native uint128 types
-	SourceIPv6Network *int64  `parquet:"source_ipv6_network"`
-	SourceIPv6Host    *int64  `parquet:"source_ipv6_host"`
-	DestIPv6Network   *int64  `parquet:"dest_ipv6_network"`
-	DestIPv6Host      *int64  `parquet:"dest_ipv6_host"`
-	SourcePort        *int32  `parquet:"source_port"`
-	DestPort          *int32  `parquet:"dest_port"`
-	DNSProtocol       *int32  `parquet:"dns_protocol"`
-	QueryMessage      *string `parquet:"query_message"`
-	ResponseMessage   *string `parquet:"response_message"`
+	// SourceIPv4/DestIPv4 are only set if the identifers are based on IPv4 addresses,
+	// similarly for the SourceIPv6/DestIPv6 fields, SourceIdentifier/DestIdentifier are
+	// always set. Meaning if the identifers are based on IP addresses, then respective
+	// fields are set as well as the SourceIdentifier/DestIdentifier fields. If the
+	// identifers are not based on IP addresses then only the SourceIdentifier/DestIdentifier
+	// fields are set.
+	SourceIPv4       *int64 `parquet:"source_ipv4"`
+	DestIPv4         *int64 `parquet:"dest_ipv4"`
+	SourceIPv6       *int64 `parquet:"source_ipv6"`
+	DestIPv6         *int64 `parquet:"dest_ipv6"`
+	SourceIdentifier *int64 `parquet:"source_identifier"`
+	DestIdentifier   *int64 `parquet:"dest_identifier"`
+
+	SourcePort      *int32  `parquet:"source_port"`
+	DestPort        *int32  `parquet:"dest_port"`
+	DNSProtocol     *int32  `parquet:"dns_protocol"`
+	QueryMessage    *string `parquet:"query_message"`
+	ResponseMessage *string `parquet:"response_message"`
 }
 
 type prevSessions struct {
@@ -194,43 +198,24 @@ func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLi
 		sd.ServerID = new(string(dt.Identity))
 	}
 
+	sd.SourceIdentifier = new(int64(ipToIdentifier(dt.QueryAddr)))  // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
+	sd.DestIdentifier = new(int64(ipToIdentifier(dt.ResponseAddr))) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
+
 	if dt.HasFlags(dnstap.ValidQueryAddr) {
 		switch {
 		case dt.QueryAddr.Is4():
-			sourceIPInt, err := ipBytesToInt(dt.QueryAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.QueryAddr", "error", err)
-			} else {
-				sd.SourceIPv4 = new(int32(sourceIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-			}
+			sd.SourceIPv4 = sd.SourceIdentifier
 		case dt.QueryAddr.Is6():
-			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.QueryAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.QueryAddr", "error", err)
-			} else {
-				sd.SourceIPv6Network = new(int64(sourceIPIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.SourceIPv6Host = new(int64(sourceIPIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-			}
+			sd.SourceIPv6 = sd.SourceIdentifier
 		}
 	}
 
 	if dt.HasFlags(dnstap.ValidResponseAddr) {
 		switch {
-		case dt.ResponseAddr.Is4():
-			destIPInt, err := ipBytesToInt(dt.ResponseAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.ResponseAddr", "error", err)
-			} else {
-				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-			}
-		case dt.ResponseAddr.Is6():
-			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.ResponseAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.ResponseAddr", "error", err)
-			} else {
-				sd.DestIPv6Network = new(int64(dipIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.DestIPv6Host = new(int64(dipIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-			}
+		case dt.QueryAddr.Is4():
+			sd.DestIPv4 = sd.DestIdentifier
+		case dt.QueryAddr.Is6():
+			sd.DestIPv6 = sd.DestIdentifier
 		}
 	}
 
@@ -271,38 +256,6 @@ func (edm *DnstapMinimiser) sessionWriter(dataDir string) {
 	}
 
 	edm.log.Info("sessionWriter: exiting loop")
-}
-
-func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
-	ip, ok := netip.AddrFromSlice(ip4Bytes)
-	if !ok {
-		return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
-	}
-	ip = ip.Unmap()
-	if !ip.Is4() {
-		return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
-	}
-
-	// Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
-	ip4 := ip.As4()
-
-	ipInt := binary.BigEndian.Uint32(ip4[:])
-
-	return ipInt, nil
-}
-
-func ip6BytesToInt(ip6Bytes []byte) (uint64, uint64, error) {
-	ip, ok := netip.AddrFromSlice(ip6Bytes)
-	if !ok {
-		return 0, 0, fmt.Errorf("ip6BytesToInt: unable to parse bytes")
-	}
-
-	ip16 := ip.As16()
-
-	ipIntNetwork := binary.BigEndian.Uint64(ip16[:8])
-	ipIntHost := binary.BigEndian.Uint64(ip16[8:])
-
-	return ipIntNetwork, ipIntHost, nil
 }
 
 func (edm *DnstapMinimiser) writeSessionParquet(output io.Writer, ps *prevSessions) error {

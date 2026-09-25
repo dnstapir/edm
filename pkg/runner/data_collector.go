@@ -82,12 +82,11 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 		wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
 		wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
 
-		if wu.ip.IsValid() {
-			if wu.ip.Unmap().Is4() {
-				wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
-			} else {
-				wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
-			}
+		switch wu.hllDataType {
+		case hllIPv4:
+			wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
+		case hllIPv6:
+			wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
 		}
 	}
 
