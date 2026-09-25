@@ -86,12 +86,13 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 		hd.OtherRcodeCount += wu.OtherRcodeCount
 		hd.NonINCount += wu.NonINCount
 
-		if wu.ip.IsValid() {
-			if wu.ip.Unmap().Is4() {
-				hd.v4ClientHLL.AddRaw(wu.hllHash)
-			} else {
-				hd.v6ClientHLL.AddRaw(wu.hllHash)
-			}
+		switch wu.hllDataSource {
+		case IdentifierIPv4:
+			hd.v4ClientHLL.AddRaw(wu.hllHash)
+		case IdentifierIPv6:
+			hd.v6ClientHLL.AddRaw(wu.hllHash)
+		default:
+			hd.NotValidIPCount++
 		}
 	}
 

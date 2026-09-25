@@ -2,12 +2,12 @@ package runner
 
 import (
 	"context"
+	"crypto/cipher"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -23,7 +23,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/yawning/cryptopan"
 	"go4.org/netipx"
 )
 
@@ -316,20 +315,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		numMinimiserWorkers = runtime.GOMAXPROCS(0)
 	}
 
-	// Per-worker Crypto-PAn caches. Each worker holds its own LRU so the
-	// pseudonymise hot path takes no shared lock. Created before any
-	// worker starts so a creation failure is a startup error instead of a
-	// silently dead worker.
-	cryptopanCaches := make([]*lru.Cache[netip.Addr, netip.Addr], numMinimiserWorkers)
-	if startConf.CryptopanAddressEntries != 0 {
-		for i := range cryptopanCaches {
-			cryptopanCaches[i], err = lru.New[netip.Addr, netip.Addr](startConf.CryptopanAddressEntries)
-			if err != nil {
-				return fmt.Errorf("unable to create per-worker cryptopan cache: %w", err)
-			}
-		}
-	}
-
 	// Start minimiser
 	edm.reloadMinimiserMutex.Lock()
 	for minimiserID := 0; minimiserID < numMinimiserWorkers; minimiserID++ {
@@ -345,7 +330,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Go(func() {
-			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
@@ -419,37 +404,31 @@ type DnstapMinimiser struct {
 	inputChannel chan []byte  // the channel passed to DNSTAP input readers
 	log          *slog.Logger // any information logging is sent here
 
-	// Cryptopan instance is held in an atomic.Pointer so the hot path
-	// reads it without locking. setCryptopan swaps the pointer and
-	// bumps cryptopanGen; per-worker caches compare their last-seen
-	// generation against this and Purge when it changes.
-	cryptopan                 atomic.Pointer[cryptopan.Cryptopan]
-	cryptopanGen              atomic.Uint64
-	promReg                   *prometheus.Registry
-	promCryptopanCacheHit     prometheus.Counter
-	promCryptopanCacheEvicted prometheus.Counter
-	promDnstapProcessed       prometheus.Counter
-	promNewQnameQueued        prometheus.Counter
-	promNewQnameDiscarded     prometheus.Counter
-	promSeenQnameLRUEvicted   prometheus.Counter
-	promNewQnameChannelLen    prometheus.Gauge
-	promClientIPIgnored       prometheus.Counter
-	promQuestionNameIgnored   prometheus.Counter
-	promDNSParseError         prometheus.Counter
-	promEmptyQuestionSection  prometheus.Counter
-	promInvalidQuestionName   prometheus.Counter
-	debug                     bool // if we should print debug messages during operation
-	sessionWriterCh           chan *prevSessions
-	histogramWriterCh         chan *wellKnownDomainsData
-	histogramRetryWriterCh    chan *wellKnownDomainsData
-	parquetRotationRequestCh  chan parquetRotationRequest
-	newQnamePublisherCh       chan *protocols.NewQnameJSON
-	sessionCollectorCh        chan *sessionData
-	aggregSenderMutex         sync.RWMutex
-	aggregSender              aggregateSender
-	mqttPubCh                 chan []byte
-	mqttSignedCh              chan []byte
-	autopahoWg                sync.WaitGroup
+	pseudonymiser atomic.Pointer[cipher.Block]
+
+	promReg                  *prometheus.Registry
+	promDnstapProcessed      prometheus.Counter
+	promNewQnameQueued       prometheus.Counter
+	promNewQnameDiscarded    prometheus.Counter
+	promSeenQnameLRUEvicted  prometheus.Counter
+	promNewQnameChannelLen   prometheus.Gauge
+	promClientIPIgnored      prometheus.Counter
+	promQuestionNameIgnored  prometheus.Counter
+	promDNSParseError        prometheus.Counter
+	promEmptyQuestionSection prometheus.Counter
+	promInvalidQuestionName  prometheus.Counter
+	debug                    bool // if we should print debug messages during operation
+	sessionWriterCh          chan *prevSessions
+	histogramWriterCh        chan *wellKnownDomainsData
+	histogramRetryWriterCh   chan *wellKnownDomainsData
+	parquetRotationRequestCh chan parquetRotationRequest
+	newQnamePublisherCh      chan *protocols.NewQnameJSON
+	sessionCollectorCh       chan *sessionData
+	aggregSenderMutex        sync.RWMutex
+	aggregSender             aggregateSender
+	mqttPubCh                chan []byte
+	mqttSignedCh             chan []byte
+	autopahoWg               sync.WaitGroup
 	// Hot-path lookups (clientIPIsIgnored, questionIsIgnored) read these
 	// without locking. Reload writers atomic.Store a fresh value and leave the
 	// old value for the GC to reclaim. For ignoredQuestions the dawgFinderHolder
@@ -501,7 +480,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 
 	conf := edm.getConfig()
 
-	err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+	err = edm.setPseudonymiseKey(conf.CryptopanKey, conf.CryptopanKeySalt)
 	if err != nil {
 		return nil, fmt.Errorf("NewDnstapMinimiser: %w", err)
 	}
@@ -518,16 +497,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// Mimic default collectors used by the global prometheus instance
 	promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	promReg.MustRegister(collectors.NewGoCollector())
-
-	edm.promCryptopanCacheHit = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_cryptopan_lru_hit_total",
-		Help: "The total number of times we got a hit in the cryptopan address LRU cache",
-	})
-
-	edm.promCryptopanCacheEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_cryptopan_lru_evicted_total",
-		Help: "The total number of times something was evicted from the cryptopan address LRU cache",
-	})
 
 	edm.promDnstapProcessed = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
 		Name: "edm_processed_dnstap_total",

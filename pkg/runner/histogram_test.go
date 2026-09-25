@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net/netip"
@@ -20,7 +21,6 @@ import (
 	"github.com/parquet-go/parquet-go/format"
 	"github.com/segmentio/go-hll"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 func TestSetHistogramLabels(t *testing.T) {
@@ -170,9 +170,6 @@ func TestEDMStatusBitsUnknown(t *testing.T) {
 func TestHistogramWriter(t *testing.T) {
 	var buf bytes.Buffer
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
-
 	hllSettings := getHllDefaults(0)
 
 	v4hll, err := hll.NewHll(hllSettings)
@@ -185,8 +182,8 @@ func TestHistogramWriter(t *testing.T) {
 		t.Fatalf("unable to init IPv6 HLL: %s", err)
 	}
 
-	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
-	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
+	v4hll.AddRaw(4444)
+	v6hll.AddRaw(666666)
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[histogramData](&buf, parquet.Compression(snappyCodec))
@@ -247,9 +244,6 @@ func BenchmarkHistogramWriter(b *testing.B) {
 
 	var err error
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
-
 	hllSettings := getHllDefaults(0)
 
 	v4hll, err := hll.NewHll(hllSettings)
@@ -262,8 +256,8 @@ func BenchmarkHistogramWriter(b *testing.B) {
 		b.Fatalf("unable to init IPv6 HLL: %s", err)
 	}
 
-	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
-	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
+	v4hll.AddRaw(4444)
+	v6hll.AddRaw(666666)
 
 	var buf bytes.Buffer
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
@@ -312,22 +306,14 @@ func BenchmarkHgramWithHLLDefaults(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-
-	v4Hash := murmur3.Sum64(ip4.AsSlice())
-
 	for b.Loop() {
 		hd := &histogramData{}
-		hd.v4ClientHLL.AddRaw(v4Hash)
+		hd.v4ClientHLL.AddRaw(4444)
 	}
 }
 
 func BenchmarkHgramWithHLLSettings(b *testing.B) {
 	b.ReportAllocs()
-
-	ip4 := netip.MustParseAddr("198.51.100.20")
-
-	v4Hash := murmur3.Sum64(ip4.AsSlice())
 
 	hllSettings := getHllDefaults(0)
 
@@ -338,7 +324,7 @@ func BenchmarkHgramWithHLLSettings(b *testing.B) {
 			b.Fatal(err)
 		}
 		hd.v4ClientHLL = h
-		hd.v4ClientHLL.AddRaw(v4Hash)
+		hd.v4ClientHLL.AddRaw(4444)
 	}
 }
 
@@ -427,7 +413,9 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 			wkd.m[i].NonINCount += 10
 
 			for _, ip := range test.ips {
-				hllHash := murmur3.Sum64(ip.AsSlice())
+				buf := ip.As16()
+				hllHash := binary.BigEndian.Uint64(buf[0:]) ^ binary.BigEndian.Uint64(buf[8:])
+
 				if ip.IsValid() {
 					if ip.Unmap().Is4() {
 						wkd.m[i].v4ClientHLL.AddRaw(hllHash)
@@ -509,7 +497,7 @@ func TestNewHistogramDataAndWriteParquet(t *testing.T) {
 		dawgFinder: finder,
 	}
 	exact.ACount = 1
-	exact.v4ClientHLL.AddRaw(murmur3.Sum64(netip.MustParseAddr("198.51.100.20").AsSlice()))
+	exact.v4ClientHLL.AddRaw(4444)
 
 	var buf bytes.Buffer
 	if err := edm.writeHistogramParquet(&buf, time.Unix(10, 0), wkd, defaultLabelLimit); err != nil {
