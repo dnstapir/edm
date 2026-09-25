@@ -2,14 +2,13 @@ package runner
 
 import (
 	"fmt"
-	"net/netip"
 	"strings"
 	"sync/atomic"
 	"time"
 
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 const dawgNotFound = -1
@@ -87,14 +86,22 @@ func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
 	return dawgIndex, false
 }
 
+type hllDataType uint8
+
+const (
+	hllOther hllDataType = 0
+	hllIPv4  hllDataType = 1
+	hllIPv6  hllDataType = 2
+)
+
 type wkdUpdate struct {
 	// embed histogramData so we automatically have access to all the
 	// fields we may want to increment with an update message.
 	histogramData
 	dawgIndex   int
 	suffixMatch bool
+	hllDataType hllDataType
 	hllHash     uint64
-	ip          netip.Addr
 	msg         *dns.Msg
 	dawgModTime time.Time
 	retry       int
@@ -136,23 +143,28 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 	close(wkd.retryerDone)
 }
 
-func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
+func (wkd *wellKnownDomainsTracker) sendUpdate(dt *dnstap.Message, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
 	wu := wkdUpdate{
 		dawgIndex:   dawgIndex,
 		suffixMatch: suffixMatch,
 		dawgModTime: dawgModTime,
+		hllDataType: hllOther,
 		hllHash:     0,
 		retryLimit:  10,
 		msg:         msg,
 	}
 
-	// Create hash from IP address for use in HLL data
-	ip, ok := netip.AddrFromSlice(ipBytes)
-	if ok {
-		// We use a deterministic seed by design to be able to combine HLL
-		// datasets.
-		wu.hllHash = murmur3.Sum64(ipBytes)
-		wu.ip = ip
+	// get an identifier based on the Query Address as the HLL Hash
+	wu.hllHash = ipToIdentifier(dt.QueryAddr)
+
+	// if the identifier is of known origin => set the type
+	if dt.HasFlags(dnstap.ValidQueryAddr) {
+		switch {
+		case dt.QueryAddr.Is4():
+			wu.hllDataType = hllIPv4
+		case dt.QueryAddr.Is6():
+			wu.hllDataType = hllIPv6
+		}
 	}
 
 	// Counters based on header
