@@ -437,7 +437,6 @@ type DnstapMinimiser struct {
 	// bounded leak is acceptable. ignoredClientsIPSet is plain heap memory with
 	// no Close, reclaimed by the GC like any other dropped pointer.
 	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
-	ignoredClientCIDRsParsed      atomic.Uint64
 	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
 	dawgReloadRequested           atomic.Bool // set on SIGHUP, consumed by rotateTracker
 	httpClientCertStore           *certStore  // client cert/key for mTLS authentication
