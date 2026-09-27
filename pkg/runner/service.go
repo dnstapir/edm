@@ -225,13 +225,16 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// return path, including the early error returns during setup.
 	var serverWg sync.WaitGroup
 
-	pprofServer := newPprofServer(startConf.PprofListenAddr)
-	serverWg.Go(func() {
-		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			edm.log.Error("pprofServer error", "error", err)
-		}
-	})
+	var pprofServer *http.Server
+	if startConf.EnablePprof {
+		pprofServer = newPprofServer(startConf.PprofListenAddr)
+		serverWg.Go(func() {
+			err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				edm.log.Error("pprofServer error", "error", err)
+			}
+		})
+	}
 
 	metricsServer := edm.newMetricsServer(ctx, startConf.MetricsListenAddr, startConf.EnableManualParquetRotation)
 	serverWg.Go(func() {
@@ -241,16 +244,17 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		}
 	})
 
-	// Gracefully shut down both HTTP servers whenever Run returns (early
-	// error paths included), giving each its own deadline so the second
-	// shutdown never inherits an exhausted context, then wait for the
-	// listener goroutines to exit.
+	// Gracefully shut down the started HTTP servers whenever Run returns
+	// (early error paths included), giving each its own deadline, then wait
+	// for the listener goroutines to exit.
 	defer func() {
-		pprofCtx, pprofCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := pprofServer.Shutdown(pprofCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			edm.log.Error("pprofServer shutdown error", "error", err)
+		if pprofServer != nil {
+			pprofCtx, pprofCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := pprofServer.Shutdown(pprofCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				edm.log.Error("pprofServer shutdown error", "error", err)
+			}
+			pprofCancel()
 		}
-		pprofCancel()
 
 		metricsCtx, metricsCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := metricsServer.Shutdown(metricsCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
