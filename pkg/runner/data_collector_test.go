@@ -151,10 +151,9 @@ func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*DnstapM
 
 func TestDataCollector(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		tc := defaultTC
 		deps := defaultDependencies()
 		edm := &DnstapMinimiser{
-			conf:               Config{HistogramHLLExplicitThreshold: tc.CryptopanAddressEntries},
+			conf:               Config{HistogramHLLExplicitThreshold: defaultTC.HistogramHLLExplicitThreshold},
 			log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 			deps:               deps,
 			sessionCollectorCh: make(chan *sessionData, 1),
