@@ -59,7 +59,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 
 	if conf.IgnoredClientIPsFile == "" {
 		edm.ignoredClientsIPSet.Store(nil)
-		edm.ignoredClientCIDRsParsed.Store(0)
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list unset", "filename", conf.IgnoredClientIPsFile, "num_cidrs", 0)
 		return nil
 	}
@@ -106,7 +105,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 	}
 
 	edm.ignoredClientsIPSet.Store(ipset)
-	edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
 	if ipset != nil {
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
@@ -115,10 +113,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 	}
 
 	return nil
-}
-
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
-	return edm.ignoredClientCIDRsParsed.Load()
 }
 
 // dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is

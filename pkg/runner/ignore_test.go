@@ -20,10 +20,9 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
-	numCIDRs := edm.getNumIgnoredClientCIDRs()
 
-	// Magic value counted by hand
-	var expectedNumCIDRs uint64 = 6
+	numCIDRs := len(edm.ignoredClientsIPSet.Load().Prefixes())
+	expectedNumCIDRs := 6
 
 	if numCIDRs != expectedNumCIDRs {
 		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile1, numCIDRs, expectedNumCIDRs)
@@ -103,7 +102,9 @@ func TestIgnoredClientIPsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
-	numCIDRs = edm.getNumIgnoredClientCIDRs()
+
+	numCIDRs = len(edm.ignoredClientsIPSet.Load().Prefixes())
+	expectedNumCIDRs = 6
 
 	if numCIDRs != expectedNumCIDRs {
 		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile2, numCIDRs, expectedNumCIDRs)
@@ -193,10 +194,9 @@ func TestIgnoredClientIPsEmptyLinesComments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
-	numCIDRs := edm.getNumIgnoredClientCIDRs()
 
-	// Magic value counted by hand
-	var expectedNumCIDRs uint64 = 2
+	numCIDRs := len(edm.ignoredClientsIPSet.Load().Prefixes())
+	expectedNumCIDRs := 2
 
 	if numCIDRs != expectedNumCIDRs {
 		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile, numCIDRs, expectedNumCIDRs)
@@ -252,15 +252,16 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
-	// Magic value counted by hand
-	expectedValidNumCIDRs := 2
-
 	// Make sure we actually got anything loaded from the file with content
 	if edm.ignoredClientsIPSet.Load() == nil {
 		t.Fatalf("edm.ignoredClientsIPSet parsed from '%s' should not be nil", testdataFile)
 	}
-	if edm.getNumIgnoredClientCIDRs() < 1 {
-		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile, edm.getNumIgnoredClientCIDRs(), expectedValidNumCIDRs)
+
+	numCIDRs := len(edm.ignoredClientsIPSet.Load().Prefixes())
+	expectedNumCIDRs := 6
+
+	if numCIDRs != expectedNumCIDRs {
+		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile, numCIDRs, expectedNumCIDRs)
 	}
 
 	testdataFile = "testdata/ignored-client-ips.empty"
@@ -268,13 +269,6 @@ func TestIgnoredClientIPsEmpty(t *testing.T) {
 	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to parse testdata: %s", err)
-	}
-
-	// Magic value counted by hand
-	var expectedNumCIDRs uint64
-
-	if edm.getNumIgnoredClientCIDRs() != expectedNumCIDRs {
-		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", testdataFile, edm.getNumIgnoredClientCIDRs(), expectedNumCIDRs)
 	}
 
 	if got := edm.ignoredClientsIPSet.Load(); got != nil {
@@ -331,19 +325,19 @@ func TestIgnoredClientIPsUnset(t *testing.T) {
 		t.Fatalf("unable to parse testdata: %s", err)
 	}
 
+	if got := edm.ignoredClientsIPSet.Load(); got == nil {
+		t.Fatalf("edm.ignoredClientsIPSet should not be nil, have: nil")
+	}
+
 	// Now run the function with an empty filename
 	edm.conf.IgnoredClientIPsFile = ""
 	err = edm.setIgnoredClientIPs()
 	if err != nil {
 		t.Fatalf("unable to set empty filename: %s", err)
 	}
-	numCIDRs := edm.getNumIgnoredClientCIDRs()
 
-	// Magic value counted by hand
-	var expectedNumCIDRs uint64
-
-	if numCIDRs != expectedNumCIDRs {
-		t.Fatalf("unexpected number of CIDRs parsed from '%s': have: %d, want: %d", "", numCIDRs, expectedNumCIDRs)
+	if got := edm.ignoredClientsIPSet.Load(); got != nil {
+		t.Fatalf("edm.ignoredClientsIPSet should be nil, have: %#v", got)
 	}
 
 	ipLookupTests := []struct {

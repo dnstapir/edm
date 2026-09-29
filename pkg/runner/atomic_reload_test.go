@@ -80,7 +80,6 @@ func TestConcurrentIgnoredClientIPsReload(t *testing.T) {
 					dt.Message.QueryAddress = addr.AsSlice()
 				})
 				_ = edm.clientIPIsIgnored(dt)
-				_ = edm.getNumIgnoredClientCIDRs()
 				i++
 			}
 		}(r)
