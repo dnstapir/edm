@@ -67,26 +67,30 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 			return
 		}
 
-		if _, exists := wkd.m[wu.dawgIndex]; !exists {
-			wkd.m[wu.dawgIndex] = edm.newHistogramData(hllSettings, wu.suffixMatch)
+		// extract a pointer to the histogramData to avoid a
+		// map lookup for each change below
+		hd, exists := wkd.m[wu.dawgIndex]
+		if !exists {
+			hd = edm.newHistogramData(hllSettings, wu.suffixMatch)
+			wkd.m[wu.dawgIndex] = hd
 		}
 
-		wkd.m[wu.dawgIndex].OKCount += wu.OKCount
-		wkd.m[wu.dawgIndex].NXCount += wu.NXCount
-		wkd.m[wu.dawgIndex].FailCount += wu.FailCount
-		wkd.m[wu.dawgIndex].ACount += wu.ACount
-		wkd.m[wu.dawgIndex].AAAACount += wu.AAAACount
-		wkd.m[wu.dawgIndex].MXCount += wu.MXCount
-		wkd.m[wu.dawgIndex].NSCount += wu.NSCount
-		wkd.m[wu.dawgIndex].OtherTypeCount += wu.OtherTypeCount
-		wkd.m[wu.dawgIndex].OtherRcodeCount += wu.OtherRcodeCount
-		wkd.m[wu.dawgIndex].NonINCount += wu.NonINCount
+		hd.OKCount += wu.OKCount
+		hd.NXCount += wu.NXCount
+		hd.FailCount += wu.FailCount
+		hd.ACount += wu.ACount
+		hd.AAAACount += wu.AAAACount
+		hd.MXCount += wu.MXCount
+		hd.NSCount += wu.NSCount
+		hd.OtherTypeCount += wu.OtherTypeCount
+		hd.OtherRcodeCount += wu.OtherRcodeCount
+		hd.NonINCount += wu.NonINCount
 
 		if wu.ip.IsValid() {
 			if wu.ip.Unmap().Is4() {
-				wkd.m[wu.dawgIndex].v4ClientHLL.AddRaw(wu.hllHash)
+				hd.v4ClientHLL.AddRaw(wu.hllHash)
 			} else {
-				wkd.m[wu.dawgIndex].v6ClientHLL.AddRaw(wu.hllHash)
+				hd.v6ClientHLL.AddRaw(wu.hllHash)
 			}
 		}
 	}
