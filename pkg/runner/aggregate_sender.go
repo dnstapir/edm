@@ -62,10 +62,18 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 	keyAlg, _ := signingJwk.Algorithm()
 	log.Info("creating HTTP signer", "key_id", keyID, "key_alg", keyAlg)
 
+	// Configure fields to be signed
+	fields := httpsign.NewFields()
+	fields.AddHeader("aggregate-interval")
+	fields.AddHeader("content-digest") // The Content-Digest header will be auto-generated
+	fields.AddHeader("content-length")
+	fields.AddHeader("content-type")
+	fields.AddHeaderOptional("content-encoding")
+
 	// Create signer and wrapped HTTP client
 	signer, err := httpsign.NewEd25519Signer(signingKey,
 		httpsign.NewSignConfig().SetKeyID(keyID),
-		httpsign.Headers("content-type", "content-length", "content-digest")) // The Content-Digest header will be auto-generated, headers selected by https://github.com/dnstapir/aggregate-receiver/blob/main/aggrec/openapi.yaml
+		*fields)
 	if err != nil {
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create signer: %w", err)
 	}
