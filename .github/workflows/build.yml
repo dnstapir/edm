@@ -30,9 +30,11 @@ jobs:
         run: go generate ./...
 
       - name: Go vet
+        if: always()
         run: go vet ./...
 
       - name: Check gofmt
+        if: always()
         run: |
           unformatted="$(gofmt -l .)"
           if [ -n "$unformatted" ]; then
@@ -42,19 +44,23 @@ jobs:
           fi
 
       - name: Staticcheck
+        if: always()
         run: |
           go install honnef.co/go/tools/cmd/staticcheck@1285a6a5ec1e0ebb658f49e82b6c566a878cc3cb # v0.8.1
           staticcheck ./...
 
       - name: golangci-lint
+        if: always()
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
 
       - name: Run Gosec Security Scanner
+        if: always()
         uses: securego/gosec@8c77519419e934a3e158dbf1a3fbbc0871b8c691 # NOTE using current HEAD since latest tagged version didn't work
         with:
           args: ./...
 
       - name: Test
+        if: always()
         run: go test -race -coverprofile=coverage.out ./...
 
       - name: Calculate code coverage
