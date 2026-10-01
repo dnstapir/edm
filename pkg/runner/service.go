@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -262,6 +263,29 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}()
 
 	wg.Go(func() { edm.monitorChannelLen(ctx) })
+
+	// TEMPORARY MEASURE, added 2026-09-24
+	go func() {
+		// This runaway go routine handles removal of the deprecated mqtt directory as
+		// well as cleaning up the partially deprecated parquet directory. The action
+		// is fire and forget/best effort and errors are not handled.
+		//
+		// This functionality should be removed within a few releases.
+		//
+		// This does remove any current session files that may be on disk, which is
+		// intentional since no one should be using that and it would be good to clean
+		// it up should any files exist.
+		//
+		// NOTE: Should the session writer be active, which it shouldn't, then this may
+		// race against that writer when interacting with the file system.
+		// NOTE: as an extra heuristic we only do the cleanup if the DataDir, after the
+		// filepath.Clean function contains the string "dnstapir".
+		if strings.Contains(filepath.Clean(startConf.DataDir), "dnstapir") {
+			os.RemoveAll(filepath.Join(startConf.DataDir, "parquet")) // #nosec G104 -- best effort
+			os.RemoveAll(filepath.Join(startConf.DataDir, "mqtt"))    // #nosec G104 -- best effort
+		}
+	}()
+	// TEMPORARY MEASURE, added 2026-09-24
 
 	// Start record writers and data senders in the background
 	wg.Go(func() { edm.sessionWriter(startConf.DataDir) })
