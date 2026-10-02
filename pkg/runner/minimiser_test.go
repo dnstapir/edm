@@ -21,7 +21,7 @@ import (
 
 func TestRunMinimiserFlows(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 		edm.sessionCollectorCh = make(chan *sessionData, 1)
@@ -106,7 +106,7 @@ func TestRunMinimiserFlows(t *testing.T) {
 // buffer does not corrupt earlier or later frames.
 func TestRunMinimiserScratchClientIP(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 		edm.sessionCollectorCh = make(chan *sessionData, 1)
@@ -158,7 +158,7 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 
 func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
 		edm.sessionCollectorCh = make(chan *sessionData)
@@ -191,7 +191,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		cancel()
 		wg.Wait()
 
-		edm = newSynctestDnstapMinimiser(t, defaultTC)
+		edm = newTestDnstapMinimiser(t, defaultTC)
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON)
 		edm.sessionCollectorCh = make(chan *sessionData)
@@ -224,7 +224,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 // send would deadlock and waitOrFail would time out.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
@@ -320,7 +320,7 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {
 	t.Helper()
 
-	edm := newSynctestDnstapMinimiser(t, defaultTC)
+	edm := newTestDnstapMinimiser(t, defaultTC)
 	edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
 
 	seenQnameLRU, err := lru.New[string, struct{}](10)

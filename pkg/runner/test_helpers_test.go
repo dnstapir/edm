@@ -225,29 +225,6 @@ func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Crypt
 	return cryptopan.New(sum[:])
 }
 
-func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
-	t.Helper()
-
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	return newSynctestDnstapMinimiserWithLogger(t, tc, logger)
-}
-
-func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
-	t.Helper()
-	useWritableDataDir(t, &tc)
-
-	deps := newTestDependencies()
-
-	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
-	}
-
-	return edm
-}
-
 func writeTempFile(t testing.TB, name string, data []byte) string {
 	t.Helper()
 
