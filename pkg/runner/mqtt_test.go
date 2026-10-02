@@ -39,7 +39,7 @@ import (
 // it.
 func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		// The worker ranges over mqttPubCh and selects on ctx.Done() for
 		// cancellation. Bind a fresh context so this test does not affect other
@@ -90,7 +90,7 @@ func TestMqttSignWorkerSignsAndForwards(t *testing.T) {
 // context and observe that the worker exits.
 func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -132,7 +132,7 @@ func TestMqttSignWorkerExitsOnContextCancelWhenSignedFull(t *testing.T) {
 // design choice; this test pins it.
 func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -194,7 +194,7 @@ func TestMqttSignWorkerSkipsBadKey(t *testing.T) {
 // is signed once the algorithm is restored.
 func TestMqttSignWorkerSkipsKeyWithoutAlgorithm(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -273,7 +273,7 @@ func (cm *blockingMQTTConnectionManager) PublishViaQueue(ctx context.Context, pu
 
 func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -322,7 +322,7 @@ func TestMqttPublishWorkerPublishesSerially(t *testing.T) {
 // cancellation.
 func TestMqttPublishWorkerExitsOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
@@ -441,7 +441,7 @@ func TestParseMQTTServerURL(t *testing.T) {
 
 func TestMQTTConfigAndPublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
@@ -487,7 +487,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 
 func TestMQTTPipelinePublishPath(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		jwk := testJWK(t)
@@ -533,7 +533,7 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 
 func TestNewQnamePublisher(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
@@ -644,7 +644,7 @@ func TestSetupMQTT(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			conn := &fakeAutoPahoConnection{publishedCh: make(chan struct{}, 1)}
 
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.deps.MQTTFactory = testMQTTFactory{
 				mqttFactory: edm.deps.MQTTFactory,
 				newConnection: func(context.Context, autopaho.ClientConfig) (mqttConnectionManager, error) {
