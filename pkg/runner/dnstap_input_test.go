@@ -112,10 +112,13 @@ func (listener *testNetListener) isClosed() bool {
 	}
 }
 
+// testDnstapInput is a controllable DNSTAP input for lifecycle tests.
 type testDnstapInput struct {
 	ready chan struct{}
 	done  chan struct{}
 	err   error
+	// frames are sent before ready is closed.
+	frames [][]byte
 	// cancelSeen, if non-nil, is closed once ReadInto has observed ctx
 	// cancellation, letting tests synchronize with Run's shutdown path.
 	cancelSeen chan struct{}
@@ -133,9 +136,12 @@ func newBlockingTestDnstapInput() *testDnstapInput {
 	}
 }
 
-func (input *testDnstapInput) ReadInto(ctx context.Context, _ chan<- []byte) error {
-	input.signalReady()
+func (input *testDnstapInput) ReadInto(ctx context.Context, output chan<- []byte) error {
 	defer input.signalDone()
+	for _, frame := range input.frames {
+		output <- frame
+	}
+	input.signalReady()
 	if input.err != nil {
 		return input.err
 	}

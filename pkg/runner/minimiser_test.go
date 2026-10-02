@@ -211,36 +211,14 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 	})
 }
 
-// TestRunMinimiserSessionSendUnblocksOnContextCancel verifies that
-// runMinimiser stops blocking on a full sessionCollectorCh once the context
-// is cancelled.
-//
-// sessionCollectorCh is pre-filled to capacity so the session send blocks, and
-// newQnamePublisherCh is buffered (cap 1) so runMinimiser's non-blocking
-// publisher send lands in the buffer instead of being dropped by its default
-// case; receiving that event proves runMinimiser is past the publisher send and
-// into the (blocked) session send. With the send guarded by a select on
-// ctx.Done, cancelling the context lets runMinimiser exit; an unconditional
-// send would deadlock and waitOrFail would time out.
+// TestRunMinimiserSessionSendUnblocksOnContextCancel verifies cancellation
+// unblocks a full session collector without consuming further input.
 func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm, seenQnameLRU, pdb, wkdTracker := newRunMinimiserTestFixture(t, "known.example.")
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
-		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
 		edm.sessionCollectorCh = make(chan *sessionData, 1)
-		edm.sessionCollectorCh <- &sessionData{}
-
-		seenQnameLRU, err := lru.New[string, struct{}](10)
-		if err != nil {
-			t.Fatalf("lru.New: %s", err)
-		}
-		pdb := newTestPebble(t)
-		wkdTracker, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Unix(0, 0))
-		if err != nil {
-			t.Fatalf("newWellKnownDomainsTracker: %s", err)
-		}
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
@@ -249,17 +227,22 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 		frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
 		edm.inputChannel <- frame
-
-		// Receiving the new_qname event proves runMinimiser is past the
-		// publisher send and about to perform the (blocked) session send.
 		select {
-		case <-edm.newQnamePublisherCh:
+		case <-edm.sessionCollectorCh:
 		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for new_qname event")
+			t.Fatal("timed out waiting for session")
 		}
 
+		// Fill the collector and wait for the next frame to block on it.
+		edm.sessionCollectorCh <- &sessionData{}
+		edm.inputChannel <- frame
+		synctest.Wait()
+		edm.inputChannel <- frame
 		cancel()
 		waitOrFail(t, &wg, 2*time.Second, "runMinimiser did not exit while blocked on a full sessionCollectorCh after context cancellation")
+		if got := len(edm.inputChannel); got != 1 {
+			t.Fatalf("buffered frames after abort = %d, want 1", got)
+		}
 	})
 }
 
