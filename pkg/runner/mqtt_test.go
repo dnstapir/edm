@@ -531,28 +531,102 @@ func (f *fakeAutoPahoConnection) PublishViaQueue(_ context.Context, p *autopaho.
 	return nil
 }
 
+type testQnameStore struct {
+	populated atomic.Bool
+}
+
+func (s *testQnameStore) Has(string) (bool, error)    { return false, nil }
+func (s *testQnameStore) MarkSeen(string, bool) error { return nil }
+func (s *testQnameStore) Populated() bool             { return s.populated.Load() }
+func (s *testQnameStore) Close() error                { return nil }
+
 func TestNewQnamePublisher(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-		edm.mqttPubCh = make(chan []byte, 1)
+	// create the event that we will send below
+	event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
 
-		var wg sync.WaitGroup
-		wg.Go(func() { edm.newQnamePublisher(ctx) })
-		event := protocols.NewQnameJSON{Type: protocols.NewQnameJSONType, Qname: "example.com.", Version: protocols.NewQnameJSONVersion}
-		edm.newQnamePublisherCh <- &event
-		close(edm.newQnamePublisherCh)
-		wg.Wait()
+	t.Run("Starting with populated seen qname store", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup edm
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+			edm.mqttPubCh = make(chan []byte, 1)
 
-		msg := <-edm.mqttPubCh
-		if !strings.Contains(string(msg), "example.com.") {
-			t.Fatalf("MQTT payload = %s", msg)
-		}
-		if _, ok := <-edm.mqttPubCh; ok {
-			t.Fatal("mqttPubCh was not closed")
-		}
+			// Start newQnamePublisher with a mocked seenQnameStore where we can
+			// controll if it is populated or not. Right now it is populated.
+			seenQnameStore := testQnameStore{}
+			seenQnameStore.populated.Store(true)
+			ctx, cancel := context.WithCancel(t.Context())
+			go edm.newQnamePublisher(ctx, &seenQnameStore)
+
+			// defer cleanup so it runs upon t.Fatal* too
+			defer cancel()
+			defer close(edm.newQnamePublisherCh)
+
+			// send an event while the seen qname store is populated => it will
+			// be forwarded to MQTT, ie. put on the edm.mqttPubCh channel
+			edm.newQnamePublisherCh <- &event
+			synctest.Wait()
+			msg := <-edm.mqttPubCh
+			if !strings.Contains(string(msg), "example.com.") {
+				t.Fatalf("MQTT payload = %s", msg)
+			}
+			if len(edm.newQnamePublisherCh) != 0 || len(edm.mqttPubCh) != 0 {
+				t.Fatal("Queues aren't empty")
+			}
+		})
+	})
+
+	t.Run("Starting with unpopulated seen qname store", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup edm
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
+			edm.mqttPubCh = make(chan []byte, 1)
+
+			// Start newQnamePublisher with a mocked seenQnameStore where we can
+			// controll if it is populated or not. Right now it is not populated.
+			seenQnameStore := testQnameStore{}
+			ctx, cancel := context.WithCancel(t.Context())
+			go edm.newQnamePublisher(ctx, &seenQnameStore)
+
+			// defer cleanup so it runs upon t.Fatal* too
+			defer cancel()
+			defer close(edm.newQnamePublisherCh)
+
+			// send an event while the seen qname store is not populated => it will
+			// be discarded, ie. not put on the edm.mqttPubCh channel
+			edm.newQnamePublisherCh <- &event
+			synctest.Wait()
+			if len(edm.newQnamePublisherCh) != 0 || len(edm.mqttPubCh) != 0 {
+				t.Fatal("Queues aren't empty")
+			}
+
+			// now let's make the seen qname store populated
+			seenQnameStore.populated.Store(true)
+			synctest.Wait()
+
+			// the event will still be discarded since populated is only checked once
+			// in a while
+			edm.newQnamePublisherCh <- &event
+			synctest.Wait()
+			if len(edm.newQnamePublisherCh) != 0 || len(edm.mqttPubCh) != 0 {
+				t.Fatal("Queues aren't empty")
+			}
+
+			// now wait sufficient time so that the populated check is passed
+			synctest.Sleep(24 * time.Hour)
+
+			// and now the event will pass through
+			edm.newQnamePublisherCh <- &event
+			synctest.Wait()
+			msg := <-edm.mqttPubCh
+			if !strings.Contains(string(msg), "example.com.") {
+				t.Fatalf("MQTT payload = %s", msg)
+			}
+			if len(edm.newQnamePublisherCh) != 0 || len(edm.mqttPubCh) != 0 {
+				t.Fatal("Queues aren't empty")
+			}
+		})
 	})
 }
 
