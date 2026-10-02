@@ -2,10 +2,8 @@ package runner
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"io"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
@@ -33,21 +31,20 @@ type dnsLabels struct {
 
 type sessionData struct {
 	dnsLabels
-	ServerID     []byte  `parquet:"server_id"`
-	QueryTime    *int64  `parquet:"query_time,timestamp(microsecond)"`
-	ResponseTime *int64  `parquet:"response_time,timestamp(microsecond)"`
-	SourceIPv4   *uint32 `parquet:"source_ipv4"`
-	DestIPv4     *uint32 `parquet:"dest_ipv4"`
-	// IPv6 addresses are split up into a network and host part, for one thing go does not have native uint128 types
-	SourceIPv6Network *uint64 `parquet:"source_ipv6_network"`
-	SourceIPv6Host    *uint64 `parquet:"source_ipv6_host"`
-	DestIPv6Network   *uint64 `parquet:"dest_ipv6_network"`
-	DestIPv6Host      *uint64 `parquet:"dest_ipv6_host"`
-	SourcePort        *uint16 `parquet:"source_port"`
-	DestPort          *uint16 `parquet:"dest_port"`
-	DNSProtocol       *uint8  `parquet:"dns_protocol"`
-	QueryMessage      []byte  `parquet:"query_message"`
-	ResponseMessage   []byte  `parquet:"response_message"`
+	ServerID     []byte `parquet:"server_id"`
+	QueryTime    *int64 `parquet:"query_time,timestamp(microsecond)"`
+	ResponseTime *int64 `parquet:"response_time,timestamp(microsecond)"`
+
+	SourceIdentifier     uint64          `parquet:"source_identifier"`
+	DestIdentifier       *uint64         `parquet:"dest_identifier"`
+	SourceIdentifierType IdentifierType  `parquet:"source_identifier_type"`
+	DestIdentifierType   *IdentifierType `parquet:"dest_identifier_type"`
+
+	SourcePort      *uint16 `parquet:"source_port"`
+	DestPort        *uint16 `parquet:"dest_port"`
+	DNSProtocol     *uint8  `parquet:"dns_protocol"`
+	QueryMessage    []byte  `parquet:"query_message"`
+	ResponseMessage []byte  `parquet:"response_message"`
 }
 
 type prevSessions struct {
@@ -128,73 +125,38 @@ func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
-func (edm *DnstapMinimiser) newSession(dt *dnstap.Message, msg *dns.Msg, labelLimit int) *sessionData {
+func (edm *DnstapMinimiser) newSession(pdt pseudonymised, msg *dns.Msg, labelLimit int) *sessionData {
 	sd := &sessionData{}
 
-	if dt.HasFlags(dnstap.ValidQueryPort) {
-		sd.SourcePort = new(dt.QueryPort)
+	if pdt.HasFlags(dnstap.ValidQueryPort) {
+		sd.SourcePort = new(pdt.QueryPort)
 	}
 
-	if dt.HasFlags(dnstap.ValidResponsePort) {
-		sd.DestPort = new(dt.ResponsePort)
+	if pdt.HasFlags(dnstap.ValidResponsePort) {
+		sd.DestPort = new(pdt.ResponsePort)
 	}
 
 	edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &sd.dnsLabels)
 
-	if dt.IsQuery {
-		sd.QueryMessage = bytes.Clone(dt.Message)
-		sd.QueryTime = new(dt.Timestamp.UnixMicro())
+	if pdt.IsQuery {
+		sd.QueryMessage = bytes.Clone(pdt.Message.Message)
+		sd.QueryTime = new(pdt.Timestamp.UnixMicro())
 	} else {
-		sd.ResponseMessage = bytes.Clone(dt.Message)
-		sd.ResponseTime = new(dt.Timestamp.UnixMicro())
+		sd.ResponseMessage = bytes.Clone(pdt.Message.Message)
+		sd.ResponseTime = new(pdt.Timestamp.UnixMicro())
 	}
 
-	if len(dt.Identity) != 0 {
-		sd.ServerID = []byte(dt.Identity)
+	if len(pdt.Identity) != 0 {
+		sd.ServerID = []byte(pdt.Identity)
 	}
 
-	if dt.HasFlags(dnstap.ValidQueryAddr) {
-		switch {
-		case dt.QueryAddr.Is4():
-			sourceIPInt, err := ipBytesToInt(dt.QueryAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.QueryAddr", "error", err)
-			} else {
-				sd.SourceIPv4 = new(sourceIPInt)
-			}
-		case dt.QueryAddr.Is6():
-			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.QueryAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.QueryAddr", "error", err)
-			} else {
-				sd.SourceIPv6Network = new(sourceIPIntNetwork)
-				sd.SourceIPv6Host = new(sourceIPIntHost)
-			}
-		}
-	}
+	sd.SourceIdentifier = pdt.QueryAddrAsIdentifier()
+	sd.SourceIdentifierType = pdt.QueryAddrType
+	sd.DestIdentifier = new(pdt.ResponseAddrAsIdentifier())
+	sd.DestIdentifierType = new(pdt.ResponseAddrType)
 
-	if dt.HasFlags(dnstap.ValidResponseAddr) {
-		switch {
-		case dt.ResponseAddr.Is4():
-			destIPInt, err := ipBytesToInt(dt.ResponseAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.ResponseAddr", "error", err)
-			} else {
-				sd.DestIPv4 = new(destIPInt)
-			}
-		case dt.ResponseAddr.Is6():
-			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.ResponseAddr.AsSlice())
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.ResponseAddr", "error", err)
-			} else {
-				sd.DestIPv6Network = new(dipIntNetwork)
-				sd.DestIPv6Host = new(dipIntHost)
-			}
-		}
-	}
-
-	if dt.HasFlags(dnstap.ValidSocketProtocol) {
-		sd.DNSProtocol = new(dt.SocketProtocol)
+	if pdt.HasFlags(dnstap.ValidSocketProtocol) {
+		sd.DNSProtocol = new(pdt.SocketProtocol)
 	}
 
 	return sd
@@ -230,38 +192,6 @@ func (edm *DnstapMinimiser) sessionWriter(dataDir string) {
 	}
 
 	edm.log.Info("sessionWriter: exiting loop")
-}
-
-func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
-	ip, ok := netip.AddrFromSlice(ip4Bytes)
-	if !ok {
-		return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
-	}
-	ip = ip.Unmap()
-	if !ip.Is4() {
-		return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
-	}
-
-	// Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
-	ip4 := ip.As4()
-
-	ipInt := binary.BigEndian.Uint32(ip4[:])
-
-	return ipInt, nil
-}
-
-func ip6BytesToInt(ip6Bytes []byte) (uint64, uint64, error) {
-	ip, ok := netip.AddrFromSlice(ip6Bytes)
-	if !ok {
-		return 0, 0, fmt.Errorf("ip6BytesToInt: unable to parse bytes")
-	}
-
-	ip16 := ip.As16()
-
-	ipIntNetwork := binary.BigEndian.Uint64(ip16[:8])
-	ipIntHost := binary.BigEndian.Uint64(ip16[8:])
-
-	return ipIntNetwork, ipIntHost, nil
 }
 
 func (edm *DnstapMinimiser) writeSessionParquet(output io.Writer, ps *prevSessions) error {

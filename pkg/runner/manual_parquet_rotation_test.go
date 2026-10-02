@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"net/netip"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,7 +13,6 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
@@ -27,7 +25,6 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)
-	ip := netip.MustParseAddr("198.51.100.10")
 	dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
 	wkdTracker.updateCh <- wkdUpdate{
 		dawgIndex:   dawgIndex,
@@ -37,8 +34,8 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 			ACount:  1,
 			OKCount: 1,
 		},
-		hllHash: murmur3.Sum64(ip.AsSlice()),
-		ip:      ip,
+		hllDataSource: IdentifierIPv4,
+		hllHash:       4444,
 	}
 
 	rotationTime := time.Now().UTC().Add(time.Second)

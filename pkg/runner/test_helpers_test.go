@@ -3,12 +3,13 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -28,55 +29,12 @@ import (
 	"github.com/cockroachdb/pebble"
 	extdnstap "github.com/dnstap/golang-dnstap"
 	"github.com/dnstapir/edm/pkg/dnstap"
-	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/yawning/cryptopan"
 	"google.golang.org/protobuf/proto"
 )
-
-// testPseudonymiseDnstap is the test-side equivalent of the producer
-// hot path. pseudonymiseDnstap takes the per-worker cache + cryptopan
-// snapshot as parameters; tests don't run inside a real worker so they
-// need their own cache. We give each *DnstapMinimiser instance one shared
-// cache via a sync.Map keyed by the minimiser pointer, so repeated test
-// calls accumulate hits like a single worker would.
-//
-// This is purely a test convenience - production code does not use it.
-var testCryptopanCaches sync.Map // map[*DnstapMinimiser]*lru.Cache[netip.Addr, netip.Addr]
-
-func (edm *DnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Message) {
-	cache := edm.testCryptopanCache()
-	edm.pseudonymiseDnstap(dt, edm.cryptopan.Load(), cache)
-}
-
-// testCryptopanCache returns the shared per-edm-instance cache, creating
-// it lazily so callers don't have to set it up. cacheEntries is read from
-// the current config; 0 disables caching, mirroring production behaviour.
-func (edm *DnstapMinimiser) testCryptopanCache() *lru.Cache[netip.Addr, netip.Addr] {
-	conf := edm.getConfig()
-	if conf.CryptopanAddressEntries == 0 {
-		return nil
-	}
-	if c, ok := testCryptopanCaches.Load(edm); ok {
-		return c.(*lru.Cache[netip.Addr, netip.Addr])
-	}
-	c, err := lru.New[netip.Addr, netip.Addr](conf.CryptopanAddressEntries)
-	if err != nil {
-		panic(err)
-	}
-	actual, _ := testCryptopanCaches.LoadOrStore(edm, c)
-	return actual.(*lru.Cache[netip.Addr, netip.Addr])
-}
-
-// testResetCryptopanCache drops the test-side cache for edm. Used by
-// tests after setCryptopan to mirror the per-worker Purge that
-// runMinimiser does on cryptopanGen change.
-func (edm *DnstapMinimiser) testResetCryptopanCache() {
-	testCryptopanCaches.Delete(edm)
-}
 
 func testRunContext(t testing.TB) (context.Context, context.CancelFunc) {
 	t.Helper()
@@ -154,7 +112,6 @@ func newDefaultTC() testConfiger {
 	c := defaultTestConfig()
 	c.CryptopanKey = "key1"
 	c.CryptopanKeySalt = "aabbccddeeffgghh"
-	c.CryptopanAddressEntries = 10
 	return testConfiger{Config: c}
 }
 
@@ -173,10 +130,10 @@ func useWritableDataDir(t testing.TB, tc *testConfiger) {
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
-	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies())
+	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies(), true)
 }
 
-func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
+func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies, usePrettyPseudonymiser bool) *DnstapMinimiser {
 	t.Helper()
 	useWritableDataDir(t, &tc)
 
@@ -188,23 +145,35 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 
-	return edm
-}
-
-func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
-	t.Helper()
-	useWritableDataDir(t, &tc)
-
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := NewDnstapMinimiser(tc, logger)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
+	// replace the pseudonymiser with a prettifier to make the test cases more
+	// readable for humans
+	if usePrettyPseudonymiser {
+		pseudonymiser := cipher.Block(prettyTestCipher{})
+		edm.pseudonymiser.Store(&pseudonymiser)
 	}
 
 	return edm
 }
+
+// This implementation of cipher.Block is used as a pseudonymiser in test cases
+// to make the test cases more readable for humans. See comments in Encrypt()
+// method for details.
+type prettyTestCipher struct{}
+
+func (prettyTestCipher) BlockSize() int { panic("should not be called") }
+func (prettyTestCipher) Encrypt(src []byte, dst []byte) {
+	// for IPv4 we store the IP addres "prettified" in the first part since that
+	// is what is used to determine the identifier in ipToIdentifier() to help
+	// make test more readable
+	// ex. 192.0.2.0 becomes the integer 192_000_002_000
+	if netip.AddrFrom16([16]byte(src)).Is4In6() {
+		pretty := uint64(src[12])*1000*1000*1000 + uint64(src[13])*1000*1000 + uint64(src[14])*1000 + uint64(src[15])
+		binary.BigEndian.PutUint64(dst, pretty)
+	}
+	// else we leave it as is which leads to the identifier being the first 8
+	// bytes out of the 16 provided
+}
+func (prettyTestCipher) Decrypt([]byte, []byte) { panic("should not be called") }
 
 func newTestDependencies() dependencies {
 	deps := defaultDependencies()
@@ -214,15 +183,7 @@ func newTestDependencies() dependencies {
 			return nil
 		},
 	}
-	deps.CryptopanFactory = fastTestCryptopanFactory{}
 	return deps
-}
-
-type fastTestCryptopanFactory struct{}
-
-func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error) {
-	sum := sha256.Sum256([]byte(key + "\x00" + salt))
-	return cryptopan.New(sum[:])
 }
 
 func writeTempFile(t testing.TB, name string, data []byte) string {
