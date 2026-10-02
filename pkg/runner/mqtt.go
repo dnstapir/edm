@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	queue "github.com/dnstapir/edm/pkg/mqtt-queue"
 	"github.com/eclipse/paho.golang/autopaho"
@@ -262,8 +263,34 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 	return nil
 }
 
-func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context) {
+func (edm *DnstapMinimiser) newQnamePublisher(ctx context.Context, seenQnameStore seenQnameStore) {
 	edm.log.Info("newQnamePublisher: starting")
+
+	// If seen qname store isn't considered populated yet, then we wait until it
+	// is. We only check once in a while, and discarding any new qnames that we
+	// receive while we wait.
+	if !seenQnameStore.Populated() {
+		edm.log.Info("newQnamePublisher: seen qname store isn't populated just yet: sending disabled")
+		ticker := edm.deps.Clock.NewTicker(24 * time.Hour)
+	isPopulatedLoop:
+		for {
+			select {
+			case <-ticker.C():
+				// once in a while we check on the status of the seen qname store
+				if seenQnameStore.Populated() {
+					edm.log.Info("newQnamePublisher: seen qname store is now populated: sending starting")
+					break isPopulatedLoop
+				}
+			case _, ok := <-edm.newQnamePublisherCh:
+				// discard new qnames while we wait, but break out if the channel gets
+				// closed while we wait
+				if !ok {
+					break isPopulatedLoop
+				}
+			}
+		}
+		ticker.Stop()
+	}
 
 	for newQname := range edm.newQnamePublisherCh {
 		newQnameJSON, err := json.Marshal(newQname)

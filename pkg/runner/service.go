@@ -291,7 +291,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	wg.Go(func() { edm.sessionWriter(startConf.DataDir) })
 	wg.Go(func() { edm.histogramSender(ctx, defaultLabelLimit) })
 	if !startConf.DisableMQTT {
-		wg.Go(func() { edm.newQnamePublisher(mqttCtx) })
+		wg.Go(func() { edm.newQnamePublisher(mqttCtx, seenStore) })
 	}
 
 	dawgFile := startConf.WellKnownDomainsFile

@@ -88,6 +88,9 @@ type seenQnameStore interface {
 	// releasing lookup resources failed; callers should trust the bool.
 	Has(qname string) (bool, error)
 	MarkSeen(qname string, sync bool) error
+	// Indicates if the store is sufficiently populated yet to be useful for
+	// doing lookups, this call might take a lot of resources
+	Populated() bool
 	Close() error
 }
 
@@ -318,6 +321,10 @@ func (ps *pebbleSeenQnameStore) MarkSeen(qname string, sync bool) error {
 		writeOpts = pebble.Sync
 	}
 	return ps.db.Set([]byte(qname), []byte{}, writeOpts)
+}
+
+func (ps *pebbleSeenQnameStore) Populated() bool {
+	return ps.db.Metrics().DiskSpaceUsage() > 256*1024*1024
 }
 
 func (ps *pebbleSeenQnameStore) Close() error {

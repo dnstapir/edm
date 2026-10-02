@@ -85,7 +85,8 @@ func (f *fakeSeenQnameStore) MarkSeen(string, bool) error {
 	return f.markErr
 }
 
-func (f *fakeSeenQnameStore) Close() error { return nil }
+func (f *fakeSeenQnameStore) Populated() bool { return true }
+func (f *fakeSeenQnameStore) Close() error    { return nil }
 
 // TestQnameSeenStoreError verifies qnameSeen honors the lookup result when the
 // store reports an error: a qname found despite a resource-cleanup error stays
