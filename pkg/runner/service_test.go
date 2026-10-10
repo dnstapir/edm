@@ -76,6 +76,61 @@ func TestDnstapMinimiserRunGuards(t *testing.T) {
 	}
 }
 
+func TestRunPprofToggle(t *testing.T) {
+	tests := []struct {
+		name        string
+		enable      bool
+		wantPprof   int
+		wantServers int
+	}{
+		{name: "disabled", wantServers: 1},
+		{name: "enabled", enable: true, wantPprof: 1, wantServers: 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			input := newBlockingTestDnstapInput()
+			edm := newRunLifecycleTestMinimiser(t, input)
+			edm.conf.EnablePprof = tc.enable
+			edm.conf.MetricsListenAddr = "metrics"
+			edm.conf.PprofListenAddr = "pprof"
+
+			started := make(chan string, 2)
+			edm.deps.HTTPServerRunner = httpServerRunnerFunc(func(server *http.Server) error {
+				started <- server.Addr
+				return http.ErrServerClosed
+			})
+
+			ctx, cancel := context.WithCancel(t.Context())
+			runErr := make(chan error, 1)
+			go func() {
+				runErr <- edm.Run(ctx)
+			}()
+
+			<-input.ready
+			cancel()
+			if err := <-runErr; err != nil {
+				t.Fatalf("Run: %s", err)
+			}
+
+			close(started)
+			addresses := make(map[string]int)
+			for address := range started {
+				addresses[address]++
+			}
+			if got := addresses["metrics"]; got != 1 {
+				t.Errorf("metrics server starts = %d, want 1", got)
+			}
+			if got := addresses["pprof"]; got != tc.wantPprof {
+				t.Errorf("pprof server starts = %d, want %d", got, tc.wantPprof)
+			}
+			if got := len(addresses); got != tc.wantServers {
+				t.Errorf("started server addresses = %d, want %d", got, tc.wantServers)
+			}
+		})
+	}
+}
+
 func TestRunWithDisabledSenders(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
