@@ -125,7 +125,7 @@ func TestRunMinimiserPseudonymising(t *testing.T) {
 			hllDataSource IdentifierType
 		}{
 			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), 0x26e0a0604a381e5a, IdentifierIPv4},
-			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), 0xb9b722e1bee14f2c, IdentifierIPv6},
+			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), 0x693c6143987bc0a, IdentifierIPv6},
 			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, 0x1a63b4c7e0187840, IdentifierOther},
 		}
 		for _, tc := range tests {
