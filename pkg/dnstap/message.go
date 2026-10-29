@@ -173,6 +173,13 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
 		if !(m.HasFlags(ValidResponseAddr) && m.ResponseAddr.Is6()) { //nolint:staticcheck
 			m.flags &= ^ValidResponseAddr
 		}
+		// unmap IPv4-mapped IPv6 address for valid addresses
+		if m.HasFlags(ValidQueryAddr) && m.QueryAddr.Is4In6() {
+			m.QueryAddr = m.QueryAddr.Unmap()
+		}
+		if m.HasFlags(ValidResponseAddr) && m.ResponseAddr.Is4In6() {
+			m.ResponseAddr = m.ResponseAddr.Unmap()
+		}
 	default: // not IPv4 nor IPv6
 		// unknown socket family => addresses not valid
 		m.flags &= ^ValidQueryAddr

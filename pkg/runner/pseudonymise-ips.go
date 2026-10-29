@@ -61,8 +61,8 @@ func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
 		dt.ResponseAddr = netip.IPv6Unspecified()
 	} else {
 		// else pseudonymise the query and response addresses using the supplied cipher
-		dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr)
-		dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr)
+		dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr, pdt.QueryAddrType)
+		dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr, pdt.ResponseAddrType)
 	}
 	// return the pseudonymised struct
 	return pdt
@@ -73,11 +73,18 @@ func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
 // secret (guarded by the key) 1-1 mapping.
 // NOTE: the supplied cipher must have a block size of 16 bytes.
 // NOTE: only to be used by edm.pseudonymiseIPs
-func pseudonymiseIP(cipher cipher.Block, ip netip.Addr) netip.Addr {
+func pseudonymiseIP(cipher cipher.Block, ip netip.Addr, Type IdentifierType) netip.Addr {
 	// extract IP as 16-bytes, IPv6 is mapped directly,
 	// IPv4 is mapped under ::ffff:/96, the zero value
 	// is mapped to all zeros
 	buf := ip.As16()
+	// mask host part of IPv6 addresses
+	switch Type {
+	case IdentifierIPv6:
+		for i := 8; i < 16; i++ {
+			buf[i] = 0
+		}
+	}
 	// encrypt the bytes
 	cipher.Encrypt(buf[:], buf[:])
 	// return the bytes to the netip.Addr format

@@ -37,19 +37,34 @@ func TestPseudonymiser(t *testing.T) {
 	// and this will give us pseudonymised addresses and identifiers and
 	// correctly determined IdentifierTypes
 	testPseudonymiser(t, &edm, pseudonymiserTestCase{
-		mpa("2001:db8::1").AsSlice(), mpa("192.0.2.2").AsSlice(), false,
-		mpa("8861:2cd7:a506:c761:b7a4:7ff8:2f38:3fbf"), mpa("e3f0:2ac6:b5a5:5b3b:901b:87a0:ecc3:457c"),
-		0x88612cd7a506c761, 0xe3f02ac6b5a55b3b,
+		mpa("2001:db8::").AsSlice(), mpa("192.0.2.2").AsSlice(), false,
+		mpa("dd3c:29ad:8862:9e10:b46:88eb:5f4d:f93a"), mpa("e3f0:2ac6:b5a5:5b3b:901b:87a0:ecc3:457c"),
+		0xdd3c29ad88629e10, 0xe3f02ac6b5a55b3b,
 		IdentifierOther, IdentifierIPv4,
 	})
 
 	// changing the socket family does not change the identifiers, only the
-	// determined IdentifierTypes
+	// determined IdentifierTypes. For IPv6 addresses, this is only true if
+	// the host part is zero.
 	testPseudonymiser(t, &edm, pseudonymiserTestCase{
-		mpa("2001:db8::1").AsSlice(), mpa("192.0.2.2").AsSlice(), true,
-		mpa("8861:2cd7:a506:c761:b7a4:7ff8:2f38:3fbf"), mpa("e3f0:2ac6:b5a5:5b3b:901b:87a0:ecc3:457c"),
-		0x88612cd7a506c761, 0xe3f02ac6b5a55b3b,
+		mpa("2001:db8::").AsSlice(), mpa("192.0.2.2").AsSlice(), true,
+		mpa("dd3c:29ad:8862:9e10:b46:88eb:5f4d:f93a"), mpa("e3f0:2ac6:b5a5:5b3b:901b:87a0:ecc3:457c"),
+		0xdd3c29ad88629e10, 0xe3f02ac6b5a55b3b,
 		IdentifierIPv6, IdentifierOther,
+	})
+
+	// the host part of IPv6 addresses do not impact identifiers
+	testPseudonymiser(t, &edm, pseudonymiserTestCase{
+		mpa("2001:db8::").AsSlice(), mpa("2001:db8::ffff:ffff:ffff:ffff").AsSlice(), true,
+		mpa("dd3c:29ad:8862:9e10:b46:88eb:5f4d:f93a"), mpa("dd3c:29ad:8862:9e10:b46:88eb:5f4d:f93a"),
+		0xdd3c29ad88629e10, 0xdd3c29ad88629e10,
+		IdentifierIPv6, IdentifierIPv6,
+	})
+	testPseudonymiser(t, &edm, pseudonymiserTestCase{
+		mpa("2001:db8:ffff:ffff::").AsSlice(), mpa("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff").AsSlice(), true,
+		mpa("85ef:e047:e161:8596:e014:859c:cca:2158"), mpa("85ef:e047:e161:8596:e014:859c:cca:2158"),
+		0x85efe047e1618596, 0x85efe047e1618596,
+		IdentifierIPv6, IdentifierIPv6,
 	})
 
 	// swapping the key
@@ -60,9 +75,9 @@ func TestPseudonymiser(t *testing.T) {
 	// will however change the pseudonymised addresses and identifiers, but
 	// maintain the determined IdentifierTypes
 	testPseudonymiser(t, &edm, pseudonymiserTestCase{
-		mpa("2001:db8::1").AsSlice(), mpa("192.0.2.2").AsSlice(), true,
-		mpa("427c:ff47:ae1f:1be1:fece:6c90:ba03:ab22"), mpa("975e:e305:7632:26f8:a1a9:1515:2454:200d"),
-		0x427cff47ae1f1be1, 0x975ee305763226f8,
+		mpa("2001:db8::").AsSlice(), mpa("192.0.2.2").AsSlice(), true,
+		mpa("3e3c:8e7e:dbe6:5644:86c1:3c40:b091:a05d"), mpa("975e:e305:7632:26f8:a1a9:1515:2454:200d"),
+		0x3e3c8e7edbe65644, 0x975ee305763226f8,
 		IdentifierIPv6, IdentifierOther,
 	})
 
@@ -78,10 +93,10 @@ func TestPseudonymiser(t *testing.T) {
 	// some "addresses" overlap
 	testPseudonymiser(t, &edm, pseudonymiserTestCase{
 		[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-		[]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20},
+		[]byte{1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 17, 18, 19, 20},
 		true,
-		mpa("fc73:8a7f:e936:6523:301c:35c8:ac:c21a"), mpa("fc73:8a7f:e936:6523:301c:35c8:ac:c21a"),
-		0xfc738a7fe9366523, 0xfc738a7fe9366523,
+		mpa("ed32:ed80:c735:36fb:af77:7bc2:77cd:3703"), mpa("ed32:ed80:c735:36fb:af77:7bc2:77cd:3703"),
+		0xed32ed80c73536fb, 0xed32ed80c73536fb,
 		IdentifierIPv6, IdentifierOther,
 	})
 	testPseudonymiser(t, &edm, pseudonymiserTestCase{
