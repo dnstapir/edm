@@ -288,7 +288,7 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 
 func TestUpdateRetryer(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		finder := testDawgFinder(t, "example.com.")
 		wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
 		if err != nil {
@@ -422,7 +422,7 @@ func TestSendUpdateBranches(t *testing.T) {
 func TestUpdateRetryerBranches(t *testing.T) {
 	t.Run("retry limit reached drops update", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			finder := testDawgFinder(t, "example.com.")
 			wkd, err := newWellKnownDomainsTracker(finder, time.Unix(2, 0))
 			if err != nil {
@@ -450,7 +450,7 @@ func TestUpdateRetryerBranches(t *testing.T) {
 
 	t.Run("dawgNotFound drops update", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			// Tracker only knows example.com; the retry will look up a
 			// different qname so wkd.lookup returns dawgNotFound and the
 			// retryer drops the update.
