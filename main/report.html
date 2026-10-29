@@ -75,7 +75,7 @@
 				
 				<option value="file9">github.com/dnstapir/edm/pkg/runner/cryptopan.go (95.2%)</option>
 				
-				<option value="file10">github.com/dnstapir/edm/pkg/runner/data_collector.go (89.4%)</option>
+				<option value="file10">github.com/dnstapir/edm/pkg/runner/data_collector.go (90.4%)</option>
 				
 				<option value="file11">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (77.4%)</option>
 				
@@ -2298,11 +2298,11 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
         <span class="cov7" title="9">drainCollectorQueues := func() </span>{
                 <span class="cov7" title="10">for </span>{
-                        <span class="cov7" title="11">select </span>{
+                        <span class="cov7" title="12">select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:
                                 <span class="cov1" title="1">processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:
-                                <span class="cov0" title="0">processWKDUpdate(wu)</span>
+                                <span class="cov1" title="1">processWKDUpdate(wu)</span>
                         default:
                                 <span class="cov7" title="10">return</span>
                         }
@@ -2340,12 +2340,12 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
 <span class="cov7" title="9">collectorLoop:
         for </span>{
-                <span class="cov10" title="27">select </span>{
+                <span class="cov10" title="26">select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:
                         <span class="cov4" title="4">processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:
-                        <span class="cov4" title="3">processWKDUpdate(wu)</span>
+                        <span class="cov2" title="2">processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C():
                         // We want to tick at the start of each minute
@@ -2827,7 +2827,7 @@ type realTicker struct {
 }
 
 func (rt realTicker) C() &lt;-chan time.Time {
-        <span class="cov7" title="62">return rt.Ticker.C
+        <span class="cov7" title="61">return rt.Ticker.C
 </span>}
 
 type netListenerFactory struct{}
@@ -3858,11 +3858,11 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
         // Atomic snapshot - no lock on the hot path. Reload writers
         // atomic.Store the new IPSet; readers see either old or new value
         // per Load.
-        <span class="cov6" title="1234">ipset := edm.ignoredClientsIPSet.Load()
+        <span class="cov6" title="1281">ipset := edm.ignoredClientsIPSet.Load()
         if ipset == nil </span>{
-                <span class="cov5" title="513">return false
+                <span class="cov5" title="487">return false
 </span>        }
-        <span class="cov6" title="721">if !dt.QueryAddr.IsValid() </span>{
+        <span class="cov6" title="794">if !dt.QueryAddr.IsValid() </span>{
                 // If we have a list of clients to ignore but are not able to
                 // understand the QueryAddress let's err on the side of caution
                 // and ignore such packets as well while making noise in logs
@@ -3871,30 +3871,30 @@ func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
                 edm.promClientIPIgnoredError.Inc()
                 return true
 </span>        }
-        <span class="cov6" title="719">if ipset.Contains(dt.QueryAddr) </span>{
-                <span class="cov5" title="373">edm.promClientIPIgnored.Inc()
+        <span class="cov6" title="792">if ipset.Contains(dt.QueryAddr) </span>{
+                <span class="cov5" title="397">edm.promClientIPIgnored.Inc()
                 return true
 </span>        }
-        <span class="cov5" title="346">return false</span>
+        <span class="cov5" title="395">return false</span>
 }
 
 func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
-        <span class="cov10" title="94989">holder := edm.ignoredQuestions.Load()
+        <span class="cov10" title="89833">holder := edm.ignoredQuestions.Load()
         if holder == nil </span>{
-                <span class="cov9" title="73052">return false
+                <span class="cov9" title="47390">return false
 </span>        }
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="21937">for _, question := range msg.Question </span>{
-                <span class="cov8" title="21939">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+        <span class="cov9" title="42443">for _, question := range msg.Question </span>{
+                <span class="cov9" title="42445">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
                 if dawgIndex != dawgNotFound </span>{
-                        <span class="cov7" title="5945">edm.promQuestionNameIgnored.Inc()
+                        <span class="cov8" title="13443">edm.promQuestionNameIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov8" title="15992">return false</span>
+        <span class="cov9" title="29000">return false</span>
 }
 </pre>
 		
@@ -5802,24 +5802,24 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 // well as if it was found based on a suffix string or not.
 func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
         // Ignore capitalisation in labels
-        <span class="cov9" title="21962">name = strings.ToLower(name)
+        <span class="cov9" title="42468">name = strings.ToLower(name)
 </span>
         // Try exact match first
-        <span class="cov9" title="21962">dawgIndex := dawgFinder.IndexOf(name)
+        <span class="cov9" title="42468">dawgIndex := dawgFinder.IndexOf(name)
 </span>
-        <span class="cov9" title="21962">if dawgIndex == dawgNotFound </span>{
+        <span class="cov9" title="42468">if dawgIndex == dawgNotFound </span>{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                <span class="cov9" title="20391">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
-                        <span class="cov10" title="29182">dawgIndex = dawgFinder.IndexOf(name[index-1:])
+                <span class="cov9" title="37510">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
+                        <span class="cov10" title="54479">dawgIndex = dawgFinder.IndexOf(name[index-1:])
                         if dawgIndex != dawgNotFound </span>{
-                                <span class="cov8" title="4389">return dawgIndex, true
+                                <span class="cov8" title="8500">return dawgIndex, true
 </span>                        }
                 }
         }
 
-        <span class="cov9" title="17573">return dawgIndex, false</span>
+        <span class="cov9" title="33968">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5867,12 +5867,12 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
                 <span class="cov1" title="1">wkd.updateCh &lt;- wu</span>
         }
 
-        <span class="cov3" title="11">edm.log.Info("updateRetryer: exiting loop")
+        <span class="cov2" title="11">edm.log.Info("updateRetryer: exiting loop")
         close(wkd.retryerDone)</span>
 }
 
 func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
-        <span class="cov3" title="10">wu := wkdUpdate{
+        <span class="cov2" title="10">wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
                 dawgModTime: dawgModTime,
@@ -5882,7 +5882,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 </span>        }
 
         // Create hash from IP address for use in HLL data
-        <span class="cov3" title="10">ip, ok := netip.AddrFromSlice(ipBytes)
+        <span class="cov2" title="10">ip, ok := netip.AddrFromSlice(ipBytes)
         if ok </span>{
                 // We use a deterministic seed by design to be able to combine HLL
                 // datasets.
@@ -5891,7 +5891,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
 </span>        }
 
         // Counters based on header
-        <span class="cov3" title="10">switch msg.Rcode </span>{
+        <span class="cov2" title="10">switch msg.Rcode </span>{
         case dns.RcodeSuccess:
                 <span class="cov2" title="7">wu.OKCount++</span>
         case dns.RcodeNameError:
@@ -5903,7 +5903,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
         }
 
         // Counters based on question class and type
-        <span class="cov3" title="10">if msg.Question[0].Qclass == dns.ClassINET </span>{
+        <span class="cov2" title="10">if msg.Question[0].Qclass == dns.ClassINET </span>{
                 <span class="cov2" title="9">switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:
                         <span class="cov2" title="5">wu.ACount++</span>
@@ -5920,7 +5920,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(ipBytes []byte, msg *dns.Msg, daw
                 <span class="cov1" title="1">wu.NonINCount++
 </span>        }
 
-        <span class="cov3" title="10">wkd.updateCh &lt;- wu</span>
+        <span class="cov2" title="10">wkd.updateCh &lt;- wu</span>
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
