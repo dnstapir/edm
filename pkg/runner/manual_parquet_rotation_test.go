@@ -23,8 +23,7 @@ func TestDataCollectorManualParquetRotationFlushesPendingData(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
-	serverID := "serverID"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("serverID")}
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)

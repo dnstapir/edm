@@ -135,18 +135,15 @@ func BenchmarkSessionWriter(b *testing.B) {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
+	ip, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
 	if err != nil {
 		b.Fatalf("unable to create uint32 from address: %s", err)
 	}
-	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint32
 
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
+	ip6Network, ip6Host, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
 	if err != nil {
 		b.Fatalf("unable to create uint64 from ipv6 address: %s", err)
 	}
-	ip6NetworkInt := int64(ip6NetworkUint) // #nosec G115 -- Used in parquet struct with logical type uint64
-	ip6HostInt := int64(ip6HostUint)       // #nosec G115 -- Used in parquet struct with logical type uint64
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
@@ -154,20 +151,20 @@ func BenchmarkSessionWriter(b *testing.B) {
 			Label1: new("example"),
 			Label2: new("www"),
 		},
-		ServerID:          new("serverID"),
+		ServerID:          []byte("serverID"),
 		QueryTime:         new(int64(10)),
 		ResponseTime:      new(int64(10)),
-		SourceIPv4:        &i32IPInt,
-		DestIPv4:          &i32IPInt,
-		SourceIPv6Network: &ip6NetworkInt,
-		SourceIPv6Host:    &ip6HostInt,
-		DestIPv6Network:   &ip6NetworkInt,
-		DestIPv6Host:      &ip6HostInt,
-		SourcePort:        new(int32(1337)),
-		DestPort:          new(int32(1337)),
-		DNSProtocol:       new(int32(1)),
-		QueryMessage:      new("query message"),
-		ResponseMessage:   new("response message"),
+		SourceIPv4:        &ip,
+		DestIPv4:          &ip,
+		SourceIPv6Network: &ip6Network,
+		SourceIPv6Host:    &ip6Host,
+		DestIPv6Network:   &ip6Network,
+		DestIPv6Host:      &ip6Host,
+		SourcePort:        new(uint16(1337)),
+		DestPort:          new(uint16(1337)),
+		DNSProtocol:       new(uint8(1)),
+		QueryMessage:      []byte("query message"),
+		ResponseMessage:   []byte("response message"),
 	}
 
 	for b.Loop() {
@@ -186,21 +183,17 @@ func TestSessionWriter(t *testing.T) {
 	var buf bytes.Buffer
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, sessionDataSchema, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
+	ip, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
 	if err != nil {
 		t.Fatalf("unable to create uint32 from address: %s", err)
 	}
-	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint64
 
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
+	ip6Network, ip6Host, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
 	if err != nil {
 		t.Fatalf("unable to create uint64 from ipv6 address: %s", err)
 	}
-
-	ip6NetworkInt := int64(ip6NetworkUint) // #nosec G115 -- Used in parquet struct with logical type uint64
-	ip6HostInt := int64(ip6HostUint)       // #nosec G115 -- Used in parquet struct with logical type uint64
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
@@ -208,20 +201,20 @@ func TestSessionWriter(t *testing.T) {
 			Label1: new("example"),
 			Label2: new("www"),
 		},
-		ServerID:          new("serverID"),
+		ServerID:          []byte("serverID"),
 		QueryTime:         new(int64(10)),
 		ResponseTime:      new(int64(10)),
-		SourceIPv4:        &i32IPInt,
-		SourceIPv6Network: &ip6NetworkInt,
-		SourceIPv6Host:    &ip6HostInt,
-		DestIPv6Network:   &ip6NetworkInt,
-		DestIPv6Host:      &ip6HostInt,
-		DestIPv4:          &i32IPInt,
-		SourcePort:        new(int32(1337)),
-		DestPort:          new(int32(1337)),
-		DNSProtocol:       new(int32(1)),
-		QueryMessage:      new("query message"),
-		ResponseMessage:   new("response message"),
+		SourceIPv4:        &ip,
+		DestIPv4:          &ip,
+		SourceIPv6Network: &ip6Network,
+		SourceIPv6Host:    &ip6Host,
+		DestIPv6Network:   &ip6Network,
+		DestIPv6Host:      &ip6Host,
+		SourcePort:        new(uint16(1337)),
+		DestPort:          new(uint16(1337)),
+		DNSProtocol:       new(uint8(1)),
+		QueryMessage:      []byte("query message"),
+		ResponseMessage:   []byte("response message"),
 	}
 
 	_, err = parquetWriter.Write([]sessionData{sd})
@@ -304,7 +297,7 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ServerID == nil || *rows[0].ServerID != "server-1" {
+	if len(rows) != 1 || rows[0].ServerID == nil || string(rows[0].ServerID) != "server-1" {
 		t.Fatalf("unexpected session rows: %#v", rows)
 	}
 
@@ -406,7 +399,7 @@ func TestNewSessionBranches(t *testing.T) {
 		msg := edm.parsePacket(dt)
 		sd := edm.newSession(dt, msg, defaultLabelLimit)
 		if sd.ServerID != nil {
-			t.Fatalf("ServerID should be nil for empty identity, got %q", *sd.ServerID)
+			t.Fatalf("ServerID should be nil for empty identity, got %s", string(sd.ServerID))
 		}
 	})
 }

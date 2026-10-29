@@ -20,8 +20,7 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { edm.dataCollector(wkdTracker, "unused-in-shutdown-test.dawg") })
 
-	serverID := "serverID"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("serverID")}
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)
@@ -89,8 +88,7 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 	edm.dawgReloadRequested.Store(true)
 	wg.Go(func() { edm.dataCollector(wkdTracker, "missing-dawg-file.dawg") })
 
-	firstServerID := "first"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &firstServerID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("first")}
 
 	rotationTime := time.Now().UTC()
 	done := make(chan error, 1)
@@ -114,8 +112,7 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 		t.Fatalf("first flushed sessions stop at %s, want %s", first.rotationTime, rotationTime)
 	}
 
-	secondServerID := "second"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &secondServerID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("second")}
 
 	close(wkdTracker.stop)
 	waitOrFail(t, &wg, 2*time.Second, "dataCollector did not exit after stop")
@@ -178,7 +175,7 @@ func TestDataCollector(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Go(func() { edm.dataCollector(wkd, path) })
 
-		edm.sessionCollectorCh <- &sessionData{ServerID: new("server")}
+		edm.sessionCollectorCh <- &sessionData{ServerID: []byte("server")}
 		wkd.updateCh <- wkdUpdate{
 			histogramData: histogramData{ACount: 1, OKCount: 1},
 			dawgIndex:     0,
