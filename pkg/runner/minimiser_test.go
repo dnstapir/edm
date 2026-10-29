@@ -14,7 +14,6 @@ import (
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/miekg/dns"
 	dto "github.com/prometheus/client_model/go"
-	"github.com/twmb/murmur3"
 	"go4.org/netipx"
 	"google.golang.org/protobuf/proto"
 )
@@ -40,7 +39,7 @@ func TestRunMinimiserFlows(t *testing.T) {
 		defer cancel()
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 
 		queryFrame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET, packedDNSMsg(t, "query.example.", dns.TypeA, dns.RcodeSuccess))
@@ -96,20 +95,14 @@ func TestRunMinimiserFlows(t *testing.T) {
 	})
 }
 
-// TestRunMinimiserScratchClientIP verifies that the per-worker scratch buffer
-// used to keep the unpseudonymised client IP yields the correct raw address
-// for every frame, even when a single worker processes consecutive frames of
-// different address families. It feeds an IPv4 frame followed by an IPv6 frame
-// (which fills the scratch buffer completely) and checks that each emitted
-// wkdUpdate carries the original client IP and its matching HLL hash, proving
-// the IP is captured before pseudonymisation and that reusing the scratch
-// buffer does not corrupt earlier or later frames.
-func TestRunMinimiserScratchClientIP(t *testing.T) {
+// Make sure that the default setup of the pseudonymiser and the pseudonymising
+// when receiving an incomming dnstap works properly
+func TestRunMinimiserPseudonymising(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiserWithDependencies(t, defaultTC, newTestDependencies(), false)
+
 		edm.reloadMinimiserConfigCh = []chan struct{}{make(chan struct{}, 1)}
-		edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, 1)
-		edm.sessionCollectorCh = make(chan *sessionData, 1)
+
 		cache, err := lru.New[string, struct{}](2)
 		if err != nil {
 			t.Fatal(err)
@@ -121,38 +114,39 @@ func TestRunMinimiserScratchClientIP(t *testing.T) {
 		}
 
 		ctx, cancel := context.WithCancel(t.Context())
-		defer cancel()
-		var wg sync.WaitGroup
-		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
-		})
+		go edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 
 		tests := []struct {
+			// input
 			family dnstap.SocketFamily
-			ip     netip.Addr
+			ip     []byte
+			// expected output
+			hllHash       uint64
+			hllDataSource IdentifierType
 		}{
-			{dnstap.SocketFamily_INET, netip.MustParseAddr("198.51.100.20")},
-			{dnstap.SocketFamily_INET6, netip.MustParseAddr("2001:db8::20")},
+			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), 0x26e0a0604a381e5a, IdentifierIPv4},
+			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), 0xb9b722e1bee14f2c, IdentifierIPv6},
+			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, 0x1a63b4c7e0187840, IdentifierOther},
 		}
 		for _, tc := range tests {
-			frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess))
+			frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess), func(dt *dnstap.Dnstap) {
+				dt.Message.QueryAddress = tc.ip
+			})
 			edm.inputChannel <- frame
 			select {
 			case wu := <-wkd.updateCh:
-				if wu.ip != tc.ip {
-					t.Fatalf("client IP for %s: got %s, want %s", tc.family, wu.ip, tc.ip)
+				if wu.hllHash != tc.hllHash {
+					t.Fatalf("Incorrect HLL hash for %v: got 0x%x, should be 0x%x", tc.ip, wu.hllHash, tc.hllHash)
 				}
-				wantHash := murmur3.Sum64(tc.ip.AsSlice())
-				if wu.hllHash != wantHash {
-					t.Fatalf("HLL hash for %s: got %d, want %d", tc.family, wu.hllHash, wantHash)
+				if wu.hllDataSource != tc.hllDataSource {
+					t.Fatalf("Incorrect HLL data source for %v: got %d, should be %d", tc.ip, wu.hllDataSource, tc.hllDataSource)
 				}
 			case <-time.After(time.Second):
-				t.Fatalf("timed out waiting for WKD update for %s", tc.family)
+				t.Fatalf("timed out waiting for WKD update for %v", tc.ip)
 			}
 		}
 
 		cancel()
-		wg.Wait()
 	})
 }
 
@@ -182,7 +176,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 		edm.inputChannel <- []byte("not protobuf")
 		synctest.Wait()
@@ -202,7 +196,7 @@ func TestRunMinimiserParseAndIgnoreFlows(t *testing.T) {
 		edm.ignoredClientsIPSet.Store(ipset)
 		ctx, cancel = context.WithCancel(t.Context())
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], cache, &pebbleSeenQnameStore{db: db}, defaultLabelLimit, wkd)
 		})
 		edm.inputChannel <- testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "ignored.example.", dns.TypeA, dns.RcodeSuccess))
 		synctest.Wait()
@@ -244,7 +238,7 @@ func TestRunMinimiserSessionSendUnblocksOnContextCancel(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 
 		frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packedDNSMsg(t, "new.example.", dns.TypeA, dns.RcodeSuccess))
@@ -271,7 +265,7 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 
 		var wg sync.WaitGroup
 		wg.Go(func() {
-			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], nil, seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, 0, edm.reloadMinimiserConfigCh[0], seenQnameLRU, &pebbleSeenQnameStore{db: pdb}, defaultLabelLimit, wkdTracker)
 		})
 		defer func() {
 			cancel()

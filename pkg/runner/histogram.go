@@ -66,6 +66,7 @@ type histogramData struct {
 	FailCount       uint64 `parquet:"fail_count"`
 	OtherRcodeCount uint64 `parquet:"other_rcode_count"`
 	EDMStatusBits   uint64 `parquet:"edm_status_bits"`
+
 	// The hll.Hll structs are not expected to be included in the output
 	// parquet file, and thus do not need to be exported
 	v4ClientHLL hll.Hll
@@ -75,6 +76,11 @@ type histogramData struct {
 	// calculation result
 	V4ClientCount uint64 `parquet:"v4client_count"`
 	V6ClientCount uint64 `parquet:"v6client_count"`
+
+	// If the identifier isn't based on a known IPv4 or IPv6 address, then keep a
+	// simple counter(ie. not based on hll) of the number of occasions, ie. not
+	// unique identities but occasions
+	NotValidIPCount uint64 `parquet:"not_valid_ip_count"`
 
 	// These fields are NULL when HLL uses explicit storage, otherwise
 	// contain the probabilistic HLL bytes

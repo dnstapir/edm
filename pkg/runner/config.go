@@ -49,7 +49,7 @@ type Config struct {
 	MQTTKeepalive                 uint16 `toml:"mqtt-keepalive"`
 	MQTTSignWorkers               int    `toml:"mqtt-sign-workers"`
 	QnameSeenEntries              int    `toml:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"`
+	CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"` // DEPRECATED
 	NewQnameBuffer                int    `toml:"newqname-buffer"`
 	HTTPCAFile                    string `toml:"http-ca-file"`
 	HTTPSigningKeyFile            string `toml:"http-signing-key-file"`
@@ -111,9 +111,6 @@ func (conf Config) Validate() (err error) {
 		errs = append(errs, errors.New("histogram-hll-explicit-threshold must be greater than 0"))
 	} else if conf.HistogramHLLExplicitThreshold > maxHistogramHLLExplicitThreshold {
 		errs = append(errs, fmt.Errorf("histogram-hll-explicit-threshold must not exceed %d", maxHistogramHLLExplicitThreshold))
-	}
-	if conf.CryptopanAddressEntries < 0 {
-		errs = append(errs, errors.New("cryptopan-address-entries must not be negative"))
 	}
 
 	if !conf.DisableMQTT {
@@ -177,7 +174,6 @@ func DefaultConfig() (conf Config) {
 		MQTTServer:                    "127.0.0.1:8883",
 		MQTTKeepalive:                 30,
 		QnameSeenEntries:              10_000_000,
-		CryptopanAddressEntries:       10_000_000,
 		NewQnameBuffer:                1000,
 		HistogramHLLExplicitThreshold: 20,
 		HTTPSigningKeyFile:            "edm-http-signer-key.pem",
