@@ -3,7 +3,7 @@ package runner
 import (
 	"io"
 	"log/slog"
-	"net/netip"
+	"math"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -11,7 +11,6 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
@@ -20,12 +19,10 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Go(func() { edm.dataCollector(wkdTracker, "unused-in-shutdown-test.dawg") })
 
-	serverID := "serverID"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &serverID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("serverID")}
 
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)
-	ip := netip.MustParseAddr("198.51.100.10")
 	dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
 	wkdTracker.updateCh <- wkdUpdate{
 		dawgIndex:   dawgIndex,
@@ -35,8 +32,8 @@ func TestDataCollectorFlushesPendingDataOnShutdown(t *testing.T) {
 			ACount:  1,
 			OKCount: 1,
 		},
-		hllHash: murmur3.Sum64(ip.AsSlice()),
-		ip:      ip,
+		hllDataSource: IdentifierIPv4,
+		hllHash:       4444,
 	}
 
 	close(wkdTracker.stop)
@@ -89,8 +86,7 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 	edm.dawgReloadRequested.Store(true)
 	wg.Go(func() { edm.dataCollector(wkdTracker, "missing-dawg-file.dawg") })
 
-	firstServerID := "first"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &firstServerID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("first")}
 
 	rotationTime := time.Now().UTC()
 	done := make(chan error, 1)
@@ -114,8 +110,7 @@ func TestDataCollectorAdvancesSessionIntervalWhenRotationFails(t *testing.T) {
 		t.Fatalf("first flushed sessions stop at %s, want %s", first.rotationTime, rotationTime)
 	}
 
-	secondServerID := "second"
-	edm.sessionCollectorCh <- &sessionData{ServerID: &secondServerID}
+	edm.sessionCollectorCh <- &sessionData{ServerID: []byte("second")}
 
 	close(wkdTracker.stop)
 	waitOrFail(t, &wg, 2*time.Second, "dataCollector did not exit after stop")
@@ -154,10 +149,9 @@ func newDataCollectorTestFixture(t *testing.T, knownDomains ...string) (*DnstapM
 
 func TestDataCollector(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		tc := defaultTC
 		deps := defaultDependencies()
 		edm := &DnstapMinimiser{
-			conf:               Config{HistogramHLLExplicitThreshold: tc.CryptopanAddressEntries},
+			conf:               Config{HistogramHLLExplicitThreshold: defaultTC.HistogramHLLExplicitThreshold},
 			log:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 			deps:               deps,
 			sessionCollectorCh: make(chan *sessionData, 1),
@@ -178,13 +172,13 @@ func TestDataCollector(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Go(func() { edm.dataCollector(wkd, path) })
 
-		edm.sessionCollectorCh <- &sessionData{ServerID: new("server")}
+		edm.sessionCollectorCh <- &sessionData{ServerID: []byte("server")}
 		wkd.updateCh <- wkdUpdate{
 			histogramData: histogramData{ACount: 1, OKCount: 1},
 			dawgIndex:     0,
 			dawgModTime:   modTime,
-			ip:            netip.MustParseAddr("198.51.100.20"),
-			hllHash:       1,
+			hllDataSource: IdentifierIPv4,
+			hllHash:       4444,
 		}
 		time.Sleep(timeUntilNextMinute())
 		close(wkd.stop)
@@ -196,5 +190,69 @@ func TestDataCollector(t *testing.T) {
 		if _, ok := <-edm.histogramWriterCh; !ok {
 			t.Fatal("histogramWriterCh closed before queued histogram could be read")
 		}
+	})
+}
+
+func TestDataCollectorHistogramIdentityCounters(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		// setup edm
+		edm, wkdTracker := newDataCollectorTestFixture(t, "example.com.")
+		go edm.dataCollector(wkdTracker, "testdata/ignored-question-names.empty.dawg")
+
+		// setup a well known domain update
+		msg := new(dns.Msg)
+		msg.SetQuestion("example.com.", dns.TypeA)
+		dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
+		update := wkdUpdate{
+			dawgIndex:   dawgIndex,
+			suffixMatch: suffixMatch,
+			dawgModTime: dawgModTime,
+		}
+
+		// send zero IPv4
+		// [nothing to do]
+
+		// send one IPv6
+		update.hllDataSource = IdentifierIPv6
+		update.hllHash = math.MaxUint64
+		wkdTracker.updateCh <- update
+
+		// send two Other
+		update.hllDataSource = IdentifierOther
+		update.hllHash = math.MaxUint64
+		wkdTracker.updateCh <- update
+		wkdTracker.updateCh <- update
+
+		// wait until the histogram gets packed up for sending to core
+		time.Sleep(timeUntilNextMinuteFrom(time.Now()))
+
+		// extract histogram
+		histogram, ok := <-edm.histogramWriterCh
+		if !ok {
+			t.Fatal("histogramWriterCh closed without flushing pending histogram data")
+		}
+		if len(histogram.m) != 1 {
+			t.Fatalf("flushed histogram domains have: %d, want: 1", len(histogram.m))
+		}
+		// extract data for our domain
+		got, ok := histogram.m[dawgIndex]
+		if !ok || got == nil {
+			t.Fatalf("flushed histogram missing DAWG index %d", dawgIndex)
+			return
+		}
+
+		// check counters
+		if got.v4ClientHLL.Cardinality() != 0 {
+			t.Fatalf("Incorrect cardinality of IPv4: got %d != 0", got.v4ClientHLL.Cardinality())
+		}
+		if got.v6ClientHLL.Cardinality() != 1 {
+			t.Fatalf("Incorrect cardinality of IPv6: got %d != 1", got.v6ClientHLL.Cardinality())
+		}
+		if got.NotValidIPCount != 2 {
+			t.Fatalf("Incorrect count of identifier of unknown origin: got %d != 2", got.NotValidIPCount)
+		}
+
+		// cleanup
+		close(wkdTracker.stop)
 	})
 }

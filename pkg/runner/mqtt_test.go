@@ -600,7 +600,7 @@ func TestRunMQTTPipelineOutlivesRunCtx(t *testing.T) {
 			return conn, nil
 		},
 	}
-	edm := newTestDnstapMinimiserWithDependencies(t, tc, deps)
+	edm := newTestDnstapMinimiserWithDependencies(t, tc, deps, true)
 
 	ctx, cancel := context.WithCancel(t.Context())
 	runErr := make(chan error, 1)

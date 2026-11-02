@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	extdnstap "github.com/dnstap/golang-dnstap"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 )
@@ -243,11 +244,16 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeMX)
 	msg.Rcode = dns.RcodeNameError
-	wkd.sendUpdate(netip.MustParseAddr("198.51.100.20").AsSlice(), msg, 0, false, modTime)
+
+	dt := testUnpackedMinimalDnstapMessage(t, true, func(dt *extdnstap.Dnstap) {
+		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
+	})
+
+	wkd.sendUpdate(edm.pseudonymiseIPs(dt), msg, 0, false, modTime)
 
 	select {
 	case wu := <-wkd.updateCh:
-		if wu.NXCount != 1 || wu.MXCount != 1 || !wu.ip.IsValid() || wu.hllHash == 0 {
+		if wu.NXCount != 1 || wu.MXCount != 1 || wu.hllDataSource != IdentifierIPv6 || wu.hllHash != 0x2001_0db8_0000_0000 {
 			t.Fatalf("unexpected update: %#v", wu)
 		}
 	case <-time.After(time.Second):
@@ -388,11 +394,11 @@ func TestSendUpdateBranches(t *testing.T) {
 			qtype:   dns.TypeA,
 			qclass:  dns.ClassINET,
 			check: func(t *testing.T, wu wkdUpdate) {
-				if wu.ip.IsValid() {
-					t.Fatalf("expected invalid ip from short slice; got %v", wu.ip)
+				if wu.hllDataSource != IdentifierOther {
+					t.Fatalf("expected unknown hll hash source from short slice; got %d", wu.hllDataSource)
 				}
-				if wu.hllHash != 0 {
-					t.Fatalf("expected zero hllHash from short slice; got %d", wu.hllHash)
+				if wu.hllHash != 0x01_02_03_0000000000 {
+					t.Fatalf("expected hllHash from short slice was incorrect; got 0x%x", wu.hllHash)
 				}
 			},
 		},
@@ -400,11 +406,18 @@ func TestSendUpdateBranches(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			edm := newTestDnstapMinimiser(t, defaultTC)
+
 			msg := new(dns.Msg)
 			msg.SetQuestion("example.com.", tc.qtype)
 			msg.Question[0].Qclass = tc.qclass
 			msg.Rcode = tc.rcode
-			wkd.sendUpdate(tc.ipBytes, msg, 0, false, time.Unix(2, 0))
+
+			dt := testUnpackedMinimalDnstapMessage(t, false, func(dt *extdnstap.Dnstap) {
+				dt.Message.QueryAddress = tc.ipBytes
+			})
+
+			wkd.sendUpdate(edm.pseudonymiseIPs(dt), msg, 0, false, time.Unix(2, 0))
 			select {
 			case wu := <-wkd.updateCh:
 				tc.check(t, wu)

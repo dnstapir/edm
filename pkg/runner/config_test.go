@@ -338,16 +338,6 @@ func TestConfigValidate(t *testing.T) {
 			wantMsgs: []string{"histogram-hll-explicit-threshold must not exceed 131072"},
 		},
 		{
-			name:     "cryptopan-address-entries negative",
-			mutate:   func(c *Config) { c.CryptopanAddressEntries = -1 },
-			wantErrs: []error{ErrInvalidConfig},
-			wantMsgs: []string{"cryptopan-address-entries must not be negative"},
-		},
-		{
-			name:   "cryptopan-address-entries zero is valid",
-			mutate: func(c *Config) { c.CryptopanAddressEntries = 0 },
-		},
-		{
 			name:     "mqtt enabled missing mqtt-signing-key-file",
 			mutate:   func(c *Config) { c.MQTTSigningKeyFile = "" },
 			wantErrs: []error{ErrInvalidConfig},

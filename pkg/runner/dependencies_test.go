@@ -4,21 +4,10 @@ import (
 	"crypto/x509"
 	"errors"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/lestrrat-go/jwx/v3/jwa"
 )
-
-func TestDefaultDependenciesFillCryptopanFactory(t *testing.T) {
-	deps := fillDependencies(dependencies{})
-	if deps.CryptopanFactory == nil {
-		t.Fatal("CryptopanFactory was not filled")
-	}
-	if reflect.TypeOf(deps.CryptopanFactory) != reflect.TypeOf(realCryptopanFactory{}) {
-		t.Fatalf("CryptopanFactory type = %T, want realCryptopanFactory", deps.CryptopanFactory)
-	}
-}
 
 func TestCertPoolAndJWKFiles(t *testing.T) {
 	loader := realKeyMaterialLoader{fs: osFileSystem{}}

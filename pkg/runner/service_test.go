@@ -28,7 +28,6 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	edm, err := NewDnstapMinimiser(
 		defaultTC, logger,
 		WithLoggerLevel(loggerLevel),
-		withDependencies(dependencies{CryptopanFactory: fastTestCryptopanFactory{}}),
 	)
 	if err != nil {
 		t.Fatalf("NewDnstapMinimiser: %s", err)
@@ -37,7 +36,7 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	if edm.loggerLevel != loggerLevel {
 		t.Fatal("WithLoggerLevel did not install the supplied level var")
 	}
-	if edm.deps.FileSystem == nil || edm.deps.Clock == nil || edm.deps.HTTPServerRunner == nil || edm.deps.CryptopanFactory == nil {
+	if edm.deps.FileSystem == nil || edm.deps.Clock == nil || edm.deps.HTTPServerRunner == nil {
 		t.Fatal("WithDependencies did not fill nil dependency fields")
 	}
 }
@@ -95,7 +94,6 @@ histogram-hll-explicit-threshold = 20
 data-dir = %q
 minimiser-workers = 1
 qname-seen-entries = 2
-cryptopan-address-entries = 2
 newqname-buffer = 1
 `, configFile, socketPath, dawgFile, dir)
 	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
@@ -108,7 +106,6 @@ newqname-buffer = 1
 	deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
 		return http.ErrServerClosed
 	})
-	deps.CryptopanFactory = fastTestCryptopanFactory{}
 	input := newBlockingTestDnstapInput()
 	listener := newTestNetListener("unix", socketPath)
 	listenCall := make(chan [2]string, 1)
@@ -196,5 +193,5 @@ func newRunLifecycleTestMinimiser(t *testing.T, input *testDnstapInput) *DnstapM
 			return input
 		},
 	}
-	return newTestDnstapMinimiserWithDependencies(t, tc, deps)
+	return newTestDnstapMinimiserWithDependencies(t, tc, deps, true)
 }
