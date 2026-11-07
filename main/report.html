@@ -73,7 +73,7 @@
 				
 				<option value="file8">github.com/dnstapir/edm/pkg/runner/config.go (100.0%)</option>
 				
-				<option value="file9">github.com/dnstapir/edm/pkg/runner/data_collector.go (91.3%)</option>
+				<option value="file9">github.com/dnstapir/edm/pkg/runner/data_collector.go (90.4%)</option>
 				
 				<option value="file10">github.com/dnstapir/edm/pkg/runner/dawg_staging.go (77.4%)</option>
 				
@@ -95,7 +95,7 @@
 				
 				<option value="file19">github.com/dnstapir/edm/pkg/runner/parquet_rotation.go (83.3%)</option>
 				
-				<option value="file20">github.com/dnstapir/edm/pkg/runner/pseudonymise-ips.go (89.7%)</option>
+				<option value="file20">github.com/dnstapir/edm/pkg/runner/pseudonymise-ips.go (90.6%)</option>
 				
 				<option value="file21">github.com/dnstapir/edm/pkg/runner/qname_seen.go (100.0%)</option>
 				
@@ -748,19 +748,19 @@ type meta struct {
 // valid data use the Message.HasFlags(...) method.
 func (m *Message) Unpack(data []byte) (err error) {
         // catch panics and return them as errors
-        <span class="cov5" title="52">defer func() </span>{
-                <span class="cov5" title="52">if r := recover(); r != nil </span>{
+        <span class="cov5" title="53">defer func() </span>{
+                <span class="cov5" title="53">if r := recover(); r != nil </span>{
                         <span class="cov4" title="20">err = fmt.Errorf("parsing error: %v", r)
 </span>                }
         }()
         // reset message
-        <span class="cov5" title="52">*m = Message{}
+        <span class="cov5" title="53">*m = Message{}
 </span>        // create meta data object
-        <span class="cov5" title="52">meta := meta{}
+        <span class="cov5" title="53">meta := meta{}
 </span>        // unpack
-        <span class="cov5" title="52">m.unpackDNSTap(data, &amp;meta)
+        <span class="cov5" title="53">m.unpackDNSTap(data, &amp;meta)
 </span>        // return
-        <span class="cov4" title="32">return nil</span>
+        <span class="cov4" title="33">return nil</span>
 }
 
 // Check if flags are set or not, ie. HasFlags(WithIdentity)
@@ -772,41 +772,41 @@ func (m *Message) Unpack(data []byte) (err error) {
 // checks if both the query address and the response address
 // is valid.
 func (m *Message) HasFlags(flags flag) bool {
-        <span class="cov6" title="100">return m.flags&amp;flags == flags
+        <span class="cov6" title="118">return m.flags&amp;flags == flags
 </span>}
 
 func (m *Message) unpackDNSTap(data []byte, meta *meta) {
-        <span class="cov5" title="52">tlv := uint8(0)
+        <span class="cov5" title="53">tlv := uint8(0)
         valid := false
 </span>
-        <span class="cov5" title="52">for len(data) &gt; 0 </span>{
+        <span class="cov5" title="53">for len(data) &gt; 0 </span>{
                 // extract TLV
-                <span class="cov6" title="104">tlv, valid, data = getTLV(data)
+                <span class="cov6" title="106">tlv, valid, data = getTLV(data)
 </span>                // if not valid =&gt; skip TLV
-                <span class="cov6" title="104">if !valid </span>{
+                <span class="cov6" title="106">if !valid </span>{
                         <span class="cov1" title="1">data = skipType(tlv, data)
                         continue</span>
                 }
                 // switch based on field
-                <span class="cov6" title="103">switch tlv &gt;&gt; 3 </span>{
+                <span class="cov6" title="105">switch tlv &gt;&gt; 3 </span>{
                 case 1:
                         <span class="cov2" title="4">assertType(protoLEN, tlv)
                         m.flags |= WithIdentity
                         m.Identity, data = readLEN[string](data)</span>
                 case 14:
-                        <span class="cov5" title="52">assertType(protoLEN, tlv)
+                        <span class="cov5" title="53">assertType(protoLEN, tlv)
                         m.flags |= withMessage
                         var msg []byte
                         msg, data = readLEN[[]byte](data)
                         m.unpackMessage(msg, meta)</span>
                 case 15:
-                        <span class="cov5" title="41">assertType(protoVARINT, tlv)
+                        <span class="cov5" title="42">assertType(protoVARINT, tlv)
                         m.flags |= withDnstapType
                         var t uint64
                         t, data = readVARINT(data)
                         switch t </span>{
                         case 1:
-                                <span class="cov5" title="38">m.flags |= validDnstapType</span>
+                                <span class="cov5" title="39">m.flags |= validDnstapType</span>
                         default:
                                 <span class="cov1" title="2">m.flags &amp;= ^validDnstapType</span>
                         }
@@ -815,7 +815,7 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
                 }
         }
         // some validations checks
-        <span class="cov5" title="38">if !m.HasFlags(minimalNonPanicFlags) </span>{
+        <span class="cov5" title="39">if !m.HasFlags(minimalNonPanicFlags) </span>{
                 <span class="cov3" title="6">if !m.HasFlags(withDnstapType) </span>{
                         <span class="cov1" title="1">panic("Dnstap field Type is not present")</span>
                 }
@@ -833,7 +833,7 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
                 }
         }
         // make sure ip addresses matches the defined socket family
-        <span class="cov4" title="32">switch meta.socketFamily </span>{
+        <span class="cov4" title="33">switch meta.socketFamily </span>{
         case 1: // IPv4
                 <span class="cov3" title="8">if !m.QueryAddr.Is4() </span>{
                         <span class="cov2" title="4">m.flags &amp;= ^ValidQueryAddr
@@ -842,11 +842,18 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
                         <span class="cov2" title="3">m.flags &amp;= ^ValidResponseAddr
 </span>                }
         case 2: // IPv6
-                <span class="cov3" title="6">if !(m.HasFlags(ValidQueryAddr) &amp;&amp; m.QueryAddr.Is6()) </span>{ //nolint:staticcheck
+                <span class="cov3" title="7">if !(m.HasFlags(ValidQueryAddr) &amp;&amp; m.QueryAddr.Is6()) </span>{ //nolint:staticcheck
                         <span class="cov2" title="4">m.flags &amp;= ^ValidQueryAddr
 </span>                }
-                <span class="cov3" title="6">if !(m.HasFlags(ValidResponseAddr) &amp;&amp; m.ResponseAddr.Is6()) </span>{ //nolint:staticcheck
+                <span class="cov3" title="7">if !(m.HasFlags(ValidResponseAddr) &amp;&amp; m.ResponseAddr.Is6()) </span>{ //nolint:staticcheck
                         <span class="cov2" title="4">m.flags &amp;= ^ValidResponseAddr
+</span>                }
+                // unmap IPv4-mapped IPv6 address for valid addresses
+                <span class="cov3" title="7">if m.HasFlags(ValidQueryAddr) &amp;&amp; m.QueryAddr.Is4In6() </span>{
+                        <span class="cov1" title="1">m.QueryAddr = m.QueryAddr.Unmap()
+</span>                }
+                <span class="cov3" title="7">if m.HasFlags(ValidResponseAddr) &amp;&amp; m.ResponseAddr.Is4In6() </span>{
+                        <span class="cov1" title="1">m.ResponseAddr = m.ResponseAddr.Unmap()
 </span>                }
         default: // not IPv4 nor IPv6
                 // unknown socket family =&gt; addresses not valid
@@ -854,7 +861,7 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
                 m.flags &amp;= ^ValidResponseAddr</span>
         }
         // arrange data
-        <span class="cov4" title="32">switch m.IsQuery </span>{
+        <span class="cov4" title="33">switch m.IsQuery </span>{
         case true:
                 <span class="cov3" title="12">if meta.queryMessage != nil </span>{
                         <span class="cov1" title="1">m.flags |= WithDNSMessage
@@ -862,32 +869,32 @@ func (m *Message) unpackDNSTap(data []byte, meta *meta) {
                 <span class="cov3" title="12">m.Message = meta.queryMessage
                 m.setTime(withQueryTime, meta.queryTimeSec, meta.queryTimeNSec)</span>
         case false:
-                <span class="cov4" title="20">if meta.responseMessage != nil </span>{
+                <span class="cov4" title="21">if meta.responseMessage != nil </span>{
                         <span class="cov2" title="3">m.flags |= WithDNSMessage
 </span>                }
-                <span class="cov4" title="20">m.Message = meta.responseMessage
+                <span class="cov4" title="21">m.Message = meta.responseMessage
                 m.setTime(withResponseTime, meta.responseTimeSec, meta.responseTimeNSec)</span>
         }
 }
 
 func (m *Message) unpackMessage(data []byte, meta *meta) {
-        <span class="cov5" title="51">var buf []byte
+        <span class="cov5" title="52">var buf []byte
 </span>
-        <span class="cov5" title="51">tlv := uint8(0)
+        <span class="cov5" title="52">tlv := uint8(0)
         valid := false
 </span>
-        <span class="cov5" title="51">for len(data) &gt; 0 </span>{
+        <span class="cov5" title="52">for len(data) &gt; 0 </span>{
                 // extract TLV
-                <span class="cov6" title="149">tlv, valid, data = getTLV(data)
+                <span class="cov6" title="153">tlv, valid, data = getTLV(data)
 </span>                // if not valid =&gt; skip TLV
-                <span class="cov6" title="149">if !valid </span>{
+                <span class="cov6" title="153">if !valid </span>{
                         <span class="cov1" title="1">data = skipType(tlv, data)
                         continue</span>
                 }
                 // switch based on field
-                <span class="cov6" title="148">switch tlv &gt;&gt; 3 </span>{
+                <span class="cov6" title="152">switch tlv &gt;&gt; 3 </span>{
                 case 1:
-                        <span class="cov5" title="38">assertType(protoVARINT, tlv)
+                        <span class="cov5" title="39">assertType(protoVARINT, tlv)
                         m.flags |= withMessageType
                         var t uint64
                         t, data = readVARINT(data)
@@ -896,13 +903,13 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
                                 <span class="cov3" title="14">m.flags |= validMessageType
                                 m.IsQuery = true</span>
                         case 2, 4, 6, 8, 10, 12, 14:
-                                <span class="cov4" title="21">m.flags |= validMessageType
+                                <span class="cov4" title="22">m.flags |= validMessageType
                                 m.IsQuery = false</span>
                         default:
                                 <span class="cov1" title="2">m.flags &amp;= ^validMessageType</span>
                         }
                 case 2:
-                        <span class="cov4" title="15">assertType(protoVARINT, tlv)
+                        <span class="cov4" title="16">assertType(protoVARINT, tlv)
                         var family uint64
                         family, data = readVARINT(data)
                         switch family &gt; math.MaxUint8 </span>{
@@ -910,7 +917,7 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
                                 // Socket Family too large
                                 <span class="cov0" title="0">meta.socketFamily = 0</span>
                         case false:
-                                <span class="cov4" title="15">meta.socketFamily = uint8(family &amp; math.MaxUint8)</span>
+                                <span class="cov4" title="16">meta.socketFamily = uint8(family &amp; math.MaxUint8)</span>
                         }
                 case 3:
                         <span class="cov2" title="3">assertType(protoVARINT, tlv)
@@ -926,32 +933,32 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
                                 m.SocketProtocol = uint8(protocol &amp; math.MaxUint8)</span>
                         }
                 case 4:
-                        <span class="cov4" title="16">assertType(protoLEN, tlv)
+                        <span class="cov4" title="17">assertType(protoLEN, tlv)
                         buf, data = readLEN[[]byte](data)
                         addr, ok := parseIP(buf)
                         switch ok </span>{
                         case true:
                                 // Valid Query Address
-                                <span class="cov3" title="12">m.flags |= ValidQueryAddr</span>
+                                <span class="cov3" title="13">m.flags |= ValidQueryAddr</span>
                         case false:
                                 // Invalid Query Address
                                 <span class="cov2" title="3">m.flags &amp;= ^ValidQueryAddr</span>
                         }
-                        <span class="cov4" title="15">m.QueryAddr = addr</span>
+                        <span class="cov4" title="16">m.QueryAddr = addr</span>
                 case 5:
-                        <span class="cov4" title="18">assertType(protoLEN, tlv)
+                        <span class="cov4" title="19">assertType(protoLEN, tlv)
                         var buf []byte
                         buf, data = readLEN[[]byte](data)
                         addr, ok := parseIP(buf)
                         switch ok </span>{
                         case true:
                                 // Valid Response Address
-                                <span class="cov4" title="15">m.flags |= ValidResponseAddr</span>
+                                <span class="cov4" title="16">m.flags |= ValidResponseAddr</span>
                         case false:
                                 // Invalid Response Address
                                 <span class="cov1" title="2">m.flags &amp;= ^ValidResponseAddr</span>
                         }
-                        <span class="cov4" title="17">m.ResponseAddr = addr</span>
+                        <span class="cov4" title="18">m.ResponseAddr = addr</span>
                 case 6:
                         <span class="cov3" title="6">assertType(protoVARINT, tlv)
                         var port uint64
@@ -1006,30 +1013,30 @@ func (m *Message) unpackMessage(data []byte, meta *meta) {
 
 func getTLV(data []byte) (uint8, bool, []byte) {
         // extract tlv
-        <span class="cov7" title="253">tlv := data[0]
+        <span class="cov7" title="259">tlv := data[0]
 </span>        // check that the tlv isn't longer than one byte
-        <span class="cov7" title="253">if tlv&amp;0b10000000 != 0 </span>{
+        <span class="cov7" title="259">if tlv&amp;0b10000000 != 0 </span>{
                 // ids larger than 15 not supported
                 // =&gt; jumping over its VARINT
                 <span class="cov1" title="2">return tlv | 0b11111000, false, skipVARINT(data)
 </span>        }
         // tlv is valid
-        <span class="cov7" title="251">return tlv, true, data[1:]</span>
+        <span class="cov7" title="257">return tlv, true, data[1:]</span>
 }
 
 func (m *Message) setTime(flag flag, sec uint64, nsec uint32) {
-        <span class="cov4" title="32">if m.HasFlags(flag) </span>{
+        <span class="cov4" title="33">if m.HasFlags(flag) </span>{
                 <span class="cov3" title="9">if sec &lt;= math.MaxInt64 </span>{
                         <span class="cov3" title="6">m.flags |= ValidTime
                         m.Timestamp = time.Unix(int64(sec), int64(nsec)).UTC()
                         return
 </span>                }
         }
-        <span class="cov4" title="26">m.Timestamp = time.Unix(0, 0).UTC()</span>
+        <span class="cov4" title="27">m.Timestamp = time.Unix(0, 0).UTC()</span>
 }
 
 func parseIP(data []byte) (netip.Addr, bool) {
-        <span class="cov5" title="52">switch len(data) </span>{
+        <span class="cov5" title="54">switch len(data) </span>{
         case 0:
                 // handle nil and zero length
                 <span class="cov1" title="2">return netip.Addr{}, false</span>
@@ -1038,7 +1045,7 @@ func parseIP(data []byte) (netip.Addr, bool) {
                 <span class="cov4" title="19">return netip.AddrFrom4([4]byte(data)), true</span>
         case 16:
                 // handle IPv6 addresses
-                <span class="cov3" title="10">return netip.AddrFrom16([16]byte(data)), true</span>
+                <span class="cov3" title="12">return netip.AddrFrom16([16]byte(data)), true</span>
         case 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15:
                 // handle everything between 0 and 16 that is not an IPv4 address
                 <span class="cov4" title="18">b := [16]byte{}
@@ -1062,7 +1069,7 @@ const (
 )
 
 func assertType(t protoType, tlv uint8) {
-        <span class="cov7" title="241">if protoType(tlv&amp;0b00000111) != t </span>{
+        <span class="cov7" title="247">if protoType(tlv&amp;0b00000111) != t </span>{
                 <span class="cov3" title="14">panic("incorrect type")</span>
         }
 }
@@ -1089,24 +1096,24 @@ func readUint32(data []byte) (uint32, []byte) {
 </span>}
 
 func readLEN[T string | []byte](data []byte) (T, []byte) {
-        <span class="cov6" title="92">l, data := readVARINT(data)
+        <span class="cov6" title="95">l, data := readVARINT(data)
         return T(data[0:l]), data[l:]
 </span>}
 
 func readVARINT(data []byte) (uint64, []byte) {
-        <span class="cov8" title="735">out := uint64(0)
+        <span class="cov8" title="741">out := uint64(0)
         n := byte(0)
 </span>
-        <span class="cov8" title="735">for i := range 9 </span>{
+        <span class="cov8" title="741">for i := range 9 </span>{
                 // extract next byte
-                <span class="cov10" title="3031">n = data[0]
+                <span class="cov10" title="3037">n = data[0]
 </span>                // advance data
-                <span class="cov10" title="3031">data = data[1:]
+                <span class="cov10" title="3037">data = data[1:]
 </span>                // update out
-                <span class="cov10" title="3031">out = out | uint64(n&amp;0b01111111)&lt;&lt;(i*7)
+                <span class="cov10" title="3037">out = out | uint64(n&amp;0b01111111)&lt;&lt;(i*7)
 </span>                // return if no continuation bit
-                <span class="cov10" title="3031">if n&amp;0b10000000 == 0 </span>{
-                        <span class="cov7" title="471">return out, data
+                <span class="cov10" title="3037">if n&amp;0b10000000 == 0 </span>{
+                        <span class="cov7" title="477">return out, data
 </span>                }
         }
 
@@ -2182,11 +2189,11 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
         <span class="cov6" title="9">drainCollectorQueues := func() </span>{
                 <span class="cov7" title="11">for </span>{
-                        <span class="cov7" title="13">select </span>{
+                        <span class="cov7" title="12">select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:
                                 <span class="cov1" title="1">processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:
-                                <span class="cov1" title="1">processWKDUpdate(wu)</span>
+                                <span class="cov0" title="0">processWKDUpdate(wu)</span>
                         default:
                                 <span class="cov7" title="11">return</span>
                         }
@@ -2224,12 +2231,12 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
 <span class="cov6" title="9">collectorLoop:
         for </span>{
-                <span class="cov10" title="31">select </span>{
+                <span class="cov10" title="32">select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:
                         <span class="cov4" title="4">processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:
-                        <span class="cov5" title="5">processWKDUpdate(wu)</span>
+                        <span class="cov5" title="6">processWKDUpdate(wu)</span>
 
                 case ts := &lt;-ticker.C():
                         // We want to tick at the start of each minute
@@ -2701,7 +2708,7 @@ type realTicker struct {
 }
 
 func (rt realTicker) C() &lt;-chan time.Time {
-        <span class="cov7" title="64">return rt.Ticker.C
+        <span class="cov7" title="65">return rt.Ticker.C
 </span>}
 
 type netListenerFactory struct{}
@@ -3027,7 +3034,7 @@ func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) {
 // Close closes the listener and every tracked connection. It is idempotent
 // and safe to call concurrently with ReadInto.
 func (input *socketDnstapInput) Close() error {
-        <span class="cov5" title="8">input.closeOnce.Do(func() </span>{
+        <span class="cov5" title="9">input.closeOnce.Do(func() </span>{
                 <span class="cov5" title="8">input.closeErr = input.listener.Close()
 </span>
                 <span class="cov5" title="8">input.connMutex.Lock()
@@ -3038,7 +3045,7 @@ func (input *socketDnstapInput) Close() error {
 </span>                        }
                 }
         })
-        <span class="cov5" title="8">return input.closeErr</span>
+        <span class="cov5" title="9">return input.closeErr</span>
 }
 
 // ReadInto accepts connections and forwards their dnstap frames to output
@@ -3052,10 +3059,10 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan&lt;- [
         <span class="cov3" title="3">go func() </span>{
                 <span class="cov3" title="3">select </span>{
                 case &lt;-ctx.Done():
-                        <span class="cov2" title="2">if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
+                        <span class="cov3" title="3">if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
                                 <span class="cov0" title="0">input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), err)
 </span>                        }
-                case &lt;-done:<span class="cov1" title="1"></span>
+                case &lt;-done:<span class="cov0" title="0"></span>
                 }
         }()
 
@@ -3635,7 +3642,7 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error {
                 return nil
 </span>        }
 
-        <span class="cov4" title="213">dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
+        <span class="cov5" title="213">dawgFinder, _, err := edm.loadDawgFileStaged(conf.IgnoredQuestionNamesFile)
         if err != nil </span>{
                 <span class="cov1" title="3">if errors.Is(err, errEmptyDawgFile) </span>{
                         // Treat the same as unset filename
@@ -3651,19 +3658,19 @@ func (edm *DnstapMinimiser) setIgnoredQuestionNames() error {
         // as that would race with hot-path readers still holding it. Reloads
         // leave the old finder for the GC to reclaim once no reader references
         // it (see the ignoredQuestions field comment on DnstapMinimiser).
-        <span class="cov4" title="210">if dawgFinder.NumAdded() &gt; 0 </span>{
-                <span class="cov4" title="142">edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span>{
+                <span class="cov5" title="142">edm.ignoredQuestions.Store(&amp;dawgFinderHolder{finder: dawgFinder})
 </span>        } else {
                 <span class="cov4" title="68">edm.ignoredQuestions.Store(nil)
 </span>        }
 
-        <span class="cov4" title="210">if dawgFinder.NumAdded() &gt; 0 </span>{
-                <span class="cov4" title="142">edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
+        <span class="cov5" title="210">if dawgFinder.NumAdded() &gt; 0 </span>{
+                <span class="cov5" title="142">edm.log.Info("setIgnoredQuestionNames: DNS question ignore list loaded", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
 </span>        } else {
                 <span class="cov4" title="68">edm.log.Info("setIgnoredQuestionNames: DNS question ignore list empty, no question names will be ignored", "filename", conf.IgnoredQuestionNamesFile, "num_names", dawgFinder.NumAdded())
 </span>        }
 
-        <span class="cov4" title="210">return nil</span>
+        <span class="cov5" title="210">return nil</span>
 }
 
 func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
@@ -3675,56 +3682,56 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
                 return nil
 </span>        }
 
-        <span class="cov4" title="213">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
+        <span class="cov5" title="213">fh, err := edm.deps.FileSystem.Open(filepath.Clean(conf.IgnoredClientIPsFile))
         if err != nil </span>{
                 <span class="cov1" title="3">return fmt.Errorf("setIgnoredClientsIPs: unable to open file: %w", err)
 </span>        }
-        <span class="cov4" title="210">defer func() </span>{
-                <span class="cov4" title="210">err := fh.Close()
+        <span class="cov5" title="210">defer func() </span>{
+                <span class="cov5" title="210">err := fh.Close()
                 if err != nil </span>{
                         <span class="cov0" title="0">edm.log.Error("setIgnoredClientIPs: failed closing fh", "filename", conf.IgnoredClientIPsFile, "error", err)
 </span>                }
         }()
 
-        <span class="cov4" title="210">var b netipx.IPSetBuilder
+        <span class="cov5" title="210">var b netipx.IPSetBuilder
 </span>
-        <span class="cov4" title="210">var numCIDRs uint64
+        <span class="cov5" title="210">var numCIDRs uint64
         scanner := bufio.NewScanner(fh)
         for scanner.Scan() </span>{
-                <span class="cov5" title="847">if scanner.Text() == "" || strings.HasPrefix(scanner.Text(), "#") </span>{
+                <span class="cov6" title="847">if scanner.Text() == "" || strings.HasPrefix(scanner.Text(), "#") </span>{
                         // Skip empty lines and comments
                         <span class="cov2" title="4">continue</span>
                 }
-                <span class="cov5" title="843">prefix, err := netip.ParsePrefix(scanner.Text())
+                <span class="cov6" title="843">prefix, err := netip.ParsePrefix(scanner.Text())
                 if err != nil </span>{
                         <span class="cov1" title="1">return fmt.Errorf("setIgnoredClientIPs: unable to parse ignored prefix '%s'", scanner.Text())
 </span>                }
-                <span class="cov5" title="842">b.AddPrefix(prefix)
+                <span class="cov6" title="842">b.AddPrefix(prefix)
                 numCIDRs++</span>
         }
-        <span class="cov4" title="209">if err := scanner.Err(); err != nil </span>{
+        <span class="cov5" title="209">if err := scanner.Err(); err != nil </span>{
                 <span class="cov0" title="0">return fmt.Errorf("setIgnoredClientIPs: error reading from '%s': %w", conf.IgnoredClientIPsFile, err)
 </span>        }
 
         // Starts out as nil. We only set it to an initialized IPSet if there is at
         // least one ignored client CIDR present in the input file.
-        <span class="cov4" title="209">var ipset *netipx.IPSet
+        <span class="cov5" title="209">var ipset *netipx.IPSet
         if numCIDRs &gt; 0 </span>{
-                <span class="cov4" title="141">ipset, err = b.IPSet()
+                <span class="cov5" title="141">ipset, err = b.IPSet()
                 if err != nil </span>{
                         <span class="cov0" title="0">return fmt.Errorf("setIgnoredClientIPs: IPSet creation failed: %w", err)
 </span>                }
         }
 
-        <span class="cov4" title="209">edm.ignoredClientsIPSet.Store(ipset)
+        <span class="cov5" title="209">edm.ignoredClientsIPSet.Store(ipset)
 </span>
-        <span class="cov4" title="209">if ipset != nil </span>{
-                <span class="cov4" title="141">edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
+        <span class="cov5" title="209">if ipset != nil </span>{
+                <span class="cov5" title="141">edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
 </span>        } else {
                 <span class="cov4" title="68">edm.log.Info("setIgnoredClientIPs: DNS client ignore list empty, no clients will be ignored", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
 </span>        }
 
-        <span class="cov4" title="209">return nil</span>
+        <span class="cov5" title="209">return nil</span>
 }
 
 // dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is
@@ -3737,41 +3744,41 @@ type dawgFinderHolder struct {
 func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
         // if the query address is valid AND is on the ignore clients ip list
         // the frame is ignured, if not we let it through
-        <span class="cov6" title="1141">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
+        <span class="cov6" title="1145">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
                 // Atomic snapshot - no lock on the hot path. Reload writers
                 // atomic.Store the new IPSet; readers see either old or new value
                 // per Load.
-                <span class="cov6" title="1138">ipset := edm.ignoredClientsIPSet.Load()
+                <span class="cov6" title="1142">ipset := edm.ignoredClientsIPSet.Load()
 </span>                // list does not exist
-                <span class="cov6" title="1138">if ipset == nil </span>{
-                        <span class="cov5" title="449">return false
+                <span class="cov6" title="1142">if ipset == nil </span>{
+                        <span class="cov6" title="457">return false
 </span>                }
                 // check against the list
-                <span class="cov5" title="689">if ipset.Contains(dt.QueryAddr) </span>{
-                        <span class="cov5" title="354">edm.promClientIPIgnored.Inc()
+                <span class="cov6" title="685">if ipset.Contains(dt.QueryAddr) </span>{
+                        <span class="cov5" title="353">edm.promClientIPIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov5" title="338">return false</span>
+        <span class="cov5" title="335">return false</span>
 }
 
 func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
-        <span class="cov10" title="188365">holder := edm.ignoredQuestions.Load()
+        <span class="cov10" title="42547">holder := edm.ignoredQuestions.Load()
         if holder == nil </span>{
-                <span class="cov9" title="151908">return false
+                <span class="cov9" title="20340">return false
 </span>        }
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="36457">for _, question := range msg.Question </span>{
-                <span class="cov8" title="36459">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+        <span class="cov9" title="22207">for _, question := range msg.Question </span>{
+                <span class="cov9" title="22209">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
                 if dawgIndex != dawgNotFound </span>{
-                        <span class="cov7" title="11844">edm.promQuestionNameIgnored.Inc()
+                        <span class="cov8" title="5758">edm.promQuestionNameIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov8" title="24613">return false</span>
+        <span class="cov9" title="16449">return false</span>
 }
 </pre>
 		
@@ -4419,29 +4426,29 @@ type pseudonymised struct {
         ResponseAddrType IdentifierType
 }
 
-func (pdt *pseudonymised) QueryAddrAsIdentifier() uint64    { <span class="cov7" title="29">return ipToIdentifier(pdt.QueryAddr) }</span>
-func (pdt *pseudonymised) ResponseAddrAsIdentifier() uint64 { <span class="cov6" title="18">return ipToIdentifier(pdt.ResponseAddr) }</span>
+func (pdt *pseudonymised) QueryAddrAsIdentifier() uint64    { <span class="cov7" title="31">return ipToIdentifier(pdt.QueryAddr) }</span>
+func (pdt *pseudonymised) ResponseAddrAsIdentifier() uint64 { <span class="cov6" title="20">return ipToIdentifier(pdt.ResponseAddr) }</span>
 
 func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
         // create the return value
-        <span class="cov7" title="31">pdt := pseudonymised{
+        <span class="cov7" title="33">pdt := pseudonymised{
                 Message:          dt,
                 QueryAddrType:    addressToIdentifierType(dt.QueryAddr, dt.HasFlags(dnstap.ValidQueryAddr)),
                 ResponseAddrType: addressToIdentifierType(dt.ResponseAddr, dt.HasFlags(dnstap.ValidResponseAddr)),
 </span>        }
         // extract and use pseudonymiser
-        <span class="cov7" title="31">pseudonymiser := edm.pseudonymiser.Load()
+        <span class="cov7" title="33">pseudonymiser := edm.pseudonymiser.Load()
         if pseudonymiser == nil </span>{
                 // if no cipher is supplied =&gt; default to set addresses to the "::" IPv6 address
                 <span class="cov2" title="2">dt.QueryAddr = netip.IPv6Unspecified()
                 dt.ResponseAddr = netip.IPv6Unspecified()
 </span>        } else {
                 // else pseudonymise the query and response addresses using the supplied cipher
-                <span class="cov7" title="29">dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr)
-                dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr)
+                <span class="cov7" title="31">dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr, pdt.QueryAddrType)
+                dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr, pdt.ResponseAddrType)
 </span>        }
         // return the pseudonymised struct
-        <span class="cov7" title="31">return pdt</span>
+        <span class="cov7" title="33">return pdt</span>
 }
 
 // Helper to pseudonymise the IP addresss using a block cipher. The block
@@ -4449,16 +4456,23 @@ func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
 // secret (guarded by the key) 1-1 mapping.
 // NOTE: the supplied cipher must have a block size of 16 bytes.
 // NOTE: only to be used by edm.pseudonymiseIPs
-func pseudonymiseIP(cipher cipher.Block, ip netip.Addr) netip.Addr {
+func pseudonymiseIP(cipher cipher.Block, ip netip.Addr, Type IdentifierType) netip.Addr {
         // extract IP as 16-bytes, IPv6 is mapped directly,
         // IPv4 is mapped under ::ffff:/96, the zero value
         // is mapped to all zeros
-        <span class="cov8" title="58">buf := ip.As16()
-</span>        // encrypt the bytes
-        <span class="cov8" title="58">cipher.Encrypt(buf[:], buf[:])
+        <span class="cov8" title="62">buf := ip.As16()
+</span>        // mask host part of IPv6 addresses
+        <span class="cov8" title="62">switch Type </span>{
+        case IdentifierIPv6:
+                <span class="cov5" title="14">for i := 8; i &lt; 16; i++ </span>{
+                        <span class="cov9" title="112">buf[i] = 0
+</span>                }
+        }
+        // encrypt the bytes
+        <span class="cov8" title="62">cipher.Encrypt(buf[:], buf[:])
 </span>        // return the bytes to the netip.Addr format
-        <span class="cov8" title="58">return netip.AddrFrom16(buf)
-</span>}
+        <span class="cov8" title="62">return netip.AddrFrom16(buf)</span>
+}
 
 // Used to specify the origin of the identifier
 type IdentifierType uint8
@@ -4472,11 +4486,11 @@ const (
 // Helper used to determine the source of an IP address
 // NOTE: only to be used by edm.pseudonymiseIPs
 func addressToIdentifierType(addr netip.Addr, valid bool) IdentifierType {
-        <span class="cov8" title="68">switch </span>{
+        <span class="cov8" title="72">switch </span>{
         case valid &amp;&amp; addr.Is4():
                 <span class="cov7" title="28">return IdentifierIPv4</span>
         case valid &amp;&amp; addr.Is6():
-                <span class="cov5" title="11">return IdentifierIPv6</span>
+                <span class="cov5" title="15">return IdentifierIPv6</span>
         default:
                 <span class="cov7" title="29">return IdentifierOther</span>
         }
@@ -4486,7 +4500,7 @@ func addressToIdentifierType(addr netip.Addr, valid bool) IdentifierType {
 // inside an uint64. It currently discards half of the address bytes.
 // NOTE: only to be used by pseudonymised's methods
 func ipToIdentifier(ip netip.Addr) uint64 {
-        <span class="cov8" title="47">buf := ip.As16()
+        <span class="cov8" title="51">buf := ip.As16()
         return binary.BigEndian.Uint64(buf[:])
 </span>}
 </pre>
@@ -5616,24 +5630,24 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 // well as if it was found based on a suffix string or not.
 func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
         // Ignore capitalisation in labels
-        <span class="cov9" title="36484">name = strings.ToLower(name)
+        <span class="cov9" title="22234">name = strings.ToLower(name)
 </span>
         // Try exact match first
-        <span class="cov9" title="36484">dawgIndex := dawgFinder.IndexOf(name)
+        <span class="cov9" title="22234">dawgIndex := dawgFinder.IndexOf(name)
 </span>
-        <span class="cov9" title="36484">if dawgIndex == dawgNotFound </span>{
+        <span class="cov9" title="22234">if dawgIndex == dawgNotFound </span>{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                <span class="cov9" title="31927">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
-                        <span class="cov10" title="46519">dawgIndex = dawgFinder.IndexOf(name[index-1:])
+                <span class="cov9" title="20890">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
+                        <span class="cov10" title="29804">dawgIndex = dawgFinder.IndexOf(name[index-1:])
                         if dawgIndex != dawgNotFound </span>{
-                                <span class="cov8" title="7304">return dawgIndex, true
+                                <span class="cov8" title="4431">return dawgIndex, true
 </span>                        }
                 }
         }
 
-        <span class="cov9" title="29180">return dawgIndex, false</span>
+        <span class="cov9" title="17803">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5714,7 +5728,7 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, 
 
         // Counters based on question class and type
         <span class="cov3" title="11">if msg.Question[0].Qclass == dns.ClassINET </span>{
-                <span class="cov2" title="10">switch msg.Question[0].Qtype </span>{
+                <span class="cov3" title="10">switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:
                         <span class="cov2" title="6">wu.ACount++</span>
                 case dns.TypeAAAA:
@@ -5734,18 +5748,18 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, 
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
-        <span class="cov2" title="10">dawgFileChanged := false
+        <span class="cov3" title="10">dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
 </span>
-        <span class="cov2" title="10">curSnap := wkd.snap.Load()
+        <span class="cov3" title="10">curSnap := wkd.snap.Load()
 </span>        // A SIGHUP-requested DAWG reload is applied here rather than directly
         // in applyUpdate because the histogram map keyed by DAWG index must be
         // rotated together with the finder it was built against. The request
         // flag is consumed even when loading fails, so a broken DAWG file makes
         // exactly one rotation fail instead of wedging every following one; the
         // operator fixes the file and sends a new SIGHUP.
-        <span class="cov2" title="10">if edm.dawgReloadRequested.CompareAndSwap(true, false) </span>{
+        <span class="cov3" title="10">if edm.dawgReloadRequested.CompareAndSwap(true, false) </span>{
                 <span class="cov2" title="4">var err error
                 dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
                 if err != nil </span>{
