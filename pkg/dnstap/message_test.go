@@ -416,6 +416,8 @@ func TestUnpackIPs(t *testing.T) {
 		// good
 		{mpas("192.0.2.54"), nil, true, mpas("192.0.2.53"), nil, true, dnstap.SocketFamily_INET},
 		{mpas("2001:db8::54"), nil, true, mpas("2001:db8::53"), nil, true, dnstap.SocketFamily_INET6},
+		// IPv4-mapped IPv6 address
+		{mpas("::ffff:192.0.2.54"), mpas("192.0.2.54"), true, mpas("::ffff:192.0.2.53"), mpas("192.0.2.53"), true, dnstap.SocketFamily_INET6},
 		// completely wrong
 		{mpas("192.0.2.54"), nil, false, mpas("2001:db8::53"), nil, false, dnstap.SocketFamily(0)},
 		{mpas("192.0.2.54"), nil, false, mpas("192.0.2.53"), nil, false, dnstap.SocketFamily_INET6},
@@ -454,36 +456,24 @@ func TestUnpackIPs(t *testing.T) {
 		}
 		checkFlags(t, dt, flags)
 		// test address fields
-		if tc.QueryAddrValid {
+		switch tc.QueryAddrExtra {
+		case nil:
 			if !bytes.Equal(tc.QueryAddr, dt.QueryAddr.AsSlice()) {
 				t.Fatal("Incorrect query address")
 			}
-		} else {
-			switch tc.QueryAddrExtra {
-			case nil:
-				if !bytes.Equal(tc.QueryAddr, dt.QueryAddr.AsSlice()) {
-					t.Fatal("Incorrect query address")
-				}
-			default:
-				if !bytes.Equal(tc.QueryAddrExtra, dt.QueryAddr.AsSlice()) {
-					t.Fatal("Incorrect fictive query address")
-				}
+		default:
+			if !bytes.Equal(tc.QueryAddrExtra, dt.QueryAddr.AsSlice()) {
+				t.Fatal("Incorrect changed query address")
 			}
 		}
-		if tc.ResponseAddrValid {
+		switch tc.ResponseAddrExtra {
+		case nil:
 			if !bytes.Equal(tc.ResponseAddr, dt.ResponseAddr.AsSlice()) {
 				t.Fatal("Incorrect response address")
 			}
-		} else {
-			switch tc.ResponseAddrExtra {
-			case nil:
-				if !bytes.Equal(tc.ResponseAddr, dt.ResponseAddr.AsSlice()) {
-					t.Fatal("Incorrect response address")
-				}
-			default:
-				if !bytes.Equal(tc.ResponseAddrExtra, dt.ResponseAddr.AsSlice()) {
-					t.Fatal("Incorrect fictive response address")
-				}
+		default:
+			if !bytes.Equal(tc.ResponseAddrExtra, dt.ResponseAddr.AsSlice()) {
+				t.Fatal("Incorrect changed response address")
 			}
 		}
 	}
