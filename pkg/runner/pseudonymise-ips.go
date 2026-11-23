@@ -46,7 +46,8 @@ type pseudonymised struct {
 func (pdt *pseudonymised) QueryAddrAsIdentifier() uint64    { return ipToIdentifier(pdt.QueryAddr) }
 func (pdt *pseudonymised) ResponseAddrAsIdentifier() uint64 { return ipToIdentifier(pdt.ResponseAddr) }
 
-func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
+// Using a salt of value 0 effectively disables salting
+func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message, salt uint64) pseudonymised {
 	// create the return value
 	pdt := pseudonymised{
 		Message:          dt,
@@ -61,8 +62,8 @@ func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
 		dt.ResponseAddr = netip.IPv6Unspecified()
 	} else {
 		// else pseudonymise the query and response addresses using the supplied cipher
-		dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr, pdt.QueryAddrType)
-		dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr, pdt.ResponseAddrType)
+		dt.QueryAddr = pseudonymiseIP(*pseudonymiser, dt.QueryAddr, pdt.QueryAddrType, salt)
+		dt.ResponseAddr = pseudonymiseIP(*pseudonymiser, dt.ResponseAddr, pdt.ResponseAddrType, salt)
 	}
 	// return the pseudonymised struct
 	return pdt
@@ -73,16 +74,28 @@ func (edm *DnstapMinimiser) pseudonymiseIPs(dt *dnstap.Message) pseudonymised {
 // secret (guarded by the key) 1-1 mapping.
 // NOTE: the supplied cipher must have a block size of 16 bytes.
 // NOTE: only to be used by edm.pseudonymiseIPs
-func pseudonymiseIP(cipher cipher.Block, ip netip.Addr, Type IdentifierType) netip.Addr {
+func pseudonymiseIP(cipher cipher.Block, ip netip.Addr, Type IdentifierType, salt uint64) netip.Addr {
 	// extract IP as 16-bytes, IPv6 is mapped directly,
 	// IPv4 is mapped under ::ffff:/96, the zero value
 	// is mapped to all zeros
 	buf := ip.As16()
-	// mask host part of IPv6 addresses
+	// modify addresses depending on type
 	switch Type {
+	case IdentifierIPv4:
+		// set first 64 bits to salt, these bits would normally be zero
+		for i := range 8 {
+			buf[i] = byte((salt >> (8 * i)) & 0b11111111)
+		}
 	case IdentifierIPv6:
+		// mask host part of IPv6 addresses and set them to the salt
+		// (masking would normally be setting them to zero)
 		for i := 8; i < 16; i++ {
-			buf[i] = 0
+			buf[i] = byte((salt >> (8 * (i - 8))) & 0b11111111)
+		}
+	default:
+		// xor in the salt in every second byte for other types
+		for i := range 8 {
+			buf[2*i] = buf[2*i] ^ byte((salt>>(8*i))&0b11111111)
 		}
 	}
 	// encrypt the bytes

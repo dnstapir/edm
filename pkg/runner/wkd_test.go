@@ -249,7 +249,7 @@ func TestWellKnownDomainUpdatesAndRotation(t *testing.T) {
 		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
 	})
 
-	wkd.sendUpdate(edm.pseudonymiseIPs(dt), msg, 0, false, modTime)
+	wkd.sendUpdate(edm.pseudonymiseIPs(dt, 0), msg, 0, false, modTime)
 
 	select {
 	case wu := <-wkd.updateCh:
@@ -417,7 +417,7 @@ func TestSendUpdateBranches(t *testing.T) {
 				dt.Message.QueryAddress = tc.ipBytes
 			})
 
-			wkd.sendUpdate(edm.pseudonymiseIPs(dt), msg, 0, false, time.Unix(2, 0))
+			wkd.sendUpdate(edm.pseudonymiseIPs(dt, 0), msg, 0, false, time.Unix(2, 0))
 			select {
 			case wu := <-wkd.updateCh:
 				tc.check(t, wu)

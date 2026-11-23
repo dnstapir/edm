@@ -108,7 +108,7 @@ func TestRunMinimiserPseudonymising(t *testing.T) {
 			t.Fatal(err)
 		}
 		db := newTestPebble(t)
-		wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example."), time.Time{})
+		wkd, err := newWellKnownDomainsTracker(testDawgFinder(t, "known.example.", "example.com.", "www.example.com."), time.Time{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,16 +120,25 @@ func TestRunMinimiserPseudonymising(t *testing.T) {
 			// input
 			family dnstap.SocketFamily
 			ip     []byte
+			domain string
 			// expected output
 			hllHash       uint64
 			hllDataSource IdentifierType
 		}{
-			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), 0x26e0a0604a381e5a, IdentifierIPv4},
-			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), 0x693c6143987bc0a, IdentifierIPv6},
-			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, 0x1a63b4c7e0187840, IdentifierOther},
+			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), "known.example.", 0x7a2943aabed3e943, IdentifierIPv4},
+			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), "known.example.", 0xb52bfd1d71e9f635, IdentifierIPv6},
+			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, "known.example.", 0x45dc3f21d5a0e917, IdentifierOther},
+			// another domain should have another identity
+			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), "example.com.", 0xfb4a15eab1631fd9, IdentifierIPv4},
+			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), "example.com.", 0xcbf7e7516b347f9a, IdentifierIPv6},
+			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, "example.com.", 0x62c26a7398d3136b, IdentifierOther},
+			// should generate the same identity for mixed case domain names and with added sub-domains
+			{dnstap.SocketFamily_INET, mpa("198.51.100.20").AsSlice(), "WwW.ExAmPlE.CoM.", 0xfb4a15eab1631fd9, IdentifierIPv4},
+			{dnstap.SocketFamily_INET6, mpa("2001:db8::20").AsSlice(), "WwW.ExAmPlE.CoM.", 0xcbf7e7516b347f9a, IdentifierIPv6},
+			{dnstap.SocketFamily_INET6, []byte{1, 2, 3}, "WwW.ExAmPlE.CoM.", 0x62c26a7398d3136b, IdentifierOther},
 		}
 		for _, tc := range tests {
-			frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, "known.example.", dns.TypeA, dns.RcodeSuccess), func(dt *dnstap.Dnstap) {
+			frame := testPackedDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, tc.family, packedDNSMsg(t, tc.domain, dns.TypeA, dns.RcodeSuccess), func(dt *dnstap.Dnstap) {
 				dt.Message.QueryAddress = tc.ip
 			})
 			edm.inputChannel <- frame
@@ -309,6 +318,55 @@ func TestRunMinimiserSkipsMalformedFrames(t *testing.T) {
 			t.Fatalf("promDNSParseError = %v, want 1", got)
 		}
 	})
+}
+
+func TestDomainSalt(t *testing.T) {
+	// no question
+	msg := new(dns.Msg)
+	testDomainSalt(t, msg, 14695981039346656037)
+	// root
+	msg = new(dns.Msg)
+	msg.SetQuestion(".", dns.TypeA)
+	testDomainSalt(t, msg, 14695981039346656037)
+	// TLDs
+	msg = new(dns.Msg)
+	msg.SetQuestion("com.", dns.TypeA)
+	testDomainSalt(t, msg, 17727560222643414494)
+	msg = new(dns.Msg)
+	msg.SetQuestion("se.", dns.TypeA)
+	testDomainSalt(t, msg, 637596930452040101)
+	// hash of variants of example.com
+	msg = new(dns.Msg)
+	msg.SetQuestion("example.com.", dns.TypeA)
+	testDomainSalt(t, msg, 6298361471204529350)
+	msg.SetQuestion("EXAMPLE.COM.", dns.TypeA)
+	testDomainSalt(t, msg, 6298361471204529350)
+	msg.SetQuestion("a.example.com.", dns.TypeA)
+	testDomainSalt(t, msg, 6298361471204529350)
+	msg.SetQuestion("b.a.example.com.", dns.TypeA)
+	testDomainSalt(t, msg, 6298361471204529350)
+	msg.SetQuestion("c.b.a.example.com.", dns.TypeA)
+	testDomainSalt(t, msg, 6298361471204529350)
+	// hash of variants of dnstapir.se
+	msg = new(dns.Msg)
+	msg.SetQuestion("dnstapir.se.", dns.TypeA)
+	testDomainSalt(t, msg, 12030395109003130372)
+	msg.SetQuestion("DNSTAPIR.SE.", dns.TypeA)
+	testDomainSalt(t, msg, 12030395109003130372)
+	msg.SetQuestion("a.dnstapir.se.", dns.TypeA)
+	testDomainSalt(t, msg, 12030395109003130372)
+	msg.SetQuestion("b.a.dnstapir.se.", dns.TypeA)
+	testDomainSalt(t, msg, 12030395109003130372)
+	msg.SetQuestion("c.b.a.dnstapir.se.", dns.TypeA)
+	testDomainSalt(t, msg, 12030395109003130372)
+}
+
+func testDomainSalt(t *testing.T, msg *dns.Msg, expected uint64) {
+	t.Helper()
+	got := domainSalt(msg)
+	if got != expected {
+		t.Fatalf("incorrect error domain salt, got: %v expected: %v", got, expected)
+	}
 }
 
 func newRunMinimiserTestFixture(t *testing.T, knownDomains ...string) (*DnstapMinimiser, *lru.Cache[string, struct{}], *pebble.DB, *wellKnownDomainsTracker) {

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/dnstapir/edm/pkg/dnstap"
@@ -43,15 +44,8 @@ minimiserLoop:
 				continue
 			}
 
-			// pseudonymise IPs
-			pdt := edm.pseudonymiseIPs(&dt)
-
 			// parse DNS message
 			msg := edm.parsePacket(&dt)
-
-			// Create a less specific timestamp for data sent to
-			// core to make precise tracking harder.
-			truncatedTimestamp := dt.Timestamp.Truncate(time.Minute)
 
 			// For cases where we were unable to unpack the DNS message we
 			// skip parsing.
@@ -76,6 +70,9 @@ minimiserLoop:
 				continue
 			}
 
+			// pseudonymise IPs
+			pdt := edm.pseudonymiseIPs(&dt, domainSalt(msg))
+
 			// We pass on the client address for cardinality
 			// measurements.
 			dawgIndex, suffixMatch, dawgModTime := wkdTracker.lookup(msg)
@@ -83,6 +80,10 @@ minimiserLoop:
 				wkdTracker.sendUpdate(pdt, msg, dawgIndex, suffixMatch, dawgModTime)
 				continue
 			}
+
+			// Create a less specific timestamp for data sent to
+			// core to make precise tracking harder.
+			truncatedTimestamp := dt.Timestamp.Truncate(time.Minute)
 
 			if !edm.qnameSeen(msg, seenQnameLRU, seenStore, conf.PebbleSync) {
 				if !startConf.DisableMQTT {
@@ -128,8 +129,29 @@ func (edm *DnstapMinimiser) parsePacket(dt *dnstap.Message) *dns.Msg {
 	msg := new(dns.Msg)
 	err := msg.Unpack(dt.Message)
 	if err != nil {
-		edm.log.Error("unable to unpack message", "error", err, "query_address", dt.QueryAddr, "query_port", dt.QueryPort, "response_address", dt.ResponseAddr, "response_port", dt.ResponsePort)
+		edm.log.Error("unable to unpack message", "error", err)
 		return nil
 	}
 	return msg
+}
+
+// tries to extract up to two labels of the first question and
+// creates an FNV-1a hash of the results, if it fails then the
+// FNV offset is used as the salt
+func domainSalt(msg *dns.Msg) uint64 {
+	fnv := uint64(14695981039346656037) // FNV-1a 64-bit offset
+	if len(msg.Question) > 0 {
+		name := msg.Question[0].Name
+		name = strings.TrimSuffix(name, ".")
+		name = strings.ToLower(name)
+		offset, _ := dns.PrevLabel(name, 2)
+		name = name[offset:]
+		// FNV-1a 64-bit main loop
+		for i := 0; i < len(name); i++ {
+			fnv = fnv ^ uint64(name[i])
+			fnv = fnv * 1099511628211
+		}
+	}
+	// FNV-1a 64-bit hash
+	return fnv
 }
