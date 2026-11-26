@@ -16,7 +16,7 @@ require (
 	github.com/prometheus/client_model v0.6.3
 	github.com/segmentio/go-hll v1.0.1
 	github.com/smhanov/dawg v0.0.0-20220118194912-66057bdbf2e3
-	github.com/yaronf/httpsign v0.5.1
+	github.com/yaronf/httpsign v0.5.2
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	google.golang.org/protobuf v1.36.12
 )
