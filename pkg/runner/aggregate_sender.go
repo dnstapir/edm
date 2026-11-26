@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/dnstapir/edm/pkg/buildinfo"
-	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/yaronf/httpsign"
 )
 
@@ -33,9 +33,7 @@ type realAggregateSender struct {
 }
 
 func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (realAggregateSender, error) {
-	var signingKey ed25519.PrivateKey
-
-	err := jwk.Export(signingJwk, &signingKey)
+	signingKey, err := jwk.Export[ed25519.PrivateKey](signingJwk)
 	if err != nil {
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
 	}

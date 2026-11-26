@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 )
 
 func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
@@ -51,7 +51,7 @@ func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKey: %s", err)
 	}
-	signingJWK, err := jwk.Import(signingKey)
+	signingJWK, err := jwk.Import[jwk.Key](signingKey)
 	if err != nil {
 		t.Fatalf("Import: %s", err)
 	}
@@ -225,7 +225,7 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	badKey, err := jwk.Import(rsaKey)
+	badKey, err := jwk.Import[jwk.Key](rsaKey)
 	if err != nil {
 		t.Fatal(err)
 	}

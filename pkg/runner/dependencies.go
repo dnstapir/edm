@@ -19,8 +19,8 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/smhanov/dawg"
 )
 
@@ -357,8 +357,8 @@ func (rkl realKeyMaterialLoader) LoadKeyPair(certPath, keyPath string) (tls.Cert
 }
 
 // LoadEdDSAJWK loads a JWK from fileName and verifies it is an EdDSA
-// (Ed25519/Ed448) key before stamping its algorithm as EdDSA. Other key
-// types (including the OKP key-agreement curves X25519/X448) return an
+// (Ed25519) key before stamping its algorithm as EdDSA. Other key
+// types (including the OKP key-agreement curves X25519) return an
 // error wrapping errNotEdDSAJWK, so a mismatched key fails at load time
 // instead of during later JWS operations.
 //
@@ -372,28 +372,16 @@ func (rkl realKeyMaterialLoader) LoadEdDSAJWK(fileName string) (jwk.Key, error) 
 		return nil, err
 	}
 
-	jwkKey, err := jwk.ParseKey(keyFile)
+	jwkKey, err := jwk.ParseKeyAs[jwk.OKPPrivateKey](keyFile)
 	if err != nil {
+		if errors.Is(err, jwk.KeyTypeMismatchError{}) {
+			return nil, errNotEdDSAJWK
+		}
 		return nil, err
 	}
-
-	// jwk.ParseKey rejects an OKP key without a crv, so the ok value is
-	// always true here. Even if it were not, Crv reports an invalid curve
-	// that fails the Ed25519/Ed448 check below, so the ok value can be
-	// discarded.
-	var crv jwa.EllipticCurveAlgorithm
-	switch key := jwkKey.(type) {
-	case jwk.OKPPrivateKey:
-		crv, _ = key.Crv()
-	case jwk.OKPPublicKey:
-		crv, _ = key.Crv()
-	default:
-		return nil, fmt.Errorf("%w: key type %q", errNotEdDSAJWK, jwkKey.KeyType())
-	}
-	if crv != jwa.Ed25519() && crv != jwa.Ed448() {
+	if crv, ok := jwkKey.Crv(); !ok || crv != jwa.Ed25519() {
 		return nil, fmt.Errorf("%w: curve %q", errNotEdDSAJWK, crv)
 	}
-
 	if kid, ok := jwkKey.KeyID(); !ok || kid == "" {
 		return nil, errJWKMissingKeyID
 	}

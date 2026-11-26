@@ -29,8 +29,8 @@ import (
 	"github.com/cockroachdb/pebble"
 	extdnstap "github.com/dnstap/golang-dnstap"
 	"github.com/dnstapir/edm/pkg/dnstap"
-	"github.com/lestrrat-go/jwx/v3/jwa"
-	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v4/jwa"
+	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"google.golang.org/protobuf/proto"
@@ -349,7 +349,7 @@ func cacheTestJWKJSON() {
 		testJWKJSONErr = err
 		return
 	}
-	key, err := jwk.Import(priv)
+	key, err := jwk.Import[jwk.Key](priv)
 	if err != nil {
 		testJWKJSONErr = err
 		return

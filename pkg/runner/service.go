@@ -46,7 +46,7 @@ var (
 	errEmptyDawgFile            = errors.New("dawg file is empty")
 	errNoInputConfigured        = errors.New("no dnstap input configured")
 	errMultipleInputsConfigured = errors.New("only one dnstap input may be configured")
-	errNotEdDSAJWK              = errors.New("JWK is not an EdDSA (Ed25519/Ed448) key")
+	errNotEdDSAJWK              = errors.New("JWK is not an EdDSA (Ed25519) key")
 	errJWKMissingKeyID          = errors.New("JWK has no key ID set")
 	errAppendCertsFromPEM       = errors.New("failed to append certs from PEM")
 )
