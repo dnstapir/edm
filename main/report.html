@@ -2189,9 +2189,9 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
         <span class="cov6" title="9">drainCollectorQueues := func() </span>{
                 <span class="cov7" title="11">for </span>{
-                        <span class="cov7" title="14">select </span>{
+                        <span class="cov7" title="13">select </span>{
                         case sd := &lt;-edm.sessionCollectorCh:
-                                <span class="cov2" title="2">processSession(sd)</span>
+                                <span class="cov1" title="1">processSession(sd)</span>
                         case wu := &lt;-wkd.updateCh:
                                 <span class="cov1" title="1">processWKDUpdate(wu)</span>
                         default:
@@ -2231,9 +2231,9 @@ func (edm *DnstapMinimiser) dataCollector(wkd *wellKnownDomainsTracker, dawgFile
 
 <span class="cov6" title="9">collectorLoop:
         for </span>{
-                <span class="cov10" title="30">select </span>{
+                <span class="cov10" title="31">select </span>{
                 case sd := &lt;-edm.sessionCollectorCh:
-                        <span class="cov3" title="3">processSession(sd)</span>
+                        <span class="cov4" title="4">processSession(sd)</span>
 
                 case wu := &lt;-wkd.updateCh:
                         <span class="cov5" title="5">processWKDUpdate(wu)</span>
@@ -2708,7 +2708,7 @@ type realTicker struct {
 }
 
 func (rt realTicker) C() &lt;-chan time.Time {
-        <span class="cov7" title="63">return rt.Ticker.C
+        <span class="cov7" title="64">return rt.Ticker.C
 </span>}
 
 type netListenerFactory struct{}
@@ -3034,7 +3034,7 @@ func (input *socketDnstapInput) SetLogger(logger dnstap.Logger) {
 // Close closes the listener and every tracked connection. It is idempotent
 // and safe to call concurrently with ReadInto.
 func (input *socketDnstapInput) Close() error {
-        <span class="cov5" title="9">input.closeOnce.Do(func() </span>{
+        <span class="cov5" title="8">input.closeOnce.Do(func() </span>{
                 <span class="cov5" title="8">input.closeErr = input.listener.Close()
 </span>
                 <span class="cov5" title="8">input.connMutex.Lock()
@@ -3045,7 +3045,7 @@ func (input *socketDnstapInput) Close() error {
 </span>                        }
                 }
         })
-        <span class="cov5" title="9">return input.closeErr</span>
+        <span class="cov5" title="8">return input.closeErr</span>
 }
 
 // ReadInto accepts connections and forwards their dnstap frames to output
@@ -3059,10 +3059,10 @@ func (input *socketDnstapInput) ReadInto(ctx context.Context, output chan&lt;- [
         <span class="cov3" title="3">go func() </span>{
                 <span class="cov3" title="3">select </span>{
                 case &lt;-ctx.Done():
-                        <span class="cov3" title="3">if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
+                        <span class="cov2" title="2">if err := input.Close(); err != nil &amp;&amp; !errors.Is(err, net.ErrClosed) </span>{
                                 <span class="cov0" title="0">input.log.Printf("%s: close listener failed: %v", input.listener.Addr(), err)
 </span>                        }
-                case &lt;-done:<span class="cov0" title="0"></span>
+                case &lt;-done:<span class="cov1" title="1"></span>
                 }
         }()
 
@@ -3744,41 +3744,41 @@ type dawgFinderHolder struct {
 func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
         // if the query address is valid AND is on the ignore clients ip list
         // the frame is ignured, if not we let it through
-        <span class="cov6" title="1068">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
+        <span class="cov6" title="1163">if dt.HasFlags(dnstap.ValidQueryAddr) </span>{
                 // Atomic snapshot - no lock on the hot path. Reload writers
                 // atomic.Store the new IPSet; readers see either old or new value
                 // per Load.
-                <span class="cov6" title="1065">ipset := edm.ignoredClientsIPSet.Load()
+                <span class="cov6" title="1160">ipset := edm.ignoredClientsIPSet.Load()
 </span>                // list does not exist
-                <span class="cov6" title="1065">if ipset == nil </span>{
-                        <span class="cov5" title="415">return false
+                <span class="cov6" title="1160">if ipset == nil </span>{
+                        <span class="cov5" title="498">return false
 </span>                }
                 // check against the list
-                <span class="cov6" title="650">if ipset.Contains(dt.QueryAddr) </span>{
-                        <span class="cov5" title="344">edm.promClientIPIgnored.Inc()
+                <span class="cov6" title="662">if ipset.Contains(dt.QueryAddr) </span>{
+                        <span class="cov5" title="332">edm.promClientIPIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov5" title="309">return false</span>
+        <span class="cov5" title="333">return false</span>
 }
 
 func (edm *DnstapMinimiser) questionIsIgnored(msg *dns.Msg) bool {
         // Atomic snapshot - no lock on the hot path. See clientIPIsIgnored
         // for the rationale.
-        <span class="cov10" title="98946">holder := edm.ignoredQuestions.Load()
+        <span class="cov10" title="72127">holder := edm.ignoredQuestions.Load()
         if holder == nil </span>{
-                <span class="cov9" title="81446">return false
+                <span class="cov9" title="26712">return false
 </span>        }
         // While uncommon, if there happens to be multiple questions in the
         // packet we consider the message ignored if any of them matches.
-        <span class="cov8" title="17500">for _, question := range msg.Question </span>{
-                <span class="cov8" title="17502">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
+        <span class="cov9" title="45415">for _, question := range msg.Question </span>{
+                <span class="cov9" title="45417">dawgIndex, _ := getDawgIndex(holder.finder, question.Name)
                 if dawgIndex != dawgNotFound </span>{
-                        <span class="cov7" title="5909">edm.promQuestionNameIgnored.Inc()
+                        <span class="cov8" title="15279">edm.promQuestionNameIgnored.Inc()
                         return true
 </span>                }
         }
-        <span class="cov8" title="11591">return false</span>
+        <span class="cov9" title="30136">return false</span>
 }
 </pre>
 		
@@ -5630,24 +5630,24 @@ func newWellKnownDomainsTracker(dawgFinder dawg.Finder, dawgModTime time.Time) (
 // well as if it was found based on a suffix string or not.
 func getDawgIndex(dawgFinder dawg.Finder, name string) (int, bool) {
         // Ignore capitalisation in labels
-        <span class="cov9" title="17527">name = strings.ToLower(name)
+        <span class="cov9" title="45442">name = strings.ToLower(name)
 </span>
         // Try exact match first
-        <span class="cov9" title="17527">dawgIndex := dawgFinder.IndexOf(name)
+        <span class="cov9" title="45442">dawgIndex := dawgFinder.IndexOf(name)
 </span>
-        <span class="cov9" title="17527">if dawgIndex == dawgNotFound </span>{
+        <span class="cov9" title="45442">if dawgIndex == dawgNotFound </span>{
                 // Next try to look up suffix matches, so for the name
                 // "www.example.com." we will check for the strings
                 // ".example.com." and ".com.".
-                <span class="cov9" title="15114">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
-                        <span class="cov10" title="22140">dawgIndex = dawgFinder.IndexOf(name[index-1:])
+                <span class="cov9" title="39242">for index, end := dns.NextLabel(name, 0); !end; index, end = dns.NextLabel(name, index) </span>{
+                        <span class="cov10" title="57407">dawgIndex = dawgFinder.IndexOf(name[index-1:])
                         if dawgIndex != dawgNotFound </span>{
-                                <span class="cov8" title="3513">return dawgIndex, true
+                                <span class="cov8" title="9096">return dawgIndex, true
 </span>                        }
                 }
         }
 
-        <span class="cov9" title="14014">return dawgIndex, false</span>
+        <span class="cov9" title="36346">return dawgIndex, false</span>
 }
 
 type wkdUpdate struct {
@@ -5700,7 +5700,7 @@ func (wkd *wellKnownDomainsTracker) updateRetryer(edm *DnstapMinimiser) {
 }
 
 func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, dawgIndex int, suffixMatch bool, dawgModTime time.Time) {
-        <span class="cov3" title="11">wu := wkdUpdate{
+        <span class="cov2" title="11">wu := wkdUpdate{
                 dawgIndex:   dawgIndex,
                 suffixMatch: suffixMatch,
                 dawgModTime: dawgModTime,
@@ -5709,13 +5709,13 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, 
 </span>        }
 
         // get an identifier based on the Query Address as the HLL Hash
-        <span class="cov3" title="11">wu.hllHash = pdt.QueryAddrAsIdentifier()
+        <span class="cov2" title="11">wu.hllHash = pdt.QueryAddrAsIdentifier()
 </span>
         // store the source of the HLL Hash
-        <span class="cov3" title="11">wu.hllDataSource = pdt.QueryAddrType
+        <span class="cov2" title="11">wu.hllDataSource = pdt.QueryAddrType
 </span>
         // Counters based on header
-        <span class="cov3" title="11">switch msg.Rcode </span>{
+        <span class="cov2" title="11">switch msg.Rcode </span>{
         case dns.RcodeSuccess:
                 <span class="cov2" title="8">wu.OKCount++</span>
         case dns.RcodeNameError:
@@ -5727,8 +5727,8 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, 
         }
 
         // Counters based on question class and type
-        <span class="cov3" title="11">if msg.Question[0].Qclass == dns.ClassINET </span>{
-                <span class="cov3" title="10">switch msg.Question[0].Qtype </span>{
+        <span class="cov2" title="11">if msg.Question[0].Qclass == dns.ClassINET </span>{
+                <span class="cov2" title="10">switch msg.Question[0].Qtype </span>{
                 case dns.TypeA:
                         <span class="cov2" title="6">wu.ACount++</span>
                 case dns.TypeAAAA:
@@ -5744,22 +5744,22 @@ func (wkd *wellKnownDomainsTracker) sendUpdate(pdt pseudonymised, msg *dns.Msg, 
                 <span class="cov1" title="1">wu.NonINCount++
 </span>        }
 
-        <span class="cov3" title="11">wkd.updateCh &lt;- wu</span>
+        <span class="cov2" title="11">wkd.updateCh &lt;- wu</span>
 }
 
 func (wkd *wellKnownDomainsTracker) rotateTracker(edm *DnstapMinimiser, dawgFile string, startTime time.Time, rotationTime time.Time) (*wellKnownDomainsData, error) {
-        <span class="cov3" title="10">dawgFileChanged := false
+        <span class="cov2" title="10">dawgFileChanged := false
         var dawgFinder dawg.Finder
         var dawgModTime time.Time
 </span>
-        <span class="cov3" title="10">curSnap := wkd.snap.Load()
+        <span class="cov2" title="10">curSnap := wkd.snap.Load()
 </span>        // A SIGHUP-requested DAWG reload is applied here rather than directly
         // in applyUpdate because the histogram map keyed by DAWG index must be
         // rotated together with the finder it was built against. The request
         // flag is consumed even when loading fails, so a broken DAWG file makes
         // exactly one rotation fail instead of wedging every following one; the
         // operator fixes the file and sends a new SIGHUP.
-        <span class="cov3" title="10">if edm.dawgReloadRequested.CompareAndSwap(true, false) </span>{
+        <span class="cov2" title="10">if edm.dawgReloadRequested.CompareAndSwap(true, false) </span>{
                 <span class="cov2" title="4">var err error
                 dawgFinder, dawgModTime, err = edm.loadDawgFileStaged(dawgFile)
                 if err != nil </span>{
