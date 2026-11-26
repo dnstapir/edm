@@ -9,8 +9,7 @@
 `dnstapir-edm` reads DNSTAP and depending on configuration can output some different
 data based on the observed messages:
 * DNS queries for names considered well-known will be summarised into
-histograms which are saved as parquet files. These files will then be submitted
-to Core.
+histograms which are submitted to Core.
 * DNS queries for names not considered well-known are collected into other
 parquet files for further local analysis and here the complete message content
 is saved but the client and server IP-addresses are pseudonymised via
@@ -38,7 +37,7 @@ dnstapir-cli dawg --standalone compile --format csv --src top10milliondomains.cs
 dnstapir-edm run --input-unix /tmp/dnstapir-edm/input.sock --data-dir /tmp/dnstapir-edm/data --config-file dnstapir-edm.toml --well-known-domains-file well-known-domains.dawg --disable-mqtt --disable-histogram-sender
 ```
 Since all communication with Core is disabled this is helpful for creating some
-local parquet files to look around in.
+local session parquet files to look around in.
 
 ### Reloading configuration
 A running `dnstapir-edm` reloads its configuration on `SIGHUP` (e.g.
@@ -63,11 +62,6 @@ and keep the previous DAWG, so re-send it after the write finishes.
 ### Inspecting the resulting files
 For inspecting the content you can use e.g. [DuckDB](https://duckdb.org) like
 so:
-* For summarised histogram data
-```text
-duckdb -c 'select * from "/tmp/dnstapir-edm/data/parquet/histograms/outbox/dns_histogram-2024-09-26T18-14-00Z_2024-09-26T18-15-00Z.parquet"'
-```
-* For pseudonymised session (full message) data
 ```text
 duckdb -c 'select * from "/tmp/dnstapir-edm/data/parquet/sessions/dns_session_block-2024-09-26T18-18-00Z_2024-09-26T18-19-00Z.parquet"'
 ```

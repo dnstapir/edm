@@ -1,61 +1,17 @@
 package runner
 
 import (
-	"encoding/binary"
+	"bytes"
 	"fmt"
 	"io"
-	"math"
-	"net/netip"
 	"path/filepath"
 	"strings"
 	"time"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
-)
-
-// We need to create the session data schema by hand instead of basing it of
-// the sessionData struct directly because we have uint16 fields for ports and
-// these are not currently supported, see:
-// https://github.com/parquet-go/parquet-go/pull/122
-//
-// One drawback of writing out the schema like this is due to the use of a map
-// in the parquet.Group we can not control the ordering of the fields, they are
-// sorted however, see:
-// Issue regarding order:
-// https://github.com/parquet-go/parquet-go/issues/43
-// Commit that makes the map sorted:
-// https://github.com/parquet-go/parquet-go/commit/035e69db6792fdc9089e238084bebe39e26c74b0
-var sessionDataSchema = parquet.NewSchema(
-	"sessionData",
-	parquet.Group{
-		"label0":              parquet.Optional(parquet.String()),
-		"label1":              parquet.Optional(parquet.String()),
-		"label2":              parquet.Optional(parquet.String()),
-		"label3":              parquet.Optional(parquet.String()),
-		"label4":              parquet.Optional(parquet.String()),
-		"label5":              parquet.Optional(parquet.String()),
-		"label6":              parquet.Optional(parquet.String()),
-		"label7":              parquet.Optional(parquet.String()),
-		"label8":              parquet.Optional(parquet.String()),
-		"label9":              parquet.Optional(parquet.String()),
-		"server_id":           parquet.Optional(parquet.Leaf(parquet.ByteArrayType)),
-		"query_time":          parquet.Optional(parquet.Timestamp(parquet.Microsecond)),
-		"response_time":       parquet.Optional(parquet.Timestamp(parquet.Microsecond)),
-		"source_ipv4":         parquet.Optional(parquet.Uint(32)),
-		"dest_ipv4":           parquet.Optional(parquet.Uint(32)),
-		"source_ipv6_network": parquet.Optional(parquet.Uint(64)),
-		"source_ipv6_host":    parquet.Optional(parquet.Uint(64)),
-		"dest_ipv6_network":   parquet.Optional(parquet.Uint(64)),
-		"dest_ipv6_host":      parquet.Optional(parquet.Uint(64)),
-		"source_port":         parquet.Optional(parquet.Uint(16)),
-		"dest_port":           parquet.Optional(parquet.Uint(16)),
-		"dns_protocol":        parquet.Optional(parquet.Uint(8)),
-		"query_message":       parquet.Optional(parquet.Leaf(parquet.ByteArrayType)),
-		"response_message":    parquet.Optional(parquet.Leaf(parquet.ByteArrayType)),
-	},
 )
 
 type dnsLabels struct {
@@ -75,21 +31,20 @@ type dnsLabels struct {
 
 type sessionData struct {
 	dnsLabels
-	ServerID     *string `parquet:"server_id"`
-	QueryTime    *int64  `parquet:"query_time"`
-	ResponseTime *int64  `parquet:"response_time"`
-	SourceIPv4   *int32  `parquet:"source_ipv4"`
-	DestIPv4     *int32  `parquet:"dest_ipv4"`
-	// IPv6 addresses are split up into a network and host part, for one thing go does not have native uint128 types
-	SourceIPv6Network *int64  `parquet:"source_ipv6_network"`
-	SourceIPv6Host    *int64  `parquet:"source_ipv6_host"`
-	DestIPv6Network   *int64  `parquet:"dest_ipv6_network"`
-	DestIPv6Host      *int64  `parquet:"dest_ipv6_host"`
-	SourcePort        *int32  `parquet:"source_port"`
-	DestPort          *int32  `parquet:"dest_port"`
-	DNSProtocol       *int32  `parquet:"dns_protocol"`
-	QueryMessage      *string `parquet:"query_message"`
-	ResponseMessage   *string `parquet:"response_message"`
+	ServerID     []byte `parquet:"server_id,optional"`
+	QueryTime    *int64 `parquet:"query_time,timestamp(microsecond),optional"`
+	ResponseTime *int64 `parquet:"response_time,timestamp(microsecond),optional"`
+
+	SourceIdentifier     uint64          `parquet:"source_identifier"`
+	DestIdentifier       *uint64         `parquet:"dest_identifier,optional"`
+	SourceIdentifierType IdentifierType  `parquet:"source_identifier_type"`
+	DestIdentifierType   *IdentifierType `parquet:"dest_identifier_type,optional"`
+
+	SourcePort      *uint16 `parquet:"source_port,optional"`
+	DestPort        *uint16 `parquet:"dest_port,optional"`
+	DNSProtocol     *uint8  `parquet:"dns_protocol,optional"`
+	QueryMessage    []byte  `parquet:"query_message,optional"`
+	ResponseMessage []byte  `parquet:"response_message,optional"`
 }
 
 type prevSessions struct {
@@ -170,89 +125,38 @@ func (edm *DnstapMinimiser) reverseLabelsBounded(labels []string, maxLen int) []
 	return boundedReverseLabels
 }
 
-func (edm *DnstapMinimiser) newSession(dt *dnstap.Dnstap, msg *dns.Msg, isQuery bool, labelLimit int, timestamp time.Time) *sessionData {
+func (edm *DnstapMinimiser) newSession(pdt pseudonymised, msg *dns.Msg, labelLimit int) *sessionData {
 	sd := &sessionData{}
 
-	if dt.Message.QueryPort != nil {
-		port := *dt.Message.QueryPort
-		if port > math.MaxInt32 {
-			edm.log.Error("dt.Message.QueryPort is too large for int32, setting port to 0", "value", port)
-			port = 0
-		}
-		sd.SourcePort = new(int32(port)) // #nosec G115 -- QueryPort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+	if pdt.HasFlags(dnstap.ValidQueryPort) {
+		sd.SourcePort = new(pdt.QueryPort)
 	}
 
-	if dt.Message.ResponsePort != nil {
-		port := *dt.Message.ResponsePort
-		if port > math.MaxInt32 {
-			edm.log.Error("dt.Message.ResponsePort is too large for int32, setting port to 0", "value", port)
-			port = 0
-		}
-		sd.DestPort = new(int32(port)) // #nosec G115 -- ResponsePort is defined as 16-bit number and is used in parquet field with type=INT32, convertedType=UINT_16, https://github.com/securego/gosec/issues/1212#issuecomment-2739574884
+	if pdt.HasFlags(dnstap.ValidResponsePort) {
+		sd.DestPort = new(pdt.ResponsePort)
 	}
 
 	edm.setLabels(dns.SplitDomainName(msg.Question[0].Name), labelLimit, &sd.dnsLabels)
 
-	if isQuery {
-		sd.QueryMessage = new(string(dt.Message.QueryMessage))
-		sd.QueryTime = new(timestamp.UnixMicro())
+	if pdt.IsQuery {
+		sd.QueryMessage = bytes.Clone(pdt.Message.Message)
+		sd.QueryTime = new(pdt.Timestamp.UnixMicro())
 	} else {
-		sd.ResponseMessage = new(string(dt.Message.ResponseMessage))
-		sd.ResponseTime = new(timestamp.UnixMicro())
+		sd.ResponseMessage = bytes.Clone(pdt.Message.Message)
+		sd.ResponseTime = new(pdt.Timestamp.UnixMicro())
 	}
 
-	if len(dt.Identity) != 0 {
-		sd.ServerID = new(string(dt.Identity))
+	if len(pdt.Identity) != 0 {
+		sd.ServerID = []byte(pdt.Identity)
 	}
 
-	switch dt.Message.GetSocketFamily() {
-	case dnstap.SocketFamily_INET:
-		if dt.Message.QueryAddress != nil {
-			sourceIPInt, err := ipBytesToInt(dt.Message.QueryAddress)
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.Message.QueryAddress", "error", err)
-			} else {
-				sd.SourceIPv4 = new(int32(sourceIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-			}
-		}
+	sd.SourceIdentifier = pdt.QueryAddrAsIdentifier()
+	sd.SourceIdentifierType = pdt.QueryAddrType
+	sd.DestIdentifier = new(pdt.ResponseAddrAsIdentifier())
+	sd.DestIdentifierType = new(pdt.ResponseAddrType)
 
-		if dt.Message.ResponseAddress != nil {
-			destIPInt, err := ipBytesToInt(dt.Message.ResponseAddress)
-			if err != nil {
-				edm.log.Error("unable to create uint32 from dt.Message.ResponseAddress", "error", err)
-			} else {
-				sd.DestIPv4 = new(int32(destIPInt)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_32
-			}
-		}
-	case dnstap.SocketFamily_INET6:
-		if dt.Message.QueryAddress != nil {
-			sourceIPIntNetwork, sourceIPIntHost, err := ip6BytesToInt(dt.Message.QueryAddress)
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.Message.QueryAddress", "error", err)
-			} else {
-				sd.SourceIPv6Network = new(int64(sourceIPIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.SourceIPv6Host = new(int64(sourceIPIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-			}
-		}
-
-		if dt.Message.ResponseAddress != nil {
-			dipIntNetwork, dipIntHost, err := ip6BytesToInt(dt.Message.ResponseAddress)
-			if err != nil {
-				edm.log.Error("unable to create uint64 variables from dt.Message.ResponseAddress", "error", err)
-			} else {
-				sd.DestIPv6Network = new(int64(dipIntNetwork)) // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-				sd.DestIPv6Host = new(int64(dipIntHost))       // #nosec G115 -- Used in parquet struct with convertedType=UINT_64
-			}
-		}
-	case 0:
-		// SocketFamily not set: tolerate partial metadata and leave the IP
-		// fields nil rather than logging an error for every such packet.
-	default:
-		edm.log.Error("packet is neither INET or INET6")
-	}
-
-	if dt.Message.SocketProtocol != nil {
-		sd.DNSProtocol = new(int32(dt.Message.GetSocketProtocol()))
+	if pdt.HasFlags(dnstap.ValidSocketProtocol) {
+		sd.DNSProtocol = new(pdt.SocketProtocol)
 	}
 
 	return sd
@@ -290,41 +194,9 @@ func (edm *DnstapMinimiser) sessionWriter(dataDir string) {
 	edm.log.Info("sessionWriter: exiting loop")
 }
 
-func ipBytesToInt(ip4Bytes []byte) (uint32, error) {
-	ip, ok := netip.AddrFromSlice(ip4Bytes)
-	if !ok {
-		return 0, fmt.Errorf("ipBytesToInt: unable to parse bytes")
-	}
-	ip = ip.Unmap()
-	if !ip.Is4() {
-		return 0, fmt.Errorf("ipBytesToInt: address is not IPv4: %s", ip)
-	}
-
-	// Make sure we are dealing with 4 byte IPv4 address data (and deal with IPv4-in-IPv6 addresses)
-	ip4 := ip.As4()
-
-	ipInt := binary.BigEndian.Uint32(ip4[:])
-
-	return ipInt, nil
-}
-
-func ip6BytesToInt(ip6Bytes []byte) (uint64, uint64, error) {
-	ip, ok := netip.AddrFromSlice(ip6Bytes)
-	if !ok {
-		return 0, 0, fmt.Errorf("ip6BytesToInt: unable to parse bytes")
-	}
-
-	ip16 := ip.As16()
-
-	ipIntNetwork := binary.BigEndian.Uint64(ip16[:8])
-	ipIntHost := binary.BigEndian.Uint64(ip16[8:])
-
-	return ipIntNetwork, ipIntHost, nil
-}
-
 func (edm *DnstapMinimiser) writeSessionParquet(output io.Writer, ps *prevSessions) error {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[sessionData](output, sessionDataSchema, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[sessionData](output, parquet.Compression(snappyCodec))
 
 	for _, sd := range ps.sessions {
 		_, err := parquetWriter.Write([]sessionData{*sd})

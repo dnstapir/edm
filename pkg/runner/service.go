@@ -2,16 +2,17 @@ package runner
 
 import (
 	"context"
+	"crypto/cipher"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -22,7 +23,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/yawning/cryptopan"
 	"go4.org/netipx"
 )
 
@@ -225,7 +225,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	// return path, including the early error returns during setup.
 	var serverWg sync.WaitGroup
 
-	pprofServer := newPprofServer(edm.deps.PprofListenAddr)
+	pprofServer := newPprofServer(startConf.PprofListenAddr)
 	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(pprofServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -233,7 +233,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		}
 	})
 
-	metricsServer := edm.newMetricsServer(ctx, edm.deps.MetricsListenAddr, startConf.EnableManualParquetRotation)
+	metricsServer := edm.newMetricsServer(ctx, startConf.MetricsListenAddr, startConf.EnableManualParquetRotation)
 	serverWg.Go(func() {
 		err := edm.deps.HTTPServerRunner.ListenAndServeHTTP(metricsServer)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -261,23 +261,37 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		serverWg.Wait()
 	}()
 
-	// Write histogram file to an outbox dir where it will get picked up by
-	// the histogram sender. Upon being sent it will be moved to the sent dir.
-	dataDir := startConf.DataDir
-	outboxDir := filepath.Join(dataDir, "parquet", "histograms", "outbox")
-	sentDir := filepath.Join(dataDir, "parquet", "histograms", "sent")
-
 	wg.Go(func() { edm.monitorChannelLen(ctx) })
 
+	// TEMPORARY MEASURE, added 2026-09-24
+	go func() {
+		// This runaway go routine handles removal of the deprecated mqtt directory as
+		// well as cleaning up the partially deprecated parquet directory. The action
+		// is fire and forget/best effort and errors are not handled.
+		//
+		// This functionality should be removed within a few releases.
+		//
+		// This does remove any current session files that may be on disk, which is
+		// intentional since no one should be using that and it would be good to clean
+		// it up should any files exist.
+		//
+		// NOTE: Should the session writer be active, which it shouldn't, then this may
+		// race against that writer when interacting with the file system.
+		// NOTE: as an extra heuristic we only do the cleanup if the DataDir, after the
+		// filepath.Clean function contains the string "dnstapir".
+		if strings.Contains(filepath.Clean(startConf.DataDir), "dnstapir") {
+			os.RemoveAll(filepath.Join(startConf.DataDir, "parquet")) // #nosec G104 -- best effort
+			os.RemoveAll(filepath.Join(startConf.DataDir, "mqtt"))    // #nosec G104 -- best effort
+		}
+	}()
+	// TEMPORARY MEASURE, added 2026-09-24
+
 	// Start record writers and data senders in the background
-	wg.Go(func() { edm.sessionWriter(dataDir) })
-	wg.Go(func() { edm.histogramWriter(defaultLabelLimit, outboxDir) })
-	wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
+	wg.Go(func() { edm.sessionWriter(startConf.DataDir) })
+	wg.Go(func() { edm.histogramSender(ctx, defaultLabelLimit) })
 	if !startConf.DisableMQTT {
 		wg.Go(func() { edm.newQnamePublisher(mqttCtx) })
 	}
-
-	wg.Go(func() { edm.diskCleaner(ctx, sentDir) })
 
 	dawgFile := startConf.WellKnownDomainsFile
 
@@ -291,29 +305,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		return fmt.Errorf("newWellKnownDomainsTracker failed: %w", err)
 	}
 
-	debugDnstapFilename := startConf.DebugDnstapFilename
-
-	// Keep in mind that this file is unbuffered. We could wrap it in a
-	// bufio.NewWriter() if we want more performance out of it, but since
-	// it is meant for debugging purposes it is probably better to keep it
-	// unbuffered and more "reactive". Otherwise it is hard to be sure if
-	// you are not seeing anything in the log because packets are being
-	// missed, or you are just waiting on the buffer to be flushed.
-	var debugDnstapFile fsFile
-	if debugDnstapFilename != "" {
-		// Make gosec happy
-		debugDnstapFilename := filepath.Clean(debugDnstapFilename)
-		debugDnstapFile, err = edm.deps.FileSystem.OpenFile(debugDnstapFilename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if err != nil {
-			return fmt.Errorf("unable to open debug dnstap file %q: %w", debugDnstapFilename, err)
-		}
-		defer func() {
-			if err := debugDnstapFile.Close(); err != nil {
-				edm.log.Error("unable to close debug dnstap file", "error", err, "filename", debugDnstapFile.Name())
-			}
-		}()
-	}
-
 	// Start data collector
 	wg.Go(func() { edm.dataCollector(wkdTracker, dawgFile) })
 
@@ -322,20 +313,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	numMinimiserWorkers := startConf.MinimiserWorkers
 	if numMinimiserWorkers <= 0 {
 		numMinimiserWorkers = runtime.GOMAXPROCS(0)
-	}
-
-	// Per-worker Crypto-PAn caches. Each worker holds its own LRU so the
-	// pseudonymise hot path takes no shared lock. Created before any
-	// worker starts so a creation failure is a startup error instead of a
-	// silently dead worker.
-	cryptopanCaches := make([]*lru.Cache[netip.Addr, netip.Addr], numMinimiserWorkers)
-	if startConf.CryptopanAddressEntries != 0 {
-		for i := range cryptopanCaches {
-			cryptopanCaches[i], err = lru.New[netip.Addr, netip.Addr](startConf.CryptopanAddressEntries)
-			if err != nil {
-				return fmt.Errorf("unable to create per-worker cryptopan cache: %w", err)
-			}
-		}
 	}
 
 	// Start minimiser
@@ -353,7 +330,7 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 		reloadConfigCh := make(chan struct{}, 1)
 		edm.reloadMinimiserConfigCh = append(edm.reloadMinimiserConfigCh, reloadConfigCh)
 		minimiserWg.Go(func() {
-			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, cryptopanCaches[minimiserID], seenQnameLRU, seenStore, debugDnstapFile, defaultLabelLimit, wkdTracker)
+			edm.runMinimiser(ctx, minimiserID, reloadConfigCh, seenQnameLRU, seenStore, defaultLabelLimit, wkdTracker)
 		})
 	}
 	edm.reloadMinimiserMutex.Unlock()
@@ -427,37 +404,31 @@ type DnstapMinimiser struct {
 	inputChannel chan []byte  // the channel passed to DNSTAP input readers
 	log          *slog.Logger // any information logging is sent here
 
-	// Cryptopan instance is held in an atomic.Pointer so the hot path
-	// reads it without locking. setCryptopan swaps the pointer and
-	// bumps cryptopanGen; per-worker caches compare their last-seen
-	// generation against this and Purge when it changes.
-	cryptopan                 atomic.Pointer[cryptopan.Cryptopan]
-	cryptopanGen              atomic.Uint64
-	promReg                   *prometheus.Registry
-	promCryptopanCacheHit     prometheus.Counter
-	promCryptopanCacheEvicted prometheus.Counter
-	promDnstapProcessed       prometheus.Counter
-	promNewQnameQueued        prometheus.Counter
-	promNewQnameDiscarded     prometheus.Counter
-	promSeenQnameLRUEvicted   prometheus.Counter
-	promNewQnameChannelLen    prometheus.Gauge
-	promClientIPIgnored       prometheus.Counter
-	promClientIPIgnoredError  prometheus.Counter
-	promQuestionNameIgnored   prometheus.Counter
-	promDNSParseError         prometheus.Counter
-	promEmptyQuestionSection  prometheus.Counter
-	promInvalidQuestionName   prometheus.Counter
-	debug                     bool // if we should print debug messages during operation
-	sessionWriterCh           chan *prevSessions
-	histogramWriterCh         chan *wellKnownDomainsData
-	parquetRotationRequestCh  chan parquetRotationRequest
-	newQnamePublisherCh       chan *protocols.NewQnameJSON
-	sessionCollectorCh        chan *sessionData
-	aggregSenderMutex         sync.RWMutex
-	aggregSender              aggregateSender
-	mqttPubCh                 chan []byte
-	mqttSignedCh              chan []byte
-	autopahoWg                sync.WaitGroup
+	pseudonymiser atomic.Pointer[cipher.Block]
+
+	promReg                  *prometheus.Registry
+	promDnstapProcessed      prometheus.Counter
+	promNewQnameQueued       prometheus.Counter
+	promNewQnameDiscarded    prometheus.Counter
+	promSeenQnameLRUEvicted  prometheus.Counter
+	promNewQnameChannelLen   prometheus.Gauge
+	promClientIPIgnored      prometheus.Counter
+	promQuestionNameIgnored  prometheus.Counter
+	promDNSParseError        prometheus.Counter
+	promEmptyQuestionSection prometheus.Counter
+	promInvalidQuestionName  prometheus.Counter
+	debug                    bool // if we should print debug messages during operation
+	sessionWriterCh          chan *prevSessions
+	histogramWriterCh        chan *wellKnownDomainsData
+	histogramRetryWriterCh   chan *wellKnownDomainsData
+	parquetRotationRequestCh chan parquetRotationRequest
+	newQnamePublisherCh      chan *protocols.NewQnameJSON
+	sessionCollectorCh       chan *sessionData
+	aggregSenderMutex        sync.RWMutex
+	aggregSender             aggregateSender
+	mqttPubCh                chan []byte
+	mqttSignedCh             chan []byte
+	autopahoWg               sync.WaitGroup
 	// Hot-path lookups (clientIPIsIgnored, questionIsIgnored) read these
 	// without locking. Reload writers atomic.Store a fresh value and leave the
 	// old value for the GC to reclaim. For ignoredQuestions the dawgFinderHolder
@@ -468,7 +439,6 @@ type DnstapMinimiser struct {
 	// bounded leak is acceptable. ignoredClientsIPSet is plain heap memory with
 	// no Close, reclaimed by the GC like any other dropped pointer.
 	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
-	ignoredClientCIDRsParsed      atomic.Uint64
 	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
 	dawgReloadRequested           atomic.Bool // set on SIGHUP, consumed by rotateTracker
 	httpClientCertStore           *certStore  // client cert/key for mTLS authentication
@@ -510,7 +480,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 
 	conf := edm.getConfig()
 
-	err = edm.setCryptopan(conf.CryptopanKey, conf.CryptopanKeySalt, conf.CryptopanAddressEntries)
+	err = edm.setPseudonymiseKey(conf.CryptopanKey, conf.CryptopanKeySalt)
 	if err != nil {
 		return nil, fmt.Errorf("NewDnstapMinimiser: %w", err)
 	}
@@ -527,16 +497,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// Mimic default collectors used by the global prometheus instance
 	promReg.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 	promReg.MustRegister(collectors.NewGoCollector())
-
-	edm.promCryptopanCacheHit = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_cryptopan_lru_hit_total",
-		Help: "The total number of times we got a hit in the cryptopan address LRU cache",
-	})
-
-	edm.promCryptopanCacheEvicted = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_cryptopan_lru_evicted_total",
-		Help: "The total number of times something was evicted from the cryptopan address LRU cache",
-	})
 
 	edm.promDnstapProcessed = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
 		Name: "edm_processed_dnstap_total",
@@ -566,11 +526,6 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	edm.promClientIPIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
 		Name: "edm_ignored_client_ip_total",
 		Help: "The total number of times we have ignored a dnstap packet because of client IP",
-	})
-
-	edm.promClientIPIgnoredError = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
-		Name: "edm_ignored_client_ip_error_total",
-		Help: "The total number of times we have ignored a dnstap packet because of client IP error, should always be 0",
 	})
 
 	edm.promQuestionNameIgnored = promauto.With(promReg).NewCounter(prometheus.CounterOpts{
@@ -622,6 +577,7 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// minimiser loop, otherwise the program can hang on shutdown.
 	edm.sessionWriterCh = make(chan *prevSessions, 100)
 	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
+	edm.histogramRetryWriterCh = make(chan *wellKnownDomainsData, 4)
 	edm.parquetRotationRequestCh = make(chan parquetRotationRequest, 1)
 	edm.newQnamePublisherCh = make(chan *protocols.NewQnameJSON, conf.NewQnameBuffer)
 	edm.sessionCollectorCh = make(chan *sessionData, 100)

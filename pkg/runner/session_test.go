@@ -2,7 +2,6 @@ package runner
 
 import (
 	"bytes"
-	"encoding/binary"
 	"log/slog"
 	"math"
 	"net/netip"
@@ -14,7 +13,8 @@ import (
 	"testing"
 	"time"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	extdnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -72,61 +72,6 @@ func TestSetSessionLabels(t *testing.T) {
 	}
 }
 
-func TestEDMIPBytesToInt(t *testing.T) {
-	ipv4AddrString := "198.51.100.15"
-
-	ip4Addr, err := netip.ParseAddr(ipv4AddrString)
-	if err != nil {
-		t.Fatalf("unable to parse IPv4 test address '%s': %s", ipv4AddrString, err)
-	}
-
-	ip4Int, err := ipBytesToInt(ip4Addr.AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint32 variable from IPv4 test address '%s': %s", ipv4AddrString, err)
-	}
-
-	// Go back to IPv4 data
-	constructedV4Data := []byte{}
-	constructedV4Data = binary.BigEndian.AppendUint32(constructedV4Data, ip4Int)
-
-	constructedIP4Addr, ok := netip.AddrFromSlice(constructedV4Data)
-	if !ok {
-		t.Fatalf("unable to create netip from from constructed IPv4 bytes: %b", constructedV4Data)
-	}
-
-	if ip4Addr != constructedIP4Addr {
-		t.Fatalf("have: %s, want: %s", constructedIP4Addr, ip4Addr)
-	}
-}
-
-func TestEDMIP6BytesToInt(t *testing.T) {
-	ipv6AddrString := "2001:db8:1122:3344:5566:7788:99aa:bbcc"
-
-	ip6Addr, err := netip.ParseAddr(ipv6AddrString)
-	if err != nil {
-		t.Fatalf("unable to parse IPv6 test address '%s': %s", ipv6AddrString, err)
-	}
-
-	ip6Network, ip6Host, err := ip6BytesToInt(ip6Addr.AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint64 variables from IPv6 test address '%s': %s", ipv6AddrString, err)
-	}
-
-	// Go back to complete IPv6 data
-	constructedV6Data := []byte{}
-	constructedV6Data = binary.BigEndian.AppendUint64(constructedV6Data, ip6Network)
-	constructedV6Data = binary.BigEndian.AppendUint64(constructedV6Data, ip6Host)
-
-	constructedIP6Addr, ok := netip.AddrFromSlice(constructedV6Data)
-	if !ok {
-		t.Fatalf("unable to create netip from from constructed IPv6 bytes: %b", constructedV6Data)
-	}
-
-	if ip6Addr != constructedIP6Addr {
-		t.Fatalf("have: %s, want: %s", constructedIP6Addr, ip6Addr)
-	}
-}
-
 func BenchmarkSessionWriter(b *testing.B) {
 	b.ReportAllocs()
 
@@ -134,18 +79,7 @@ func BenchmarkSessionWriter(b *testing.B) {
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
-	if err != nil {
-		b.Fatalf("unable to create uint32 from address: %s", err)
-	}
-	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint32
-
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
-	if err != nil {
-		b.Fatalf("unable to create uint64 from ipv6 address: %s", err)
-	}
-	ip6NetworkInt := int64(ip6NetworkUint) // #nosec G115 -- Used in parquet struct with logical type uint64
-	ip6HostInt := int64(ip6HostUint)       // #nosec G115 -- Used in parquet struct with logical type uint64
+	identifier := new(uint64(123456789))
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
@@ -153,29 +87,27 @@ func BenchmarkSessionWriter(b *testing.B) {
 			Label1: new("example"),
 			Label2: new("www"),
 		},
-		ServerID:          new("serverID"),
-		QueryTime:         new(int64(10)),
-		ResponseTime:      new(int64(10)),
-		SourceIPv4:        &i32IPInt,
-		DestIPv4:          &i32IPInt,
-		SourceIPv6Network: &ip6NetworkInt,
-		SourceIPv6Host:    &ip6HostInt,
-		DestIPv6Network:   &ip6NetworkInt,
-		DestIPv6Host:      &ip6HostInt,
-		SourcePort:        new(int32(1337)),
-		DestPort:          new(int32(1337)),
-		DNSProtocol:       new(int32(1)),
-		QueryMessage:      new("query message"),
-		ResponseMessage:   new("response message"),
+		ServerID:     []byte("serverID"),
+		QueryTime:    new(int64(10)),
+		ResponseTime: new(int64(10)),
+
+		SourceIdentifier: *identifier,
+		DestIdentifier:   identifier,
+
+		SourcePort:      new(uint16(1337)),
+		DestPort:        new(uint16(1337)),
+		DNSProtocol:     new(uint8(1)),
+		QueryMessage:    []byte("query message"),
+		ResponseMessage: []byte("response message"),
 	}
 
 	for b.Loop() {
-		_, err = parquetWriter.Write([]sessionData{sd})
+		_, err := parquetWriter.Write([]sessionData{sd})
 		if err != nil {
 			b.Fatalf("unable to call Write() on parquet writer: %s", err)
 		}
 	}
-	err = parquetWriter.Close()
+	err := parquetWriter.Close()
 	if err != nil {
 		b.Fatalf("unable to call WriteStop() on parquet writer: %s", err)
 	}
@@ -185,21 +117,9 @@ func TestSessionWriter(t *testing.T) {
 	var buf bytes.Buffer
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
-	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, sessionDataSchema, parquet.Compression(snappyCodec))
+	parquetWriter := parquet.NewGenericWriter[sessionData](&buf, parquet.Compression(snappyCodec))
 
-	ipInt, err := ipBytesToInt(netip.MustParseAddr("198.51.100.20").AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint32 from address: %s", err)
-	}
-	i32IPInt := int32(ipInt) // #nosec G115 -- Used in parquet struct with logical type uint64
-
-	ip6NetworkUint, ip6HostUint, err := ip6BytesToInt(netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc").AsSlice())
-	if err != nil {
-		t.Fatalf("unable to create uint64 from ipv6 address: %s", err)
-	}
-
-	ip6NetworkInt := int64(ip6NetworkUint) // #nosec G115 -- Used in parquet struct with logical type uint64
-	ip6HostInt := int64(ip6HostUint)       // #nosec G115 -- Used in parquet struct with logical type uint64
+	identifier := new(uint64(123456789))
 
 	sd := sessionData{
 		dnsLabels: dnsLabels{
@@ -207,23 +127,21 @@ func TestSessionWriter(t *testing.T) {
 			Label1: new("example"),
 			Label2: new("www"),
 		},
-		ServerID:          new("serverID"),
-		QueryTime:         new(int64(10)),
-		ResponseTime:      new(int64(10)),
-		SourceIPv4:        &i32IPInt,
-		SourceIPv6Network: &ip6NetworkInt,
-		SourceIPv6Host:    &ip6HostInt,
-		DestIPv6Network:   &ip6NetworkInt,
-		DestIPv6Host:      &ip6HostInt,
-		DestIPv4:          &i32IPInt,
-		SourcePort:        new(int32(1337)),
-		DestPort:          new(int32(1337)),
-		DNSProtocol:       new(int32(1)),
-		QueryMessage:      new("query message"),
-		ResponseMessage:   new("response message"),
+		ServerID:     []byte("serverID"),
+		QueryTime:    new(int64(10)),
+		ResponseTime: new(int64(10)),
+
+		SourceIdentifier: *identifier,
+		DestIdentifier:   identifier,
+
+		SourcePort:      new(uint16(1337)),
+		DestPort:        new(uint16(1337)),
+		DNSProtocol:     new(uint8(1)),
+		QueryMessage:    []byte("query message"),
+		ResponseMessage: []byte("response message"),
 	}
 
-	_, err = parquetWriter.Write([]sessionData{sd})
+	_, err := parquetWriter.Write([]sessionData{sd})
 	if err != nil {
 		t.Fatalf("unable to call Write() on parquet writer: %s", err)
 	}
@@ -276,20 +194,29 @@ func TestSetLabelsNilAndBoundedReverse(t *testing.T) {
 func TestSessionParquetAndSessionConstruction(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
-	dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-	msg, ts := edm.parsePacket(dt, false)
+	dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed)
+
+	msg := edm.parsePacket(dt)
 	if msg == nil {
 		t.Fatal("parsePacket returned nil msg")
 	}
-	if !ts.Equal(time.Unix(1_700_000_001, 456).UTC()) {
-		t.Fatalf("response timestamp = %v", ts)
+	if !dt.Timestamp.Equal(time.Unix(1_700_000_001, 456).UTC()) {
+		t.Fatalf("response timestamp = %v", dt.Timestamp)
 	}
-	sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+
+	sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
 	if sd.ResponseTime == nil || sd.ResponseMessage == nil || sd.ServerID == nil {
 		t.Fatalf("session missing response fields: %#v", sd)
 	}
-	if sd.SourceIPv4 == nil || sd.DestIPv4 == nil || sd.DNSProtocol == nil {
+	if *sd.ResponseTime != time.Unix(1_700_000_001, 456).UTC().UnixMicro() {
+		t.Fatalf("incorrect session response timestamp = %v", dt.Timestamp)
+	}
+	if sd.SourceIdentifier != 198_051_100_020 || sd.DestIdentifier == nil ||
+		sd.DNSProtocol == nil {
 		t.Fatalf("session missing network fields: %#v", sd)
+	}
+	if sd.SourceIdentifierType != IdentifierIPv4 || *sd.DestIdentifierType != IdentifierIPv4 {
+		t.Fatalf("incorrect identifiers: %#v", sd)
 	}
 
 	var buf bytes.Buffer
@@ -300,120 +227,112 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].ServerID == nil || *rows[0].ServerID != "server-1" {
+	if len(rows) != 1 || rows[0].ServerID == nil || string(rows[0].ServerID) != "server-1" {
 		t.Fatalf("unexpected session rows: %#v", rows)
 	}
 
-	queryDT := testDnstapMessage(t, dnstap.Message_CLIENT_QUERY, dnstap.SocketFamily_INET6, packed)
-	queryMsg, queryTS := edm.parsePacket(queryDT, true)
-	querySession := edm.newSession(queryDT, queryMsg, true, defaultLabelLimit, queryTS)
-	if querySession.QueryTime == nil || querySession.QueryMessage == nil || querySession.SourceIPv6Network == nil || querySession.DestIPv6Host == nil {
+	queryDT := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_QUERY, extdnstap.SocketFamily_INET6, packed)
+	queryMsg := edm.parsePacket(queryDT)
+	querySession := edm.newSession(edm.pseudonymiseIPs(queryDT), queryMsg, defaultLabelLimit)
+	if querySession.QueryTime == nil || querySession.QueryMessage == nil ||
+		querySession.SourceIdentifier != 0x2001_0db8_0000_0000 || querySession.DestIdentifier == nil {
 		t.Fatalf("query session missing fields: %#v", querySession)
 	}
-
-	huge := uint64(math.MaxInt64) + 1
-	queryDT.Message.QueryTimeSec = &huge
-	if _, zeroTS := edm.parsePacket(queryDT, true); !zeroTS.Equal(time.Unix(0, 0).UTC()) {
-		t.Fatalf("overflow query timestamp = %v, want Unix zero", zeroTS)
-	}
-	responseDT := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-	huge = uint64(math.MaxInt64) + 1
-	responseDT.Message.ResponseTimeSec = &huge
-	if _, zeroTS := edm.parsePacket(responseDT, false); !zeroTS.Equal(time.Unix(0, 0).UTC()) {
-		t.Fatalf("overflow response timestamp = %v, want Unix zero", zeroTS)
-	}
-
-	badMsg, _ := edm.parsePacket(&dnstap.Dnstap{Message: &dnstap.Message{QueryMessage: []byte{1}, QueryTimeSec: new(uint64(0)), QueryTimeNsec: new(uint32(0))}}, true)
-	if badMsg != nil {
-		t.Fatal("bad query packet returned non-nil message")
+	if querySession.SourceIdentifierType != IdentifierIPv6 || *querySession.DestIdentifierType != IdentifierIPv6 {
+		t.Fatalf("incorrect identifiers: %#v", querySession)
 	}
 }
 
-// TestNewSessionBranches covers newSession arms that
-// TestSessionParquetAndSessionConstruction (basic INET/INET6 happy paths)
-// does not reach: port overflow, ipBytesToInt error from bad address
-// bytes, ipBytesToInt error from IPv6 bytes carried on an INET family,
-// ip6BytesToInt error from bad address bytes, and the unknown
-// SocketFamily default arm.
+// TestNewSessionBranches covers some cases when newSession doesn't
+// set some fields due to invalid input data
 func TestNewSessionBranches(t *testing.T) {
 	edm := newTestDnstapMinimiser(t, defaultTC)
 	packed := packedDNSMsg(t, "www.example.com.", dns.TypeA, dns.RcodeSuccess)
 
-	t.Run("port overflow zeroes ports", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-		big := uint32(math.MaxInt32) + 1
-		dt.Message.QueryPort = &big
-		dt.Message.ResponsePort = &big
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
-		if sd.SourcePort == nil || *sd.SourcePort != 0 {
-			t.Fatalf("SourcePort = %v, want 0", sd.SourcePort)
+	t.Run("port overflow does not set port", func(t *testing.T) {
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed, func(dt *extdnstap.Dnstap) {
+			big := uint32(math.MaxInt32) + 1
+			dt.Message.QueryPort = &big
+			dt.Message.ResponsePort = &big
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		if sd.SourcePort != nil {
+			t.Fatalf("SourcePort = %v, want nil", *sd.SourcePort)
 		}
-		if sd.DestPort == nil || *sd.DestPort != 0 {
-			t.Fatalf("DestPort = %v, want 0", sd.DestPort)
-		}
-	})
-
-	t.Run("bad INET address bytes logs but does not panic", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-		dt.Message.QueryAddress = []byte{1, 2, 3}
-		dt.Message.ResponseAddress = []byte{4, 5, 6}
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
-		if sd.SourceIPv4 != nil {
-			t.Fatalf("SourceIPv4 should be nil for bad addr bytes, got %v", *sd.SourceIPv4)
-		}
-		if sd.DestIPv4 != nil {
-			t.Fatalf("DestIPv4 should be nil for bad addr bytes, got %v", *sd.DestIPv4)
+		if sd.DestPort != nil {
+			t.Fatalf("DestPort = %v, want nil", *sd.DestPort)
 		}
 	})
 
-	t.Run("mismatched IPv6 address bytes with INET family leaves IPv4 nil", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::20").AsSlice()
-		dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
-		if sd.SourceIPv4 != nil {
-			t.Fatalf("SourceIPv4 should be nil for IPv6 bytes with INET family, got %d", *sd.SourceIPv4)
+	t.Run("bad INET address bytes", func(t *testing.T) {
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed, func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = []byte{1, 2, 3}
+			dt.Message.ResponseAddress = []byte{4, 5, 6}
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		if sd.SourceIdentifier != 0x01_02_03_0000000000 || sd.DestIdentifier == nil {
+			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
 		}
-		if sd.DestIPv4 != nil {
-			t.Fatalf("DestIPv4 should be nil for IPv6 bytes with INET family, got %d", *sd.DestIPv4)
-		}
-	})
-
-	t.Run("bad INET6 address bytes logs but does not panic", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET6, packed)
-		dt.Message.QueryAddress = []byte{1, 2, 3}
-		dt.Message.ResponseAddress = []byte{4, 5, 6}
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
-		if sd.SourceIPv6Network != nil {
-			t.Fatalf("SourceIPv6Network should be nil for bad addr bytes")
-		}
-		if sd.DestIPv6Network != nil {
-			t.Fatalf("DestIPv6Network should be nil for bad addr bytes")
+		if sd.SourceIdentifierType != IdentifierOther || *sd.DestIdentifierType != IdentifierOther {
+			t.Fatalf("incorrect identifiers: %#v", sd)
 		}
 	})
 
-	t.Run("unknown socket family logs and leaves IPs nil", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-		unknown := dnstap.SocketFamily(99)
-		dt.Message.SocketFamily = &unknown
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
-		if sd.SourceIPv4 != nil || sd.SourceIPv6Network != nil {
-			t.Fatal("expected no IP fields populated for unknown family")
+	t.Run("mismatched IPv6 address bytes with INET family leaves IPv4/IPv6 nil", func(t *testing.T) {
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed, func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::20").AsSlice()
+			dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		if sd.SourceIdentifier != 0x2001_0db8_0000_0000 || sd.DestIdentifier == nil {
+			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
+		}
+		if sd.SourceIdentifierType != IdentifierOther || *sd.DestIdentifierType != IdentifierOther {
+			t.Fatalf("incorrect identifiers: %#v", sd)
+		}
+	})
+
+	t.Run("bad INET6 address bytes", func(t *testing.T) {
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET6, packed, func(dt *extdnstap.Dnstap) {
+			dt.Message.QueryAddress = []byte{1, 2, 3}
+			dt.Message.ResponseAddress = []byte{4, 5, 6}
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		if sd.SourceIdentifier != 0x01_02_03_0000000000 || sd.DestIdentifier == nil {
+			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
+		}
+		if sd.SourceIdentifierType != IdentifierOther || *sd.DestIdentifierType != IdentifierOther {
+			t.Fatalf("incorrect identifiers: %#v", sd)
+		}
+	})
+
+	t.Run("unknown socket family leaves IPs nil", func(t *testing.T) {
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed, func(dt *extdnstap.Dnstap) {
+			unknown := extdnstap.SocketFamily(99)
+			dt.Message.SocketFamily = &unknown
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		if sd.SourceIdentifier != 198_051_100_020 || sd.DestIdentifier == nil {
+			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
+		}
+		if sd.SourceIdentifierType != IdentifierOther || *sd.DestIdentifierType != IdentifierOther {
+			t.Fatalf("incorrect identifiers: %#v", sd)
 		}
 	})
 
 	t.Run("empty identity leaves ServerID nil", func(t *testing.T) {
-		dt := testDnstapMessage(t, dnstap.Message_CLIENT_RESPONSE, dnstap.SocketFamily_INET, packed)
-		dt.Identity = nil
-		msg, ts := edm.parsePacket(dt, false)
-		sd := edm.newSession(dt, msg, false, defaultLabelLimit, ts)
+		dt := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_RESPONSE, extdnstap.SocketFamily_INET, packed, func(dt *extdnstap.Dnstap) {
+			dt.Identity = nil
+		})
+		msg := edm.parsePacket(dt)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
 		if sd.ServerID != nil {
-			t.Fatalf("ServerID should be nil for empty identity, got %q", *sd.ServerID)
+			t.Fatalf("ServerID should be nil for empty identity, got %s", string(sd.ServerID))
 		}
 	})
 }
@@ -447,16 +366,21 @@ func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
 	msg := new(dns.Msg)
 	msg.SetQuestion("example.com.", dns.TypeA)
 
-	sd := edm.newSession(&dnstap.Dnstap{
-		Message: &dnstap.Message{},
-	}, msg, false, defaultLabelLimit, time.Unix(0, 0).UTC())
+	dt := dnstap.Message{
+		Timestamp: time.Unix(0, 0).UTC(),
+	}
+	sd := edm.newSession(edm.pseudonymiseIPs(&dt), msg, defaultLabelLimit)
 
 	if sd.DNSProtocol != nil {
 		t.Fatalf("DNSProtocol should be nil when SocketProtocol is missing, have: %d", *sd.DNSProtocol)
 	}
-	if sd.SourceIPv4 != nil || sd.DestIPv4 != nil ||
-		sd.SourceIPv6Network != nil || sd.SourceIPv6Host != nil ||
-		sd.DestIPv6Network != nil || sd.DestIPv6Host != nil {
-		t.Fatalf("IP fields should stay nil when SocketFamily is missing: %#v", sd)
+	if sd.SourceIdentifier != 0 {
+		t.Fatalf("SourceIdentifier should be set to zero(we don't have a pseudonymiser key set)")
+	}
+	if sd.DestIdentifier == nil {
+		t.Fatalf("DestIdentifier should be set")
+	}
+	if sd.SourceIdentifierType != IdentifierOther || *sd.DestIdentifierType != IdentifierOther {
+		t.Fatalf("incorrect identifiers: %#v", sd)
 	}
 }

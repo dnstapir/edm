@@ -3,12 +3,10 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
 	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,7 +21,6 @@ import (
 	"github.com/parquet-go/parquet-go/format"
 	"github.com/segmentio/go-hll"
 	"github.com/smhanov/dawg"
-	"github.com/twmb/murmur3"
 )
 
 func TestSetHistogramLabels(t *testing.T) {
@@ -173,9 +170,6 @@ func TestEDMStatusBitsUnknown(t *testing.T) {
 func TestHistogramWriter(t *testing.T) {
 	var buf bytes.Buffer
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
-
 	hllSettings := getHllDefaults(0)
 
 	v4hll, err := hll.NewHll(hllSettings)
@@ -188,8 +182,8 @@ func TestHistogramWriter(t *testing.T) {
 		t.Fatalf("unable to init IPv6 HLL: %s", err)
 	}
 
-	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
-	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
+	v4hll.AddRaw(4444)
+	v6hll.AddRaw(666666)
 
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
 	parquetWriter := parquet.NewGenericWriter[histogramData](&buf, parquet.Compression(snappyCodec))
@@ -250,9 +244,6 @@ func BenchmarkHistogramWriter(b *testing.B) {
 
 	var err error
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-	ip6 := netip.MustParseAddr("2001:db8:1122:3344:5566:7788:99aa:bbcc")
-
 	hllSettings := getHllDefaults(0)
 
 	v4hll, err := hll.NewHll(hllSettings)
@@ -265,8 +256,8 @@ func BenchmarkHistogramWriter(b *testing.B) {
 		b.Fatalf("unable to init IPv6 HLL: %s", err)
 	}
 
-	v4hll.AddRaw(murmur3.Sum64(ip4.AsSlice()))
-	v6hll.AddRaw(murmur3.Sum64(ip6.AsSlice()))
+	v4hll.AddRaw(4444)
+	v6hll.AddRaw(666666)
 
 	var buf bytes.Buffer
 	snappyCodec := parquet.LookupCompressionCodec(format.Snappy)
@@ -315,22 +306,14 @@ func BenchmarkHgramWithHLLDefaults(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	ip4 := netip.MustParseAddr("198.51.100.20")
-
-	v4Hash := murmur3.Sum64(ip4.AsSlice())
-
 	for b.Loop() {
 		hd := &histogramData{}
-		hd.v4ClientHLL.AddRaw(v4Hash)
+		hd.v4ClientHLL.AddRaw(4444)
 	}
 }
 
 func BenchmarkHgramWithHLLSettings(b *testing.B) {
 	b.ReportAllocs()
-
-	ip4 := netip.MustParseAddr("198.51.100.20")
-
-	v4Hash := murmur3.Sum64(ip4.AsSlice())
 
 	hllSettings := getHllDefaults(0)
 
@@ -341,7 +324,7 @@ func BenchmarkHgramWithHLLSettings(b *testing.B) {
 			b.Fatal(err)
 		}
 		hd.v4ClientHLL = h
-		hd.v4ClientHLL.AddRaw(v4Hash)
+		hd.v4ClientHLL.AddRaw(4444)
 	}
 }
 
@@ -430,7 +413,9 @@ func TestWriteHistogramParquetExplicitThreshold(t *testing.T) {
 			wkd.m[i].NonINCount += 10
 
 			for _, ip := range test.ips {
-				hllHash := murmur3.Sum64(ip.AsSlice())
+				buf := ip.As16()
+				hllHash := binary.BigEndian.Uint64(buf[0:]) ^ binary.BigEndian.Uint64(buf[8:])
+
 				if ip.IsValid() {
 					if ip.Unmap().Is4() {
 						wkd.m[i].v4ClientHLL.AddRaw(hllHash)
@@ -512,7 +497,7 @@ func TestNewHistogramDataAndWriteParquet(t *testing.T) {
 		dawgFinder: finder,
 	}
 	exact.ACount = 1
-	exact.v4ClientHLL.AddRaw(murmur3.Sum64(netip.MustParseAddr("198.51.100.20").AsSlice()))
+	exact.v4ClientHLL.AddRaw(4444)
 
 	var buf bytes.Buffer
 	if err := edm.writeHistogramParquet(&buf, time.Unix(10, 0), wkd, defaultLabelLimit); err != nil {
@@ -533,275 +518,258 @@ func TestNewHistogramDataAndWriteParquet(t *testing.T) {
 }
 
 func TestHistogramSender(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	edm.deps.HistogramSenderInterval = time.Millisecond
-	edm.deps.HistogramSenderBackoff = time.Millisecond
-	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-	outboxDir := filepath.Join(t.TempDir(), "outbox")
-	sentDir := filepath.Join(t.TempDir(), "sent")
-	if err := os.MkdirAll(outboxDir, 0o750); err != nil {
-		t.Fatal(err)
-	}
-	name := "dns_histogram-2026-05-28T12-00-00Z_2026-05-28T12-01-00Z.parquet"
-	if err := os.WriteFile(filepath.Join(outboxDir, name), []byte("payload"), 0o600); err != nil {
-		t.Fatal(err)
+	wkd := wellKnownDomainsData{
+		m: map[int]*histogramData{},
 	}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", "/ok")
-		w.WriteHeader(http.StatusCreated)
-	}))
-	t.Cleanup(server.Close)
-	u, err := url.Parse(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	edm.aggregSender = as
-
-	ctx, cancel := testRunContext(t)
-	var wg sync.WaitGroup
-	wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
-	for range 200 {
-		if _, err := os.Stat(filepath.Join(sentDir, name)); err == nil {
-			cancel()
-			wg.Wait()
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	cancel()
-	wg.Wait()
-	t.Fatal("histogramSender did not move sent file")
-}
-
-// TestHistogramSenderBranches covers the histogramSender arms that
-// TestHistogramSender (the happy send-and-rename path) does not reach:
-// disabled-at-startup, parse-error filename, send-error backoff, and
-// the reload arm that flips DisableHistogramSender at runtime.
-func TestHistogramSenderBranches(t *testing.T) {
-	t.Run("disabled at startup skips ticks", func(t *testing.T) {
+	t.Run("initially disabled sender", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			tc := defaultTC
-			tc.DisableHistogramSender = true
-			edm := newSynctestDnstapMinimiser(t, tc)
-			edm.deps.HistogramSenderInterval = time.Millisecond
-			edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-
-			buf := &syncBuf{}
-			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			var wg sync.WaitGroup
-			wg.Go(func() { edm.histogramSender(ctx, t.TempDir(), t.TempDir()) })
-			// Let several ticks elapse; nothing happens because the
-			// DisableHistogramSender guard short-circuits.
-			time.Sleep(20 * time.Millisecond)
-			cancel()
-			wg.Wait()
-
-			if !strings.Contains(buf.String(), `"state":"disabled"`) {
-				t.Fatalf("expected disabled-state log, got: %q", buf.String())
-			}
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.conf.DisableHistogramSender = true
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 0, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
 		})
 	})
 
-	t.Run("parse-error filename is logged and skipped", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		edm.deps.HistogramSenderInterval = time.Millisecond
-		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-		outboxDir := t.TempDir()
-		sentDir := t.TempDir()
-		// Filename has the expected prefix/suffix but a malformed
-		// timestamp section, so timestampsFromFilename errors out.
-		badName := "dns_histogram-not-a-timestamp.parquet"
-		if err := os.WriteFile(filepath.Join(outboxDir, badName), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		buf := &syncBuf{}
-		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-		ctx, cancel := testRunContext(t)
-		var wg sync.WaitGroup
-		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		cancel()
-		wg.Wait()
-
-		if !strings.Contains(buf.String(), "unable to parse timestamps from histogram filename") {
-			t.Fatalf("expected parse-error log, got: %q", buf.String())
-		}
-	})
-
-	t.Run("send error triggers backoff log", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		edm.deps.HistogramSenderInterval = time.Millisecond
-		// Keep the backoff short so the test does not wait the real backoff.
-		edm.deps.HistogramSenderBackoff = time.Millisecond
-		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-		outboxDir := t.TempDir()
-		sentDir := t.TempDir()
-		name := "dns_histogram-2026-05-28T12-00-00Z_2026-05-28T12-01-00Z.parquet"
-		if err := os.WriteFile(filepath.Join(outboxDir, name), []byte("payload"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		// Aggregate sender points at an unreachable URL so send fails.
-		u, err := url.Parse("http://127.0.0.1:1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
-		if err != nil {
-			t.Fatal(err)
-		}
-		edm.aggregSender = as
-
-		buf := &syncBuf{}
-		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-		ctx, cancel := testRunContext(t)
-		var wg sync.WaitGroup
-		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if strings.Contains(buf.String(), "unable to send histogram file") {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		cancel()
-		wg.Wait()
-
-		if !strings.Contains(buf.String(), "unable to send histogram file") {
-			t.Fatalf("expected send-error log, got: %q", buf.String())
-		}
-	})
-
-	t.Run("backoff interrupted by stop", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		edm.deps.HistogramSenderInterval = time.Millisecond
-		// A long backoff: a non-interruptible wait would block shutdown for the
-		// full minute, so exiting promptly proves stop() interrupts the backoff.
-		edm.deps.HistogramSenderBackoff = time.Minute
-		edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-		outboxDir := t.TempDir()
-		sentDir := t.TempDir()
-		name := "dns_histogram-2026-05-28T12-00-00Z_2026-05-28T12-01-00Z.parquet"
-		if err := os.WriteFile(filepath.Join(outboxDir, name), []byte("payload"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-
-		// Aggregate sender points at an unreachable URL so the send fails and
-		// the sender enters its backoff.
-		u, err := url.Parse("http://127.0.0.1:1")
-		if err != nil {
-			t.Fatal(err)
-		}
-		as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.FileSystem, edm.deps.Clock)
-		if err != nil {
-			t.Fatal(err)
-		}
-		edm.aggregSender = as
-
-		buf := &syncBuf{}
-		edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-		ctx, cancel := testRunContext(t)
-		var wg sync.WaitGroup
-		wg.Go(func() { edm.histogramSender(ctx, outboxDir, sentDir) })
-
-		// Wait until the send has failed and the sender is in its backoff.
-		deadline := time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if strings.Contains(buf.String(), "unable to send histogram file") {
-				break
-			}
-			time.Sleep(5 * time.Millisecond)
-		}
-		if !strings.Contains(buf.String(), "unable to send histogram file") {
-			t.Fatalf("sender did not reach backoff: %q", buf.String())
-		}
-
-		// Cancel during the in-flight one-minute backoff; histogramSender must
-		// exit promptly instead of waiting it out.
-		cancel()
-		waitOrFail(t, &wg, 2*time.Second, "histogramSender did not exit when cancelled during backoff")
-	})
-
-	t.Run("reload toggles enabled state", func(t *testing.T) {
+	t.Run("initially disabled sender (retry)", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
-			tc := defaultTC
-			tc.DisableHistogramSender = true
-			edm := newSynctestDnstapMinimiser(t, tc)
-			edm.deps.HistogramSenderInterval = time.Millisecond
-			edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
-
-			buf := &syncBuf{}
-			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			var wg sync.WaitGroup
-			wg.Go(func() { edm.histogramSender(ctx, t.TempDir(), t.TempDir()) })
-
-			// Wait until the worker has read its startup conf before flipping
-			// edm.conf — otherwise we race the worker's edm.getConfig() at
-			// histogramSender's entry and it may pick up the post-flip value.
-			time.Sleep(edm.deps.HistogramSenderInterval)
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.conf.DisableHistogramSender = true
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// wait for startup(unbuffered channel)
+			edm.reloadHistogramSenderConfigCh <- struct{}{}
+			// send on retry channel
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			// wait for retry to trigger
+			time.Sleep(edm.deps.HistogramSenderRetryInterval)
+			// wait until histogramSender is idling
 			synctest.Wait()
-			if !strings.Contains(buf.String(), `"state":"disabled"`) {
-				t.Fatalf("worker did not log the initial disabled state: %q", buf.String())
-			}
+			// check
+			checkHistogramQueueLength(t, edm, 0, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
+		})
+	})
 
-			// Flip DisableHistogramSender on edm.conf and signal a reload.
+	t.Run("initially enabled sender (no aggreg)", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.aggregSender = nil
+			edm.conf.DisableHistogramSender = false
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// send
+			edm.histogramWriterCh <- &wkd
+			// finish up
+			close(edm.histogramWriterCh)
+			synctest.Wait()
+			// to satisfy check function below, set aggregSender
+			edm.aggregSender = &testAggregSender{}
+			// check
+			checkHistogramQueueLength(t, edm, 0, 0, 1)
+		})
+	})
+
+	t.Run("initially enabled sender (failing aggreg)", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, true)
+			edm.conf.DisableHistogramSender = false
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 1, 0, 1)
+			// wait for retry to trigger
+			time.Sleep(edm.deps.HistogramSenderRetryInterval)
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 2, 0, 0)
+			// fill retry queue
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			edm.histogramRetryWriterCh <- &wkd
+			// verify starting point
+			checkHistogramQueueLength(t, edm, 2, 0, 4)
+			// send with full retry queue
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// make sure that sending was tried
+			checkHistogramQueueLength(t, edm, 3, 0, 4)
+			// wait for retry to trigger
+			time.Sleep(edm.deps.HistogramSenderRetryInterval)
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 7, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
+		})
+	})
+
+	t.Run("initially enabled sender (working aggreg)", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.conf.DisableHistogramSender = false
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 1, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
+		})
+	})
+
+	t.Run("if nil pointer", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.conf.DisableHistogramSender = false
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// send nil
+			edm.histogramWriterCh <- nil
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 0, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
+		})
+	})
+
+	t.Run("configuration reload", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			// setup (sender disabled)
+			edm := newTestDnstapMinimiser(t, defaultTC)
+			resetTester(edm, false)
+			edm.conf.DisableHistogramSender = true
+			// start
+			go edm.histogramSender(t.Context(), defaultLabelLimit)
+			// wait for startup(unbuffered channel)
+			edm.reloadHistogramSenderConfigCh <- struct{}{}
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 0, 0, 0)
+			// now enable sender
 			edm.confMutex.Lock()
 			edm.conf.DisableHistogramSender = false
 			edm.confMutex.Unlock()
 			edm.reloadHistogramSenderConfigCh <- struct{}{}
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
 			synctest.Wait()
-			cancel()
-			wg.Wait()
-
-			if strings.Contains(buf.String(), "enabling histogram sender") {
-				return
-			}
-			t.Fatalf("expected enable log, got: %q", buf.String())
+			// check
+			checkHistogramQueueLength(t, edm, 1, 0, 0)
+			// now disable sender
+			edm.confMutex.Lock()
+			edm.conf.DisableHistogramSender = true
+			edm.confMutex.Unlock()
+			edm.reloadHistogramSenderConfigCh <- struct{}{}
+			// send
+			edm.histogramWriterCh <- &wkd
+			// wait until histogramSender is idling
+			synctest.Wait()
+			// check
+			checkHistogramQueueLength(t, edm, 1, 0, 0)
+			// cleanup
+			close(edm.histogramWriterCh)
 		})
 	})
 }
 
-// TestHistogramWriterLogsCreateError mirrors the session writer test for the
-// histogram writer worker.
-func TestHistogramWriterLogsCreateError(t *testing.T) {
-	edm := newTestDnstapMinimiser(t, defaultTC)
-	var buf bytes.Buffer
-	edm.log = slog.New(slog.NewJSONHandler(&buf, nil))
-
-	edm.deps.FileSystem = faultingFileSystem{fileSystem: edm.deps.FileSystem, create: func(string) (fsFile, error) { return nil, errInjected }}
-
-	edm.histogramWriterCh <- &wellKnownDomainsData{
-		rotationTime: time.Now(),
-		m:            map[int]*histogramData{},
+func resetTester(edm *DnstapMinimiser, aggregFail bool) {
+	// make writer channel buffered
+	edm.histogramWriterCh = make(chan *wellKnownDomainsData, 100)
+	// make retry channel buffered
+	edm.histogramRetryWriterCh = make(chan *wellKnownDomainsData, 4)
+	// make reload channel unbuffered to use as a synchronization channel
+	edm.reloadHistogramSenderConfigCh = make(chan struct{})
+	// setup aggreg sender
+	edm.aggregSender = &testAggregSender{
+		Fail: aggregFail,
 	}
-	close(edm.histogramWriterCh)
+}
 
-	var wg sync.WaitGroup
-	wg.Go(func() { edm.histogramWriter(defaultLabelLimit, t.TempDir()) })
-	waitForWaitGroup(t, &wg, 5*time.Second, "histogramWriter did not exit")
-
-	if !strings.Contains(buf.String(), `"level":"ERROR"`) || !strings.Contains(buf.String(), "histogramWriter") {
-		t.Fatalf("expected error log from histogramWriter, got: %q", buf.String())
+func checkHistogramQueueLength(t *testing.T, edm *DnstapMinimiser, aggregSentCount int, primary int, retry int) {
+	t.Helper()
+	edm.aggregSenderMutex.RLock()
+	tAS, ok := edm.aggregSender.(*testAggregSender)
+	edm.aggregSenderMutex.RUnlock()
+	if !ok {
+		t.Fatal("not testAggregSender")
 	}
+	count := tAS.Count()
+	if count != aggregSentCount {
+		t.Fatalf("number of aggreg sents are incorrect, expected: %v got: %v", aggregSentCount, count)
+	}
+	if len(edm.histogramWriterCh) != primary {
+		t.Fatalf("histogramWriterCh length incorrect, expected: %v got: %v", primary, len(edm.histogramWriterCh))
+	}
+	if len(edm.histogramRetryWriterCh) != retry {
+		t.Fatalf("histogramRetryWriterCh length incorrect, expected: %v got: %v", retry, len(edm.histogramRetryWriterCh))
+	}
+}
+
+type testAggregSender struct {
+	Fail  bool
+	count int
+	lock  sync.Mutex
+}
+
+func (a *testAggregSender) Send(context.Context, *bytes.Buffer, time.Time, time.Duration) error {
+	// lock
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	// update aggred send count
+	a.count++
+	// return
+	if a.Fail {
+		return errors.New("fail")
+	}
+	return nil
+}
+func (a *testAggregSender) CloseIdleConnections() {}
+func (a *testAggregSender) Count() int {
+	// lock
+	a.lock.Lock()
+	defer a.lock.Unlock()
+	// return count
+	return a.count
 }

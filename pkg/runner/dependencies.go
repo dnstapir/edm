@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -18,12 +19,9 @@ import (
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
 	"github.com/eclipse/paho.golang/autopaho"
-	"github.com/eclipse/paho.golang/autopaho/queue/file"
-	"github.com/eclipse/paho.golang/paho"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/smhanov/dawg"
-	"github.com/yawning/cryptopan"
 )
 
 // fsFile is the file surface the runner needs. It is intentionally smaller
@@ -41,8 +39,8 @@ type fileSystem interface {
 	Open(name string) (fsFile, error)
 	OpenFile(name string, flag int, perm os.FileMode) (fsFile, error)
 	Create(name string) (fsFile, error)
+	Chmod(name string, mode os.FileMode) error
 	ReadFile(name string) ([]byte, error)
-	ReadDir(name string) ([]os.DirEntry, error)
 	Stat(name string) (os.FileInfo, error)
 	MkdirAll(path string, perm os.FileMode) error
 	Rename(oldpath, newpath string) error
@@ -102,27 +100,24 @@ type httpServerRunner interface {
 	ListenAndServeHTTP(server *http.Server) error
 }
 
-// aggregateSender sends histogram parquet files to aggregate-receiver.
+// aggregateSender sends histogram parquet data to aggregate-receiver.
 type aggregateSender interface {
-	Send(ctx context.Context, fileName string, ts time.Time, duration time.Duration) error
+	Send(ctx context.Context, buf *bytes.Buffer, ts time.Time, duration time.Duration) error
 	CloseIdleConnections()
 }
 
 // aggregateSenderFactory creates AggregateSender instances.
 type aggregateSenderFactory interface {
-	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error)
+	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error)
 }
 
 // mqttConnectionManager is the MQTT connection surface used by the publisher.
 type mqttConnectionManager interface {
-	AwaitConnection(context.Context) error
 	PublishViaQueue(context.Context, *autopaho.QueuePublish) error
-	Publish(context.Context, *paho.Publish) (*paho.PublishResponse, error)
 }
 
-// mqttFactory creates MQTT file queues and connection managers.
+// mqttFactory creates the MQTT connection manager
 type mqttFactory interface {
-	NewFileQueue(path, prefix, extension string) (*file.Queue, error)
 	NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error)
 }
 
@@ -138,11 +133,6 @@ type dawgLoader interface {
 	LoadDawgFile(fileName string) (dawg.Finder, time.Time, error)
 }
 
-// cryptopanFactory creates Crypto-PAn instances from configured key material.
-type cryptopanFactory interface {
-	NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error)
-}
-
 // dependencies holds all external functionality used by DnstapMinimiser.
 // Zero-valued fields are filled with production implementations.
 type dependencies struct {
@@ -156,14 +146,9 @@ type dependencies struct {
 	MQTTFactory            mqttFactory
 	KeyMaterialLoader      keyMaterialLoader
 	DawgLoader             dawgLoader
-	CryptopanFactory       cryptopanFactory
 
-	DiskCleanerInterval     time.Duration
-	MonitorChannelInterval  time.Duration
-	HistogramSenderInterval time.Duration
-	HistogramSenderBackoff  time.Duration
-	PprofListenAddr         string
-	MetricsListenAddr       string
+	MonitorChannelInterval       time.Duration
+	HistogramSenderRetryInterval time.Duration
 }
 
 func defaultDependencies() dependencies {
@@ -201,26 +186,11 @@ func fillDependencies(deps dependencies) dependencies {
 	if deps.DawgLoader == nil {
 		deps.DawgLoader = realDawgLoader{fs: deps.FileSystem}
 	}
-	if deps.CryptopanFactory == nil {
-		deps.CryptopanFactory = realCryptopanFactory{}
-	}
-	if deps.DiskCleanerInterval == 0 {
-		deps.DiskCleanerInterval = time.Minute
-	}
 	if deps.MonitorChannelInterval == 0 {
 		deps.MonitorChannelInterval = time.Second
 	}
-	if deps.HistogramSenderInterval == 0 {
-		deps.HistogramSenderInterval = 10 * time.Second
-	}
-	if deps.HistogramSenderBackoff == 0 {
-		deps.HistogramSenderBackoff = 15 * time.Second
-	}
-	if deps.PprofListenAddr == "" {
-		deps.PprofListenAddr = "127.0.0.1:6060"
-	}
-	if deps.MetricsListenAddr == "" {
-		deps.MetricsListenAddr = "127.0.0.1:2112"
+	if deps.HistogramSenderRetryInterval == 0 {
+		deps.HistogramSenderRetryInterval = 97 * time.Second
 	}
 	return deps
 }
@@ -239,12 +209,12 @@ func (osFileSystem) Create(name string) (fsFile, error) {
 	return os.Create(name) // #nosec G304 -- production adapter intentionally creates configured runtime paths.
 }
 
-func (osFileSystem) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
+func (osFileSystem) Chmod(name string, mode os.FileMode) error {
+	return os.Chmod(name, mode)
 }
 
-func (osFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-	return os.ReadDir(name)
+func (osFileSystem) ReadFile(name string) ([]byte, error) {
+	return os.ReadFile(name) // #nosec G304 -- production adapter intentionally reads configured runtime paths.
 }
 
 func (osFileSystem) Stat(name string) (os.FileInfo, error) {
@@ -352,15 +322,11 @@ func (realHTTPServerRunner) ListenAndServeHTTP(server *http.Server) error {
 
 type realAggregateSenderFactory struct{}
 
-func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), fs fileSystem, clock clock) (aggregateSender, error) {
-	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, fs, clock)
+func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error) {
+	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, clock)
 }
 
 type realMQTTFactory struct{}
-
-func (realMQTTFactory) NewFileQueue(path, prefix, extension string) (*file.Queue, error) {
-	return file.New(path, prefix, extension)
-}
 
 func (realMQTTFactory) NewConnection(ctx context.Context, cfg autopaho.ClientConfig) (mqttConnectionManager, error) {
 	return autopaho.NewConnection(ctx, cfg)

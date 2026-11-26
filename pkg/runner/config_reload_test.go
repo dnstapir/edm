@@ -17,7 +17,7 @@ import (
 
 func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		reloadCh := make(chan os.Signal, 1)
 		ctx, cancel := context.WithCancel(t.Context())
@@ -38,7 +38,7 @@ func TestConfigUpdaterExitsOnContextCancel(t *testing.T) {
 
 func TestConfigUpdaterExitsOnChannelClose(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 
 		reloadCh := make(chan os.Signal, 1)
 
@@ -75,7 +75,7 @@ func (sc *sequenceConfiger) GetConfig() (Config, error) {
 
 func TestConfigUpdater(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		edm := newSynctestDnstapMinimiser(t, defaultTC)
+		edm := newTestDnstapMinimiser(t, defaultTC)
 		startConf := edm.getConfig()
 		nextConf := startConf
 		nextConf.CryptopanKey = "key2"
@@ -195,7 +195,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("non-reload-tagged field warns", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			startConf := edm.getConfig()
@@ -215,7 +215,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("reloadable fields do not warn", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			// well-known-domains-file (the DAWG, re-read at the next
@@ -240,7 +240,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("config provider error keeps old config", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			startConf := edm.getConfig()
@@ -256,7 +256,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("broken ignore list file keeps old state and logs", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			// A reload where the configured ignore list file has gone
@@ -279,7 +279,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("HTTP cert reloads on reload request", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			// Start with the histogram sender enabled and a valid cert so
@@ -300,7 +300,7 @@ func TestConfigUpdaterBranches(t *testing.T) {
 	t.Run("MQTT cert reloads on reload request", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			buf := &syncBuf{}
-			edm := newSynctestDnstapMinimiser(t, defaultTC)
+			edm := newTestDnstapMinimiser(t, defaultTC)
 			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
 
 			startConf := edm.getConfig()

@@ -9,8 +9,10 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Labels 0-9
-const defaultLabelLimit = 10
+const (
+	defaultLabelLimit                = 10 // Labels 0-9
+	maxHistogramHLLExplicitThreshold = 1 << 17
+)
 
 // Config contains all runtime configuration for [DnstapMinimiser].
 //
@@ -21,10 +23,11 @@ type Config struct {
 	DisableSessionFiles           bool   `toml:"disable-session-files" reload:"true"`
 	DisableHistogramSender        bool   `toml:"disable-histogram-sender" reload:"true"`
 	DisableMQTT                   bool   `toml:"disable-mqtt"`
-	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"`
+	DisableMQTTFilequeue          bool   `toml:"disable-mqtt-filequeue"` // DEPRECATED
 	EnableManualParquetRotation   bool   `toml:"enable-manual-parquet-rotation"`
 	PebbleSync                    bool   `toml:"pebble-sync" reload:"true"`
 	InputUnix                     string `toml:"input-unix"`
+	InputUnixPermissions          uint32 `toml:"input-unix-permissions"`
 	InputTCP                      string `toml:"input-tcp"`
 	InputTLS                      string `toml:"input-tls"`
 	InputTLSCertFile              string `toml:"input-tls-cert-file"`
@@ -46,7 +49,7 @@ type Config struct {
 	MQTTKeepalive                 uint16 `toml:"mqtt-keepalive"`
 	MQTTSignWorkers               int    `toml:"mqtt-sign-workers"`
 	QnameSeenEntries              int    `toml:"qname-seen-entries"`
-	CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"`
+	CryptopanAddressEntries       int    `toml:"cryptopan-address-entries"` // DEPRECATED
 	NewQnameBuffer                int    `toml:"newqname-buffer"`
 	HTTPCAFile                    string `toml:"http-ca-file"`
 	HTTPSigningKeyFile            string `toml:"http-signing-key-file"`
@@ -54,9 +57,10 @@ type Config struct {
 	HTTPClientCertFile            string `toml:"http-client-cert-file" reload:"true"`
 	HTTPURL                       string `toml:"http-url"`
 	Debug                         bool   `toml:"debug"`
-	DebugDnstapFilename           string `toml:"debug-dnstap-filename"`
 	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`
 	DebugEnableMutexProfiling     bool   `toml:"debug-enable-mutexprofiling"`
+	MetricsListenAddr             string `toml:"metrics-listen-addr"`
+	PprofListenAddr               string `toml:"pprof-listen-addr"`
 }
 
 // Validate checks the configuration rules for Config.
@@ -105,9 +109,8 @@ func (conf Config) Validate() (err error) {
 
 	if conf.HistogramHLLExplicitThreshold < 1 {
 		errs = append(errs, errors.New("histogram-hll-explicit-threshold must be greater than 0"))
-	}
-	if conf.CryptopanAddressEntries < 0 {
-		errs = append(errs, errors.New("cryptopan-address-entries must not be negative"))
+	} else if conf.HistogramHLLExplicitThreshold > maxHistogramHLLExplicitThreshold {
+		errs = append(errs, fmt.Errorf("histogram-hll-explicit-threshold must not exceed %d", maxHistogramHLLExplicitThreshold))
 	}
 
 	if !conf.DisableMQTT {
@@ -160,6 +163,7 @@ type ConfigProvider interface {
 // config file and startup overrides.
 func DefaultConfig() (conf Config) {
 	conf = Config{
+		InputUnixPermissions:          0o660,
 		CryptopanKeySalt:              "edm-kdf-salt-val",
 		WellKnownDomainsFile:          "well-known-domains.dawg",
 		DataDir:                       "/var/lib/dnstapir/edm",
@@ -170,13 +174,14 @@ func DefaultConfig() (conf Config) {
 		MQTTServer:                    "127.0.0.1:8883",
 		MQTTKeepalive:                 30,
 		QnameSeenEntries:              10_000_000,
-		CryptopanAddressEntries:       10_000_000,
 		NewQnameBuffer:                1000,
 		HistogramHLLExplicitThreshold: 20,
 		HTTPSigningKeyFile:            "edm-http-signer-key.pem",
 		HTTPClientKeyFile:             "edm-http-client-key.pem",
 		HTTPClientCertFile:            "edm-http-client.pem",
 		HTTPURL:                       "https://127.0.0.1:8443",
+		MetricsListenAddr:             "127.0.0.1:2112",
+		PprofListenAddr:               "127.0.0.1:6060",
 	}
 	return
 }

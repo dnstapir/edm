@@ -1,0 +1,7 @@
+reviews:
+  profile: "quiet"
+  high_level_summary: false
+  in_progress_fortune: false
+  poem: false
+  auto_review:
+    drafts: true

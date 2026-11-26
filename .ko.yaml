@@ -3,4 +3,4 @@ defaultPlatforms:
 - linux/arm64
 builds:
   - main: ./cmd/dnstapir-edm
-    ldflags: -X main.version={{.Env.VERSION}}
+    ldflags: -X github.com/dnstapir/edm/pkg/buildinfo.Version={{.Env.VERSION}}

@@ -22,7 +22,6 @@ func runCoreTC(t *testing.T) testConfiger {
 	tc.InputUnix = filepath.Join(t.TempDir(), "dnstap.sock")
 	tc.MinimiserWorkers = 1
 	tc.QnameSeenEntries = 1
-	tc.CryptopanAddressEntries = 10
 	tc.NewQnameBuffer = 1
 	tc.DisableHistogramSender = true
 	tc.DisableMQTT = true
@@ -51,8 +50,8 @@ func (fn seenQnameStoreFactoryFunc) OpenSeenQnameStore(path string) (seenQnameSt
 // the test can wait for both spawned goroutines to call the injected runner.
 func pinHTTPServersToEphemeral(t *testing.T, edm *DnstapMinimiser) {
 	t.Helper()
-	edm.deps.PprofListenAddr = "127.0.0.1:0"
-	edm.deps.MetricsListenAddr = "127.0.0.1:0"
+	edm.conf.PprofListenAddr = "127.0.0.1:0"
+	edm.conf.MetricsListenAddr = "127.0.0.1:0"
 	exited := make(chan struct{}, 2)
 	edm.deps.HTTPServerRunner = httpServerRunnerFunc(func(*http.Server) error {
 		exited <- struct{}{}
@@ -184,35 +183,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		err := edm.Run(t.Context())
 		if err == nil || !strings.Contains(err.Error(), "DawgLoader.LoadDawgFile") {
 			t.Fatalf("err = %v, want DawgLoader.LoadDawgFile failure", err)
-		}
-	})
-
-	t.Run("cryptopan cache creation error", func(t *testing.T) {
-		tc := runCoreTC(t)
-		edm := newTestDnstapMinimiser(t, tc)
-		pinHTTPServersToEphemeral(t, edm)
-		// A negative entry count cannot pass NewDnstapMinimiser, so mutate
-		// the stored config to emulate a bad runtime reload landing before
-		// the workers start. Run must fail instead of silently running
-		// without minimiser workers.
-		edm.conf.CryptopanAddressEntries = -1
-		err := edm.Run(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "cryptopan cache") {
-			t.Fatalf("err = %v, want cryptopan cache failure", err)
-		}
-	})
-
-	t.Run("debug dnstap file open error", func(t *testing.T) {
-		tc := runCoreTC(t)
-		// A path under a regular file (not a directory) makes OpenFile
-		// fail with ENOTDIR regardless of the test user's uid.
-		blocker := writeTempFile(t, "blocker", []byte("x"))
-		tc.DebugDnstapFilename = filepath.Join(blocker, "debug.dnstap")
-		edm := newTestDnstapMinimiser(t, tc)
-		pinHTTPServersToEphemeral(t, edm)
-		err := edm.Run(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "debug dnstap file") {
-			t.Fatalf("err = %v, want debug dnstap file failure", err)
 		}
 	})
 }

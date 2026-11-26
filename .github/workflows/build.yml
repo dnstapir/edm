@@ -43,16 +43,14 @@ jobs:
 
       - name: Staticcheck
         run: |
-          go install honnef.co/go/tools/cmd/staticcheck@ff63afafc529279f454e02f1d060210bd4263951 # v0.7.0
+          go install honnef.co/go/tools/cmd/staticcheck@54455593555daf6bfcf3c480faaada7de3145357 # v0.8.2
           staticcheck ./...
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
 
       - name: Run Gosec Security Scanner
-        uses: securego/gosec@4a3bd8af174872c778439083ded7adbf3747e770 # v2.26.1
-        with:
-          args: ./...
+        run: go run github.com/securego/gosec/v2/cmd/gosec@8c77519419e934a3e158dbf1a3fbbc0871b8c691 ./...
 
       - name: Test
         run: go test -race -coverprofile=coverage.out ./...

@@ -64,39 +64,6 @@ func (edm *DnstapMinimiser) writeRotatedParquet(label, tmpName, finalName string
 	return finalName, nil
 }
 
-func (edm *DnstapMinimiser) renameFile(src string, dst string) error {
-	dstDir := filepath.Dir(dst)
-
-	// We are prepared for the destination directory not existing and will
-	// create it if needed and retry the rename in this case.
-	for {
-		err := edm.deps.FileSystem.Rename(src, dst)
-		if err == nil {
-			// Rename went well, we are done
-			return nil
-		}
-
-		if errors.Is(err, fs.ErrNotExist) {
-			if _, statErr := edm.deps.FileSystem.Stat(dstDir); statErr == nil {
-				return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
-			} else if !errors.Is(statErr, fs.ErrNotExist) {
-				return fmt.Errorf("renameFile: unable to stat destination dir: %s: %w", dstDir, statErr)
-			}
-			// If the destination directory does not exist we will
-			// need to create it and then retry the Rename() in the
-			// next iteration of the loop.
-			err = edm.deps.FileSystem.MkdirAll(dstDir, 0o750)
-			if err != nil {
-				return fmt.Errorf("renameFile: unable to create destination dir: %s: %w", dstDir, err)
-			}
-			edm.log.Info("renameFile: created directory", "dir", dstDir)
-		} else {
-			// Some other error occured
-			return fmt.Errorf("renameFile: unable to rename file, src: %s, dst: %s: %w", src, dst, err)
-		}
-	}
-}
-
 func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) {
 	dstDir := filepath.Dir(dst)
 
@@ -128,38 +95,12 @@ func (edm *DnstapMinimiser) createFile(dst string) (fsFile, error) {
 	}
 }
 
-func timestampsFromFilename(name string) (startTime time.Time, stopTime time.Time, err error) {
-	// expected name format: dns_histogram-2023-11-29T13-50-00Z_2023-11-29T13-51-00Z.parquet
-	trimmedName := strings.TrimSuffix(name, ".parquet")
-	nameParts := strings.SplitN(trimmedName, "-", 2)
-	if len(nameParts) != 2 {
-		err = fmt.Errorf("timestampFromFilename: missing '-' separating prefix from timestamps in %q", name)
-		return
-	}
-	times := strings.Split(nameParts[1], "_")
-	if len(times) != 2 {
-		err = fmt.Errorf("timestampFromFilename: missing '_' separating start and stop timestamps in %q", name)
-		return
-	}
-	startTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[0])
-	if err != nil {
-		err = fmt.Errorf("timestampFromFilename: unable to parse startTime: %w", err)
-		return
-	}
-	stopTime, err = time.Parse("2006-01-02T15-04-05Z07:00", times[1])
-	if err != nil {
-		err = fmt.Errorf("timestampFromFilename: unable to parse stopTime: %w", err)
-		return
-	}
-	return
-}
-
 func buildParquetFilenames(baseDir string, baseName string, timeStart time.Time, timeStop time.Time) (string, string) {
 	// Use timestamp for files, replace ":" with "-" to not have to escape
 	// characters in the shell, e.g: 2009-11-10T23-00-00Z
 	startTS := timestampToFileString(timeStart.UTC())
 	stopTS := timestampToFileString(timeStop.UTC())
-	fileName := fmt.Sprintf("%s-%s_%s%s", baseName, startTS, stopTS, parquetFileSuffix)
+	fileName := fmt.Sprintf("%s-%s_%s.parquet", baseName, startTS, stopTS)
 
 	// Write output to a .tmp file so we can atomically rename it to the real
 	// name when the file has been written in full

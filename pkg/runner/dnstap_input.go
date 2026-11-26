@@ -10,6 +10,7 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -44,6 +45,10 @@ func (edm *DnstapMinimiser) setupDnstapInput(logger *slog.Logger, startConf Conf
 		l, err := edm.deps.ListenerFactory.Listen("unix", startConf.InputUnix)
 		if err != nil {
 			return nil, fmt.Errorf("unable to create dnstap unix socket: %w", err)
+		}
+		if err := edm.deps.FileSystem.Chmod(startConf.InputUnix, os.FileMode(startConf.InputUnixPermissions)); err != nil {
+			l.Close() // #nosec G104 -- try cleaning up created unix socket
+			return nil, fmt.Errorf("unable to chmod of dnstap unix socket: %w", err)
 		}
 		dti = edm.deps.DnstapInputFactory.NewFrameStreamSockInput(l)
 	case startConf.InputTCP != "":

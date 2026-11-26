@@ -30,11 +30,18 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.BoolVar(&conf.DisableSessionFiles, "disable-session-files", conf.DisableSessionFiles, "do not write out session parquet files")
 	fs.BoolVar(&conf.DisableHistogramSender, "disable-histogram-sender", conf.DisableHistogramSender, "do not check for histogram files to upload to core")
 	fs.BoolVar(&conf.DisableMQTT, "disable-mqtt", conf.DisableMQTT, "disable MQTT message sending")
-	fs.BoolVar(&conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "disable MQTT file based queue")
+	fs.BoolVar(&conf.DisableMQTTFilequeue, "disable-mqtt-filequeue", conf.DisableMQTTFilequeue, "[DEPRECATED]")
 	fs.BoolVar(&conf.EnableManualParquetRotation, "enable-manual-parquet-rotation", conf.EnableManualParquetRotation, "enable localhost HTTP endpoint for manually rotating session and histogram parquet files")
 	fs.BoolVar(&conf.PebbleSync, "pebble-sync", conf.PebbleSync, "fsync seen-qname pebble writes")
 
 	fs.StringVar(&conf.InputUnix, "input-unix", conf.InputUnix, "create unix socket for reading dnstap (e.g. /var/lib/unbound/dnstap.sock)")
+	fs.Func("input-unix-permissions", fmt.Sprintf("set file permissions for unix-socket (default 0o%3o)", conf.InputUnixPermissions), func(s string) error {
+		v, err := strconv.ParseUint(s, 0, 32)
+		if err == nil {
+			conf.InputUnixPermissions = uint32(v)
+		}
+		return err
+	})
 	fs.StringVar(&conf.InputTCP, "input-tcp", conf.InputTCP, "create TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
 	fs.StringVar(&conf.InputTLS, "input-tls", conf.InputTLS, "create TLS TCP socket for reading dnstap (e.g. '127.0.0.1:53535')")
 	fs.StringVar(&conf.InputTLSCertFile, "input-tls-cert-file", conf.InputTLSCertFile, "file containing cert used for TLS TCP socket")
@@ -65,7 +72,7 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	})
 
 	fs.IntVar(&conf.QnameSeenEntries, "qname-seen-entries", conf.QnameSeenEntries, "Number of 'seen' qnames stored in LRU cache, need to be changed based on RAM")
-	fs.IntVar(&conf.CryptopanAddressEntries, "cryptopan-address-entries", conf.CryptopanAddressEntries, "Number of cryptopan pseudonymised addresses stored in LRU cache, 0 disables the cache, need to be changed based on RAM")
+	fs.IntVar(&conf.CryptopanAddressEntries, "cryptopan-address-entries", conf.CryptopanAddressEntries, "[DEPRECATED]")
 	fs.IntVar(&conf.NewQnameBuffer, "newqname-buffer", conf.NewQnameBuffer, "Number of slots in new_qname publisher channel, if this is filled up we skip new_qname events")
 	fs.IntVar(&conf.HistogramHLLExplicitThreshold, "histogram-hll-explicit-threshold", conf.HistogramHLLExplicitThreshold, "When the number of unique IP addresses is beyond this threshold we will include HLL data for a domain in the histogram parquet file")
 
@@ -76,9 +83,11 @@ func newRunFlagSet(conf *runner.Config) (fs *flag.FlagSet) {
 	fs.StringVar(&conf.HTTPURL, "http-url", conf.HTTPURL, "Service we will POST aggregates to")
 
 	fs.BoolVar(&conf.Debug, "debug", conf.Debug, "print debug logging during operation")
-	fs.StringVar(&conf.DebugDnstapFilename, "debug-dnstap-filename", conf.DebugDnstapFilename, "File for dumping unmodified (sensitive) JSON-formatted dnstap packets we are about to process, for debugging")
 	fs.BoolVar(&conf.DebugEnableBlockProfiling, "debug-enable-blockprofiling", conf.DebugEnableBlockProfiling, "Enable profiling of goroutine blocking events")
 	fs.BoolVar(&conf.DebugEnableMutexProfiling, "debug-enable-mutexprofiling", conf.DebugEnableMutexProfiling, "Enable profiling of mutex contention events")
+
+	fs.StringVar(&conf.MetricsListenAddr, "metrics-listen-addr", conf.MetricsListenAddr, "set listen address for prometheus metrics")
+	fs.StringVar(&conf.PprofListenAddr, "pprof-listen-addr", conf.PprofListenAddr, "set listen address for golang pprof")
 
 	return
 }
@@ -135,6 +144,8 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.PebbleSync = src.PebbleSync }
 	case "input-unix":
 		return func(c *runner.Config) { c.InputUnix = src.InputUnix }
+	case "input-unix-permissions":
+		return func(c *runner.Config) { c.InputUnixPermissions = src.InputUnixPermissions }
 	case "input-tcp":
 		return func(c *runner.Config) { c.InputTCP = src.InputTCP }
 	case "input-tls":
@@ -191,12 +202,14 @@ func overrideFor(name string, src *runner.Config) runner.ConfigOverride {
 		return func(c *runner.Config) { c.HTTPURL = src.HTTPURL }
 	case "debug":
 		return func(c *runner.Config) { c.Debug = src.Debug }
-	case "debug-dnstap-filename":
-		return func(c *runner.Config) { c.DebugDnstapFilename = src.DebugDnstapFilename }
 	case "debug-enable-blockprofiling":
 		return func(c *runner.Config) { c.DebugEnableBlockProfiling = src.DebugEnableBlockProfiling }
 	case "debug-enable-mutexprofiling":
 		return func(c *runner.Config) { c.DebugEnableMutexProfiling = src.DebugEnableMutexProfiling }
+	case "metrics-listen-addr":
+		return func(c *runner.Config) { c.MetricsListenAddr = src.MetricsListenAddr }
+	case "pprof-listen-addr":
+		return func(c *runner.Config) { c.PprofListenAddr = src.PprofListenAddr }
 	}
 	return nil
 }

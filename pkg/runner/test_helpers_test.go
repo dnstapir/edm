@@ -3,12 +3,13 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/cipher"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -26,56 +27,14 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	dnstap "github.com/dnstap/golang-dnstap"
-	lru "github.com/hashicorp/golang-lru/v2"
+	extdnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
-	"github.com/yawning/cryptopan"
 	"google.golang.org/protobuf/proto"
 )
-
-// testPseudonymiseDnstap is the test-side equivalent of the producer
-// hot path. pseudonymiseDnstap takes the per-worker cache + cryptopan
-// snapshot as parameters; tests don't run inside a real worker so they
-// need their own cache. We give each *DnstapMinimiser instance one shared
-// cache via a sync.Map keyed by the minimiser pointer, so repeated test
-// calls accumulate hits like a single worker would.
-//
-// This is purely a test convenience - production code does not use it.
-var testCryptopanCaches sync.Map // map[*DnstapMinimiser]*lru.Cache[netip.Addr, netip.Addr]
-
-func (edm *DnstapMinimiser) testPseudonymiseDnstap(dt *dnstap.Dnstap) {
-	cache := edm.testCryptopanCache()
-	edm.pseudonymiseDnstap(dt, edm.cryptopan.Load(), cache)
-}
-
-// testCryptopanCache returns the shared per-edm-instance cache, creating
-// it lazily so callers don't have to set it up. cacheEntries is read from
-// the current config; 0 disables caching, mirroring production behaviour.
-func (edm *DnstapMinimiser) testCryptopanCache() *lru.Cache[netip.Addr, netip.Addr] {
-	conf := edm.getConfig()
-	if conf.CryptopanAddressEntries == 0 {
-		return nil
-	}
-	if c, ok := testCryptopanCaches.Load(edm); ok {
-		return c.(*lru.Cache[netip.Addr, netip.Addr])
-	}
-	c, err := lru.New[netip.Addr, netip.Addr](conf.CryptopanAddressEntries)
-	if err != nil {
-		panic(err)
-	}
-	actual, _ := testCryptopanCaches.LoadOrStore(edm, c)
-	return actual.(*lru.Cache[netip.Addr, netip.Addr])
-}
-
-// testResetCryptopanCache drops the test-side cache for edm. Used by
-// tests after setCryptopan to mirror the per-worker Purge that
-// runMinimiser does on cryptopanGen change.
-func (edm *DnstapMinimiser) testResetCryptopanCache() {
-	testCryptopanCaches.Delete(edm)
-}
 
 func testRunContext(t testing.TB) (context.Context, context.CancelFunc) {
 	t.Helper()
@@ -153,7 +112,6 @@ func newDefaultTC() testConfiger {
 	c := defaultTestConfig()
 	c.CryptopanKey = "key1"
 	c.CryptopanKeySalt = "aabbccddeeffgghh"
-	c.CryptopanAddressEntries = 10
 	return testConfiger{Config: c}
 }
 
@@ -172,10 +130,10 @@ func useWritableDataDir(t testing.TB, tc *testConfiger) {
 func newTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
 	t.Helper()
 
-	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies())
+	return newTestDnstapMinimiserWithDependencies(t, tc, newTestDependencies(), true)
 }
 
-func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies) *DnstapMinimiser {
+func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps dependencies, usePrettyPseudonymiser bool) *DnstapMinimiser {
 	t.Helper()
 	useWritableDataDir(t, &tc)
 
@@ -187,58 +145,45 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 		t.Fatalf("unable to setup edm: %s", err)
 	}
 
-	return edm
-}
-
-func newRealCryptopanTestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
-	t.Helper()
-	useWritableDataDir(t, &tc)
-
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	edm, err := NewDnstapMinimiser(tc, logger)
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
+	// replace the pseudonymiser with a prettifier to make the test cases more
+	// readable for humans
+	if usePrettyPseudonymiser {
+		pseudonymiser := cipher.Block(prettyTestCipher{})
+		edm.pseudonymiser.Store(&pseudonymiser)
 	}
 
 	return edm
 }
+
+// This implementation of cipher.Block is used as a pseudonymiser in test cases
+// to make the test cases more readable for humans. See comments in Encrypt()
+// method for details.
+type prettyTestCipher struct{}
+
+func (prettyTestCipher) BlockSize() int { panic("should not be called") }
+func (prettyTestCipher) Encrypt(src []byte, dst []byte) {
+	// for IPv4 we store the IP addres "prettified" in the first part since that
+	// is what is used to determine the identifier in ipToIdentifier() to help
+	// make test more readable
+	// ex. 192.0.2.0 becomes the integer 192_000_002_000
+	if netip.AddrFrom16([16]byte(src)).Is4In6() {
+		pretty := uint64(src[12])*1000*1000*1000 + uint64(src[13])*1000*1000 + uint64(src[14])*1000 + uint64(src[15])
+		binary.BigEndian.PutUint64(dst, pretty)
+	}
+	// else we leave it as is which leads to the identifier being the first 8
+	// bytes out of the 16 provided
+}
+func (prettyTestCipher) Decrypt([]byte, []byte) { panic("should not be called") }
 
 func newTestDependencies() dependencies {
 	deps := defaultDependencies()
-	deps.CryptopanFactory = fastTestCryptopanFactory{}
-	return deps
-}
-
-type fastTestCryptopanFactory struct{}
-
-func (fastTestCryptopanFactory) NewCryptopan(key, salt string) (*cryptopan.Cryptopan, error) {
-	sum := sha256.Sum256([]byte(key + "\x00" + salt))
-	return cryptopan.New(sum[:])
-}
-
-func newSynctestDnstapMinimiser(t testing.TB, tc testConfiger) *DnstapMinimiser {
-	t.Helper()
-
-	discardLogger := slog.NewTextHandler(io.Discard, nil)
-	logger := slog.New(discardLogger)
-
-	return newSynctestDnstapMinimiserWithLogger(t, tc, logger)
-}
-
-func newSynctestDnstapMinimiserWithLogger(t testing.TB, tc testConfiger, logger *slog.Logger) *DnstapMinimiser {
-	t.Helper()
-	useWritableDataDir(t, &tc)
-
-	deps := newTestDependencies()
-
-	edm, err := NewDnstapMinimiser(tc, logger, withDependencies(deps))
-	if err != nil {
-		t.Fatalf("unable to setup edm: %s", err)
+	deps.FileSystem = faultingFileSystem{
+		fileSystem: deps.FileSystem,
+		chmod: func(string, os.FileMode) error {
+			return nil
+		},
 	}
-
-	return edm
+	return deps
 }
 
 func writeTempFile(t testing.TB, name string, data []byte) string {
@@ -293,7 +238,7 @@ func packedDNSMsg(t testing.TB, name string, qtype uint16, rcode int) []byte {
 	return packed
 }
 
-func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.SocketFamily, packed []byte) *dnstap.Dnstap {
+func testPackedDnstapMessage(t testing.TB, msgType extdnstap.Message_Type, family extdnstap.SocketFamily, packed []byte, modifiers ...func(*extdnstap.Dnstap)) []byte {
 	t.Helper()
 
 	queryPort := uint32(12345)
@@ -302,12 +247,12 @@ func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.
 	queryNSec := uint32(123)
 	responseSec := uint64(1_700_000_001)
 	responseNSec := uint32(456)
-	protoUDP := dnstap.SocketProtocol_UDP
-	topType := dnstap.Dnstap_MESSAGE
-	dt := &dnstap.Dnstap{
+	protoUDP := extdnstap.SocketProtocol_UDP
+	topType := extdnstap.Dnstap_MESSAGE
+	dt := &extdnstap.Dnstap{
 		Type:     &topType,
 		Identity: []byte("server-1"),
-		Message: &dnstap.Message{
+		Message: &extdnstap.Message{
 			Type:             &msgType,
 			SocketFamily:     &family,
 			SocketProtocol:   &protoUDP,
@@ -321,23 +266,62 @@ func testDnstapMessage(t testing.TB, msgType dnstap.Message_Type, family dnstap.
 	}
 
 	switch family {
-	case dnstap.SocketFamily_INET:
+	case extdnstap.SocketFamily_INET:
 		dt.Message.QueryAddress = netip.MustParseAddr("198.51.100.20").AsSlice()
 		dt.Message.ResponseAddress = netip.MustParseAddr("198.51.100.53").AsSlice()
-	case dnstap.SocketFamily_INET6:
+	case extdnstap.SocketFamily_INET6:
 		dt.Message.QueryAddress = netip.MustParseAddr("2001:db8::20").AsSlice()
 		dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
 	}
 
-	if strings.HasSuffix(dnstap.Message_Type_name[int32(msgType)], "_QUERY") {
+	if strings.HasSuffix(extdnstap.Message_Type_name[int32(msgType)], "_QUERY") {
 		dt.Message.QueryMessage = packed
 	} else {
 		dt.Message.ResponseMessage = packed
 	}
-	return dt
+
+	for _, modifier := range modifiers {
+		modifier(dt)
+	}
+
+	return marshaledDnstap(t, dt)
 }
 
-func marshaledDnstap(t testing.TB, dt *dnstap.Dnstap) []byte {
+func testUnpackedDnstapMessage(t testing.TB, msgType extdnstap.Message_Type, family extdnstap.SocketFamily, packed []byte, modifiers ...func(*extdnstap.Dnstap)) *dnstap.Message {
+	t.Helper()
+
+	// pack it using github.com/dnstap/golang-dnstap
+	dtPacked := testPackedDnstapMessage(t, msgType, family, packed, modifiers...)
+
+	// unpack it using github.com/dnstapir/edm/pkg/dnstap
+	return unmarshaledDnstap(t, dtPacked)
+}
+
+func testUnpackedMinimalDnstapMessage(t testing.TB, isIPv6 bool, modifiers ...func(*extdnstap.Dnstap)) *dnstap.Message {
+	t.Helper()
+
+	dt := extdnstap.Dnstap{
+		Type: new(extdnstap.Dnstap_MESSAGE),
+		Message: &extdnstap.Message{
+			Type: new(extdnstap.Message_AUTH_RESPONSE),
+		},
+	}
+
+	switch isIPv6 {
+	case false:
+		dt.Message.SocketFamily = new(extdnstap.SocketFamily_INET)
+	case true:
+		dt.Message.SocketFamily = new(extdnstap.SocketFamily_INET6)
+	}
+
+	for _, modifier := range modifiers {
+		modifier(&dt)
+	}
+
+	return unmarshaledDnstap(t, marshaledDnstap(t, &dt))
+}
+
+func marshaledDnstap(t testing.TB, dt *extdnstap.Dnstap) []byte {
 	t.Helper()
 
 	data, err := proto.Marshal(dt)
@@ -345,6 +329,18 @@ func marshaledDnstap(t testing.TB, dt *dnstap.Dnstap) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func unmarshaledDnstap(t testing.TB, dtPacked []byte) *dnstap.Message {
+	t.Helper()
+
+	// unpack it using github.com/dnstapir/edm/pkg/dnstap
+	dt := dnstap.Message{}
+	err := dt.Unpack(dtPacked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &dt
 }
 
 func cacheTestJWKJSON() {
@@ -520,11 +516,11 @@ type faultingFileSystem struct {
 	fileSystem
 	readFile func(string) ([]byte, error)
 	create   func(string) (fsFile, error)
+	chmod    func(string, os.FileMode) error
 	rename   func(string, string) error
 	remove   func(string) error
 	mkdirAll func(string, os.FileMode) error
 	stat     func(string) (os.FileInfo, error)
-	readDir  func(string) ([]os.DirEntry, error)
 }
 
 func (ffs faultingFileSystem) ReadFile(name string) ([]byte, error) {
@@ -539,6 +535,13 @@ func (ffs faultingFileSystem) Create(name string) (fsFile, error) {
 		return ffs.create(name)
 	}
 	return ffs.fileSystem.Create(name)
+}
+
+func (ffs faultingFileSystem) Chmod(name string, mode os.FileMode) error {
+	if ffs.chmod != nil {
+		return ffs.chmod(name, mode)
+	}
+	return ffs.fileSystem.Chmod(name, mode)
 }
 
 func (ffs faultingFileSystem) Rename(oldpath, newpath string) error {
@@ -567,11 +570,4 @@ func (ffs faultingFileSystem) Stat(name string) (os.FileInfo, error) {
 		return ffs.stat(name)
 	}
 	return ffs.fileSystem.Stat(name)
-}
-
-func (ffs faultingFileSystem) ReadDir(name string) ([]os.DirEntry, error) {
-	if ffs.readDir != nil {
-		return ffs.readDir(name)
-	}
-	return ffs.fileSystem.ReadDir(name)
 }

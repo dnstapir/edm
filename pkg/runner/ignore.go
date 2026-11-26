@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/edm/pkg/dnstap"
 	"github.com/miekg/dns"
 	"github.com/smhanov/dawg"
 	"go4.org/netipx"
@@ -59,7 +59,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 
 	if conf.IgnoredClientIPsFile == "" {
 		edm.ignoredClientsIPSet.Store(nil)
-		edm.ignoredClientCIDRsParsed.Store(0)
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list unset", "filename", conf.IgnoredClientIPsFile, "num_cidrs", 0)
 		return nil
 	}
@@ -106,7 +105,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 	}
 
 	edm.ignoredClientsIPSet.Store(ipset)
-	edm.ignoredClientCIDRsParsed.Store(numCIDRs)
 
 	if ipset != nil {
 		edm.log.Info("setIgnoredClientIPs: DNS client ignore list loaded", "filename", conf.IgnoredClientIPsFile, "num_cidrs", numCIDRs)
@@ -117,10 +115,6 @@ func (edm *DnstapMinimiser) setIgnoredClientIPs() error {
 	return nil
 }
 
-func (edm *DnstapMinimiser) getNumIgnoredClientCIDRs() uint64 {
-	return edm.ignoredClientCIDRsParsed.Load()
-}
-
 // dawgFinderHolder is a tiny concrete-type wrapper so dawg.Finder (which is
 // an interface) can be stored in an atomic.Pointer. Used for the
 // ignoredQuestions atomic snapshot.
@@ -128,27 +122,23 @@ type dawgFinderHolder struct {
 	finder dawg.Finder
 }
 
-func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Dnstap) bool {
-	// Atomic snapshot - no lock on the hot path. Reload writers
-	// atomic.Store the new IPSet; readers see either old or new value
-	// per Load.
-	ipset := edm.ignoredClientsIPSet.Load()
-	if ipset == nil {
-		return false
-	}
-	clientIP, ok := netip.AddrFromSlice(dt.Message.QueryAddress)
-	if !ok {
-		// If we have a list of clients to ignore but are not able to
-		// understand the QueryAddress let's err on the side of caution
-		// and ignore such packets as well while making noise in logs
-		// so it can be investigated.
-		edm.log.Error("unable to parse QueryAddress for ignore-checking, ignoring dnstap packet to be safe, please investigate")
-		edm.promClientIPIgnoredError.Inc()
-		return true
-	}
-	if ipset.Contains(clientIP) {
-		edm.promClientIPIgnored.Inc()
-		return true
+func (edm *DnstapMinimiser) clientIPIsIgnored(dt *dnstap.Message) bool {
+	// if the query address is valid AND is on the ignore clients ip list
+	// the frame is ignured, if not we let it through
+	if dt.HasFlags(dnstap.ValidQueryAddr) {
+		// Atomic snapshot - no lock on the hot path. Reload writers
+		// atomic.Store the new IPSet; readers see either old or new value
+		// per Load.
+		ipset := edm.ignoredClientsIPSet.Load()
+		// list does not exist
+		if ipset == nil {
+			return false
+		}
+		// check against the list
+		if ipset.Contains(dt.QueryAddr) {
+			edm.promClientIPIgnored.Inc()
+			return true
+		}
 	}
 	return false
 }
