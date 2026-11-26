@@ -445,7 +445,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 
-		cfg, err := edm.newAutoPahoClientConfig(nil, "mqtts://example.test:8883", "client-id", 30)
+		cfg, err := edm.newAutoPahoClientConfig("mqtts://example.test:8883", "client-id", 30)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -457,7 +457,7 @@ func TestMQTTConfigAndPublisher(t *testing.T) {
 		cfg.OnClientError(errors.New("client"))
 		cfg.OnServerDisconnect(&paho.Disconnect{ReasonCode: 1})
 		cfg.OnServerDisconnect(&paho.Disconnect{Properties: &paho.DisconnectProperties{ReasonString: "bye"}})
-		if _, err := edm.newAutoPahoClientConfig(nil, "://bad", "client-id", 30); err == nil {
+		if _, err := edm.newAutoPahoClientConfig("://bad", "client-id", 30); err == nil {
 			t.Fatal("bad MQTT URL succeeded")
 		}
 
@@ -688,17 +688,6 @@ func TestSetupMQTT(t *testing.T) {
 		err := edm.setupMQTT(t.Context())
 		if !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("setupMQTT error = %v, want os.ErrNotExist", err)
-		}
-	})
-
-	t.Run("bad CA file", func(t *testing.T) {
-		edm := newTestDnstapMinimiser(t, defaultTC)
-		edm.conf.DataDir = t.TempDir()
-		edm.conf.MQTTSigningKeyFile = testJWKFile(t)
-		edm.conf.MQTTCAFile = writeTempFile(t, "bad-ca.pem", []byte("not a pem"))
-		err := edm.setupMQTT(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "CA cert pool") {
-			t.Fatalf("setupMQTT error = %v, want CA cert pool failure", err)
 		}
 	})
 

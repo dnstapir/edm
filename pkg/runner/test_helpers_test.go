@@ -137,6 +137,9 @@ func newTestDnstapMinimiserWithDependencies(t testing.TB, tc testConfiger, deps 
 	t.Helper()
 	useWritableDataDir(t, &tc)
 
+	// make sure NewStore have valid keys without having to talk to nodeman
+	setupTestMTLS(t, &tc)
+
 	discardLogger := slog.NewTextHandler(io.Discard, nil)
 	logger := slog.New(discardLogger)
 
@@ -205,6 +208,19 @@ func testDawgFinder(t testing.TB, domains ...string) dawg.Finder {
 		builder.Add(domain)
 	}
 	return builder.Finish()
+}
+
+// setup NewStore to have valid keys without having to talk to nodeman
+func setupTestMTLS(t testing.TB, tc *testConfiger) {
+	t.Helper()
+
+	tc.MQTTSigningKeyFile = "testdata/mtls/datakey-priv.json"
+	if err := os.MkdirAll(filepath.Join(tc.DataDir, "certs"), 0o770); err != nil {
+		t.Fatalf("could not setup DnstapMinimiser for test: %v", err)
+	}
+	if err := os.CopyFS(filepath.Join(tc.DataDir, "certs"), os.DirFS("testdata/mtls")); err != nil {
+		t.Fatalf("could not setup DnstapMinimiser for test: %v", err)
+	}
 }
 
 func testDawgFile(t testing.TB, domains ...string) string {

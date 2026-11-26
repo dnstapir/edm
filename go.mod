@@ -5,6 +5,7 @@ go 1.27.3
 require (
 	github.com/cockroachdb/pebble v1.1.5
 	github.com/dnstap/golang-dnstap v0.4.0
+	github.com/dnstapir/internal v0.0.0-20261128144250-83c27418f799
 	github.com/eclipse/paho.golang v0.23.0
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.12
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -48,6 +49,7 @@ require (
 	github.com/parquet-go/jsonlite v1.5.2 // indirect
 	github.com/pierrec/lz4/v4 v4.1.27 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/common v0.72.0 // indirect
 	github.com/prometheus/procfs v0.22.0 // indirect
 	github.com/rogpeppe/go-internal v1.15.0 // indirect

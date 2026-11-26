@@ -2,8 +2,6 @@ package runner
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -52,7 +50,7 @@ func (pel pahoErrorLogger) Printf(format string, v ...interface{}) {
 	pel.logger.Error(fmt.Sprintf(format, v...))
 }
 
-func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, server string, clientID string, mqttKeepAlive uint16) (autopaho.ClientConfig, error) {
+func (edm *DnstapMinimiser) newAutoPahoClientConfig(server string, clientID string, mqttKeepAlive uint16) (autopaho.ClientConfig, error) {
 	u, err := parseMQTTServerURL(server)
 	if err != nil {
 		return autopaho.ClientConfig{}, fmt.Errorf("newAutoPahoClientConfig: unable to parse MQTT server URL: %w", err)
@@ -60,11 +58,8 @@ func (edm *DnstapMinimiser) newAutoPahoClientConfig(caCertPool *x509.CertPool, s
 
 	cliCfg := autopaho.ClientConfig{
 		ServerUrls: []*url.URL{u},
-		TlsCfg: &tls.Config{
-			RootCAs:              caCertPool,
-			GetClientCertificate: edm.mqttClientCertStore.getClientCertificate,
-			MinVersion:           tls.VersionTLS13,
-		},
+		// NOTE: the RootCAs Pool is not renewed automatically
+		TlsCfg:         edm.mTLSCertStore.TLSClientConfig(),
 		Queue:          queue.NewRingQueue(8 * 1024),
 		KeepAlive:      mqttKeepAlive,
 		OnConnectionUp: func(*autopaho.ConnectionManager, *paho.Connack) { edm.log.Info("mqtt connection up") },
@@ -226,23 +221,12 @@ func (edm *DnstapMinimiser) setupMQTT(ctx context.Context) error {
 		return fmt.Errorf("setupMQTT: unable to parse jwk from 'mqtt-signing-key-file': %w", err)
 	}
 
-	// Leaving these nil will use the OS default CA certs
-	var mqttCACertPool *x509.CertPool
-
-	if conf.MQTTCAFile != "" {
-		// Setup CA cert for validating the MQTT connection
-		mqttCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.MQTTCAFile)
-		if err != nil {
-			return fmt.Errorf("setupMQTT: failed to create CA cert pool for '--mqtt-ca-file': %w", err)
-		}
-	}
-
 	mqttKeyID, _ := mqttJWK.KeyID()
 	mqttClientID := mqttKeyID + "-edm"
 
 	edm.log.Info("creating MQTT client", "mqtt_client_id", mqttClientID)
 
-	autopahoConfig, err := edm.newAutoPahoClientConfig(mqttCACertPool, conf.MQTTServer, mqttClientID, conf.MQTTKeepalive)
+	autopahoConfig, err := edm.newAutoPahoClientConfig(conf.MQTTServer, mqttClientID, conf.MQTTKeepalive)
 	if err != nil {
 		return fmt.Errorf("setupMQTT: unable to create autopaho config: %w", err)
 	}

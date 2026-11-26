@@ -42,8 +42,8 @@ type Config struct {
 	DataDir                       string `toml:"data-dir"`
 	MinimiserWorkers              int    `toml:"minimiser-workers"`
 	MQTTSigningKeyFile            string `toml:"mqtt-signing-key-file"`
-	MQTTClientKeyFile             string `toml:"mqtt-client-key-file" reload:"true"`
-	MQTTClientCertFile            string `toml:"mqtt-client-cert-file" reload:"true"`
+	MQTTClientKeyFile             string `toml:"mqtt-client-key-file"`  // DEPRECATED
+	MQTTClientCertFile            string `toml:"mqtt-client-cert-file"` // DEPRECATED
 	MQTTServer                    string `toml:"mqtt-server"`
 	MQTTCAFile                    string `toml:"mqtt-ca-file"`
 	MQTTKeepalive                 uint16 `toml:"mqtt-keepalive"`
@@ -53,8 +53,8 @@ type Config struct {
 	NewQnameBuffer                int    `toml:"newqname-buffer"`
 	HTTPCAFile                    string `toml:"http-ca-file"`
 	HTTPSigningKeyFile            string `toml:"http-signing-key-file"`
-	HTTPClientKeyFile             string `toml:"http-client-key-file" reload:"true"`
-	HTTPClientCertFile            string `toml:"http-client-cert-file" reload:"true"`
+	HTTPClientKeyFile             string `toml:"http-client-key-file"`  // DEPRECATED
+	HTTPClientCertFile            string `toml:"http-client-cert-file"` // DEPRECATED
 	HTTPURL                       string `toml:"http-url"`
 	Debug                         bool   `toml:"debug"`
 	DebugEnableBlockProfiling     bool   `toml:"debug-enable-blockprofiling"`

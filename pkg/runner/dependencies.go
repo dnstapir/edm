@@ -18,6 +18,7 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	dnstap "github.com/dnstap/golang-dnstap"
+	"github.com/dnstapir/internal/cert"
 	"github.com/eclipse/paho.golang/autopaho"
 	"github.com/lestrrat-go/jwx/v4/jwa"
 	"github.com/lestrrat-go/jwx/v4/jwk"
@@ -108,7 +109,7 @@ type aggregateSender interface {
 
 // aggregateSenderFactory creates AggregateSender instances.
 type aggregateSenderFactory interface {
-	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error)
+	NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, mTLSCertStore cert.Store, clock clock) (aggregateSender, error)
 }
 
 // mqttConnectionManager is the MQTT connection surface used by the publisher.
@@ -322,8 +323,8 @@ func (realHTTPServerRunner) ListenAndServeHTTP(server *http.Server) error {
 
 type realAggregateSenderFactory struct{}
 
-func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (aggregateSender, error) {
-	return newAggregateSender(log, aggrecURL, signingJWK, caCertPool, getClientCertificate, clock)
+func (realAggregateSenderFactory) NewAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJWK jwk.Key, mTLSCertStore cert.Store, clock clock) (aggregateSender, error) {
+	return newAggregateSender(log, aggrecURL, signingJWK, mTLSCertStore, clock)
 }
 
 type realMQTTFactory struct{}

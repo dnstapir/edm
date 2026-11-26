@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -67,12 +66,8 @@ func TestAggregateSenderClosesBodyOnReadError(t *testing.T) {
 		t.Fatalf("parse server URL: %s", err)
 	}
 
-	edm := &DnstapMinimiser{
-		log:                 slog.New(slog.NewTextHandler(io.Discard, nil)),
-		deps:                defaultDependencies(),
-		httpClientCertStore: newCertStore(),
-	}
-	as, err := newAggregateSender(edm.log, aggrecURL, signingJWK, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
+	edm := newTestDnstapMinimiser(t, defaultTC)
+	as, err := newAggregateSender(edm.log, aggrecURL, signingJWK, edm.mTLSCertStore, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
@@ -155,7 +150,7 @@ func TestAggregateSenderUsesExactIntervalHeader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse server URL: %s", err)
 	}
-	as, err := newAggregateSender(edm.log, aggrecURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, aggrecURL, testJWK(t), edm.mTLSCertStore, edm.deps.Clock)
 	if err != nil {
 		t.Fatalf("newAggregateSender: %s", err)
 	}
@@ -206,7 +201,7 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := newAggregateSender(edm.log, u, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, u, testJWK(t), edm.mTLSCertStore, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +224,7 @@ func TestAggregateSender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newAggregateSender(edm.log, u, badKey, nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock); err == nil {
+	if _, err := newAggregateSender(edm.log, u, badKey, edm.mTLSCertStore, edm.deps.Clock); err == nil {
 		t.Fatal("newAggregateSender accepted non-Ed25519 key")
 	}
 }
@@ -245,7 +240,7 @@ func TestAggregateSenderStatusAndLocationErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	as, err := newAggregateSender(edm.log, statusURL, testJWK(t), nil, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
+	as, err := newAggregateSender(edm.log, statusURL, testJWK(t), edm.mTLSCertStore, edm.deps.Clock)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,12 +276,6 @@ func TestSetupHistogramSenderAndCertLoaders(t *testing.T) {
 	edm.conf.HTTPClientKeyFile = keyPath
 	edm.conf.MQTTClientCertFile = certPath
 	edm.conf.MQTTClientKeyFile = keyPath
-	if err := edm.loadHTTPClientCert(); err != nil {
-		t.Fatal(err)
-	}
-	if err := edm.loadMQTTClientCert(); err != nil {
-		t.Fatal(err)
-	}
 	if err := edm.setupHistogramSender(); err != nil {
 		t.Fatal(err)
 	}
