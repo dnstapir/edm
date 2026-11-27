@@ -204,7 +204,7 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 		t.Fatalf("response timestamp = %v", dt.Timestamp)
 	}
 
-	sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+	sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 	if sd.ResponseTime == nil || sd.ResponseMessage == nil || sd.ServerID == nil {
 		t.Fatalf("session missing response fields: %#v", sd)
 	}
@@ -233,7 +233,7 @@ func TestSessionParquetAndSessionConstruction(t *testing.T) {
 
 	queryDT := testUnpackedDnstapMessage(t, extdnstap.Message_CLIENT_QUERY, extdnstap.SocketFamily_INET6, packed)
 	queryMsg := edm.parsePacket(queryDT)
-	querySession := edm.newSession(edm.pseudonymiseIPs(queryDT), queryMsg, defaultLabelLimit)
+	querySession := edm.newSession(edm.pseudonymiseIPs(queryDT, 0), queryMsg, defaultLabelLimit)
 	if querySession.QueryTime == nil || querySession.QueryMessage == nil ||
 		querySession.SourceIdentifier != 0x2001_0db8_0000_0000 || querySession.DestIdentifier == nil {
 		t.Fatalf("query session missing fields: %#v", querySession)
@@ -256,7 +256,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Message.ResponsePort = &big
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.SourcePort != nil {
 			t.Fatalf("SourcePort = %v, want nil", *sd.SourcePort)
 		}
@@ -271,7 +271,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Message.ResponseAddress = []byte{4, 5, 6}
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.SourceIdentifier != 0x01_02_03_0000000000 || sd.DestIdentifier == nil {
 			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
 		}
@@ -286,7 +286,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Message.ResponseAddress = netip.MustParseAddr("2001:db8::53").AsSlice()
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.SourceIdentifier != 0x2001_0db8_0000_0000 || sd.DestIdentifier == nil {
 			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
 		}
@@ -301,7 +301,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Message.ResponseAddress = []byte{4, 5, 6}
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.SourceIdentifier != 0x01_02_03_0000000000 || sd.DestIdentifier == nil {
 			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
 		}
@@ -316,7 +316,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Message.SocketFamily = &unknown
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.SourceIdentifier != 198_051_100_020 || sd.DestIdentifier == nil {
 			t.Fatalf("SourceIdentifier and DestIdentifier should be set")
 		}
@@ -330,7 +330,7 @@ func TestNewSessionBranches(t *testing.T) {
 			dt.Identity = nil
 		})
 		msg := edm.parsePacket(dt)
-		sd := edm.newSession(edm.pseudonymiseIPs(dt), msg, defaultLabelLimit)
+		sd := edm.newSession(edm.pseudonymiseIPs(dt, 0), msg, defaultLabelLimit)
 		if sd.ServerID != nil {
 			t.Fatalf("ServerID should be nil for empty identity, got %s", string(sd.ServerID))
 		}
@@ -369,7 +369,7 @@ func TestNewSessionAllowsMissingSocketMetadata(t *testing.T) {
 	dt := dnstap.Message{
 		Timestamp: time.Unix(0, 0).UTC(),
 	}
-	sd := edm.newSession(edm.pseudonymiseIPs(&dt), msg, defaultLabelLimit)
+	sd := edm.newSession(edm.pseudonymiseIPs(&dt, 0), msg, defaultLabelLimit)
 
 	if sd.DNSProtocol != nil {
 		t.Fatalf("DNSProtocol should be nil when SocketProtocol is missing, have: %d", *sd.DNSProtocol)
