@@ -20,13 +20,19 @@ func TestNewDnstapMinimiserAPI(t *testing.T) {
 	if _, err := NewDnstapMinimiser(nil, logger); !errors.Is(err, ErrNilConfigProvider) {
 		t.Fatalf("nil provider err = %v, want %v", err, ErrNilConfigProvider)
 	}
-	if _, err := NewDnstapMinimiser(defaultTC, nil); !errors.Is(err, ErrNilLogger) {
+
+	// prepare config
+	tc := newDefaultTC()
+	useWritableDataDir(t, &tc)
+	setupTestMTLS(t, &tc)
+
+	if _, err := NewDnstapMinimiser(tc, nil); !errors.Is(err, ErrNilLogger) {
 		t.Fatalf("nil logger err = %v, want %v", err, ErrNilLogger)
 	}
 
 	loggerLevel := new(slog.LevelVar)
 	edm, err := NewDnstapMinimiser(
-		defaultTC, logger,
+		tc, logger,
 		WithLoggerLevel(loggerLevel),
 	)
 	if err != nil {
@@ -95,10 +101,14 @@ data-dir = %q
 minimiser-workers = 1
 qname-seen-entries = 2
 newqname-buffer = 1
+mqtt-signing-key-file = "testdata/mtls/datakey-priv.json"
 `, configFile, socketPath, dawgFile, dir)
 	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
+	// setup NewStore to have valid keys without having to talk to nodeman
+	setupTestMTLS(t, &testConfiger{Config: Config{DataDir: dir}})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	level := new(slog.LevelVar)

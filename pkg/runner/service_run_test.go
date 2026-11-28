@@ -103,24 +103,6 @@ func TestRunCore_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	t.Run("histogram sender enabled: loadHTTPClientCert error", func(t *testing.T) {
-		// This test exercises the histogram-sender-enabled prefix: with
-		// DisableHistogramSender=false, Run calls loadHTTPClientCert
-		// before setupHistogramSender. Missing cert/key paths trip
-		// loadHTTPClientCert, so the returned error is the
-		// "HTTP client cert" wrap — setupHistogramSender itself never
-		// runs. The test name and assertion reflect that.
-		tc := runCoreTC(t)
-		tc.DisableHistogramSender = false
-		tc.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
-		tc.HTTPClientKeyFile = filepath.Join(t.TempDir(), "missing.key")
-		edm := newTestDnstapMinimiser(t, tc)
-		err := edm.Run(t.Context())
-		if err == nil || !strings.Contains(err.Error(), "HTTP client cert") {
-			t.Fatalf("err = %v, want HTTP-client-cert failure", err)
-		}
-	})
-
 	t.Run("setupHistogramSender error", func(t *testing.T) {
 		// Real matching cert+key so loadHTTPClientCert succeeds and the
 		// failure surfaces from setupHistogramSender itself (here via an

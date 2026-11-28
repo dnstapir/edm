@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"os"
 	"reflect"
 )
@@ -98,40 +97,15 @@ func (edm *DnstapMinimiser) applyUpdate(startConf Config) {
 	}
 
 	if !conf.DisableHistogramSender {
-		if err := edm.loadHTTPClientCert(); err != nil {
-			edm.log.Error("configUpdater: unable to run edm.loadHTTPClientCert", "error", err)
-		}
-
 		// If the histogram sender was not enabled at startup
 		// we also need to initialize it.
 		edm.aggregSenderMutex.RLock()
 		isUninitialized := edm.aggregSender == nil
 		edm.aggregSenderMutex.RUnlock()
 		if isUninitialized {
-			// Also make sure a client certificate is loaded
-			_, err := edm.httpClientCertStore.getClientCertificate(nil)
-			if err != nil {
-				if errors.Is(err, errNoClientCertificate) {
-					err := edm.loadHTTPClientCert()
-					if err != nil {
-						edm.log.Error("configUpdater: unable to init certs when setting up histogram sender", "error", err)
-					}
-				} else {
-					edm.log.Error("configUpdater: unable to call getClientCertificate", "error", err)
-				}
-			}
 			err = edm.setupHistogramSender()
 			if err != nil {
 				edm.log.Error("configUpdater: unable to setup histogram sender", "error", err)
-			}
-		}
-	}
-
-	if !conf.DisableMQTT {
-		// MQTT can only be enabled/disabled at startup.
-		if !startConf.DisableMQTT {
-			if err := edm.loadMQTTClientCert(); err != nil {
-				edm.log.Error("configUpdater: unable to run edm.loadMQTTClientCert", "error", err)
 			}
 		}
 	}

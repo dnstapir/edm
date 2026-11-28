@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dnstapir/edm/pkg/buildinfo"
+	"github.com/dnstapir/internal/cert"
 	"github.com/lestrrat-go/jwx/v4/jwk"
 	"github.com/yaronf/httpsign"
 )
@@ -26,13 +25,12 @@ var userAgent = fmt.Sprintf("edm/%s %s/%s", buildinfo.Version, runtime.GOOS, run
 type realAggregateSender struct {
 	log               *slog.Logger
 	aggrecURL         *url.URL
-	caCertPool        *x509.CertPool
 	signingHTTPClient *httpsign.Client
 	httpTransport     *http.Transport
 	clock             clock
 }
 
-func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, caCertPool *x509.CertPool, getClientCertificate func(*tls.CertificateRequestInfo) (*tls.Certificate, error), clock clock) (realAggregateSender, error) {
+func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key, mTLSCertStore cert.Store, clock clock) (realAggregateSender, error) {
 	signingKey, err := jwk.Export[ed25519.PrivateKey](signingJwk)
 	if err != nil {
 		return realAggregateSender{}, fmt.Errorf("newAggregateSender: unable to create ed25519 private key from jwk: %w", err)
@@ -46,11 +44,8 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 		}).DialContext,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: 10 * time.Second,
-		TLSClientConfig: &tls.Config{
-			RootCAs:              caCertPool,
-			GetClientCertificate: getClientCertificate,
-			MinVersion:           tls.VersionTLS13,
-		},
+		// NOTE: the RootCAs Pool is not renewed automatically
+		TLSClientConfig: mTLSCertStore.TLSClientConfig(),
 	}
 	httpClient := http.Client{
 		Transport: httpTransport,
@@ -81,7 +76,6 @@ func newAggregateSender(log *slog.Logger, aggrecURL *url.URL, signingJwk jwk.Key
 	return realAggregateSender{
 		log:               log,
 		aggrecURL:         aggrecURL,
-		caCertPool:        caCertPool,
 		signingHTTPClient: client,
 		httpTransport:     httpTransport,
 		clock:             clock,
@@ -233,20 +227,9 @@ func (edm *DnstapMinimiser) setupHistogramSender() error {
 		return fmt.Errorf("setupHistogramSender: unable to parse jwk from 'http-signing-key-file': %w", err)
 	}
 
-	// Leaving these nil will use the OS default CA certs
-	var httpCACertPool *x509.CertPool
-
-	if conf.HTTPCAFile != "" {
-		// Setup CA cert for validating the aggregate-receiver connection
-		httpCACertPool, err = edm.deps.KeyMaterialLoader.LoadCertPool(conf.HTTPCAFile)
-		if err != nil {
-			return fmt.Errorf("setupHistogramSender: failed to create CA cert pool for '-http-ca-file': %w", err)
-		}
-	}
-
 	// Build the new sender first so a failed rebuild leaves the existing
 	// working sender in place instead of zeroing it.
-	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, httpCACertPool, edm.httpClientCertStore.getClientCertificate, edm.deps.Clock)
+	newAggregSender, err := edm.deps.AggregateSenderFactory.NewAggregateSender(edm.log, httpURL, httpSigningJwk, edm.mTLSCertStore, edm.deps.Clock)
 	if err != nil {
 		return fmt.Errorf("setupHistogramSender: unable to create aggregate sender: %w", err)
 	}

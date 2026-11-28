@@ -275,45 +275,6 @@ func TestConfigUpdaterBranches(t *testing.T) {
 			}
 		})
 	})
-
-	t.Run("HTTP cert reloads on reload request", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			buf := &syncBuf{}
-			edm := newTestDnstapMinimiser(t, defaultTC)
-			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-			// Start with the histogram sender enabled and a valid cert so
-			// the late-init branch does not also fire and obscure the
-			// cert-reload assertion.
-			startConf := edm.getConfig()
-			startConf.DisableHistogramSender = false
-			startConf.HTTPClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
-			edm.conf = startConf
-
-			next := startConf
-			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
-				return strings.Contains(buf.String(), "loadHTTPClientCert")
-			})
-		})
-	})
-
-	t.Run("MQTT cert reloads on reload request", func(t *testing.T) {
-		synctest.Test(t, func(t *testing.T) {
-			buf := &syncBuf{}
-			edm := newTestDnstapMinimiser(t, defaultTC)
-			edm.log = slog.New(slog.NewJSONHandler(buf, nil))
-
-			startConf := edm.getConfig()
-			startConf.DisableMQTT = false
-			startConf.MQTTClientCertFile = filepath.Join(t.TempDir(), "missing.crt")
-			edm.conf = startConf
-
-			next := startConf
-			runConfigUpdaterUntil(t, edm, &sequenceConfiger{configs: []Config{next}}, func() bool {
-				return strings.Contains(buf.String(), "loadMQTTClientCert")
-			})
-		})
-	})
 }
 
 // TestWritableDataDirSurvivesReload pins that the writable data-dir installed

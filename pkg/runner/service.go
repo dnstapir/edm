@@ -24,6 +24,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"go4.org/netipx"
+
+	"github.com/dnstapir/internal/cert"
 )
 
 var (
@@ -169,10 +171,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}()
 
 	if !startConf.DisableHistogramSender {
-		if err := edm.loadHTTPClientCert(); err != nil {
-			return fmt.Errorf("unable to load x509 HTTP client cert: %w", err)
-		}
-
 		if err := edm.setupHistogramSender(); err != nil {
 			return fmt.Errorf("unable to setup histogram sender: %w", err)
 		}
@@ -181,10 +179,6 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	var mqttCtx context.Context
 	var mqttCancel context.CancelFunc
 	if !startConf.DisableMQTT {
-		if err := edm.loadMQTTClientCert(); err != nil {
-			return fmt.Errorf("unable to load x509 mqtt client cert: %w", err)
-		}
-
 		// The MQTT pipeline context is deliberately detached from Run's
 		// ctx: cancelling Run must not kill the publisher before the
 		// minimisers have drained and newQnamePublisherCh has been closed
@@ -219,6 +213,9 @@ func (edm *DnstapMinimiser) Run(ctx context.Context) error {
 	}
 
 	var wg sync.WaitGroup
+
+	// launch the background renewer task for the mTLSCertStore
+	wg.Go(func() { edm.mTLSCertStore.Renewer(ctx) })
 
 	// The HTTP servers are tracked in their own WaitGroup so the deferred
 	// cleanup below can stop them and wait for their goroutines on every
@@ -441,8 +438,7 @@ type DnstapMinimiser struct {
 	ignoredClientsIPSet           atomic.Pointer[netipx.IPSet]
 	ignoredQuestions              atomic.Pointer[dawgFinderHolder]
 	dawgReloadRequested           atomic.Bool // set on SIGHUP, consumed by rotateTracker
-	httpClientCertStore           *certStore  // client cert/key for mTLS authentication
-	mqttClientCertStore           *certStore  // client cert/key for mTLS authentication
+	mTLSCertStore                 cert.Store  // client cert/key for mTLS authentication
 	reloadMinimiserMutex          sync.RWMutex
 	reloadMinimiserConfigCh       []chan struct{}
 	reloadHistogramSenderConfigCh chan struct{}
@@ -560,9 +556,28 @@ func NewDnstapMinimiser(provider ConfigProvider, logger *slog.Logger, opts ...Dn
 	// the histogram sender is currently busy.
 	edm.reloadHistogramSenderConfigCh = make(chan struct{}, 1)
 
-	// Prepare client cert/key storage for mTLS authentication
-	edm.httpClientCertStore = newCertStore()
-	edm.mqttClientCertStore = newCertStore()
+	// Setup the certificate store with
+	// * key and certificate for mTLS
+	// * CA Cert Pool
+	certPath := filepath.Join(conf.DataDir, "certs")
+	if err := edm.deps.FileSystem.MkdirAll(certPath, 0o750); err != nil {
+		return nil, fmt.Errorf("NewDnstapMinimiser: issue creating cert store: %w", err)
+	}
+	store, err := cert.NewStore(certPath, conf.MQTTSigningKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("NewDnstapMinimiser: issue loading mTLS: %w", err)
+	}
+	edm.mTLSCertStore = store
+
+	// populate the CA Cert Pool with local CAs if they are specified
+	for _, file := range []string{conf.MQTTCAFile, conf.HTTPCAFile} {
+		if file != "" {
+			err := edm.mTLSCertStore.AppendCACertFile(file)
+			if err != nil {
+				return nil, fmt.Errorf("NewDnstapMinimiser: issue adding local CA certs: %w", err)
+			}
+		}
+	}
 
 	// Setup channels for the MQTT publish pipeline. mqttPubCh holds
 	// unsigned events from minimisers; mqttSignedCh holds signed
